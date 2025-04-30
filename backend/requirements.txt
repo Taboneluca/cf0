@@ -1,0 +1,7 @@
+fastapi==0.111.0
+uvicorn==0.29.0
+openai>=1.20.0  # any 1.x is fine; 1.20.0 is the 2025-04 LTS
+python-dotenv>=1.0
+pandas==2.2.3  # Optional, for spreadsheet operations
+openpyxl==3.1.5  # Optional, for Excel file handling
+tiktoken==0.9.0  # For token counting and history trimming 
