@@ -9,8 +9,11 @@ import ChatInterface from "./chat-interface"
 import type { SpreadsheetData, Message } from "@/types/spreadsheet"
 import ToolbarRibbon from "./toolbar-ribbon"
 import SheetTabs from "./sheet-tabs"
+import FormulaBar from "./FormulaBar"
 import { useWorkbook } from "@/context/workbook-context"
+import { EditingProvider } from "@/context/editing-context"
 import { Loader2 } from "lucide-react"
+import { backendSheetToUIMap } from "@/utils/transform"
 
 interface SpreadsheetInterfaceProps {
   initialData?: SpreadsheetData
@@ -51,21 +54,56 @@ export default function SpreadsheetInterface({
     },
   ])
 
-  const updateCell = (row: number, col: string, value: string) => {
+  // Enhanced updateCell that handles cross-sheet references
+  const updateCell = async (row: number, col: string, value: string, sheetId?: string) => {
     if (readOnly) return
 
+    const targetSheet = sheetId || active
     const cellId = `${col}${row}`
+    
+    // Don't update if value hasn't changed
+    if (wb.data[targetSheet]?.cells[cellId]?.value === value) return
+    
     dispatch({
       type: "UPDATE_SHEET", 
-      sid: active,
+      sid: targetSheet,
       data: {
-        ...sheetData, 
+        ...wb.data[targetSheet], 
         cells: {
-          ...sheetData.cells, 
+          ...wb.data[targetSheet].cells, 
           [cellId]: { value }
         }
       }
     })
+
+    // Send to backend
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL}/workbook/${wid}/sheet/${targetSheet}/update`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cell: cellId, value })
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error('Failed to update cell');
+      }
+      
+      // Parse response and update state
+      const result = await response.json();
+      
+      // If all_sheets data is included, merge it into the state
+      if (result.all_sheets) {
+        dispatch({
+          type: "MERGE_SHEETS_DATA",
+          data: backendSheetToUIMap(result.all_sheets)
+        });
+      }
+    } catch (error) {
+      console.error("Error updating cell on backend:", error)
+    }
   }
 
   // Notify parent component of data changes
@@ -125,48 +163,51 @@ export default function SpreadsheetInterface({
   };
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden bg-white">
-      <div className="flex flex-1 overflow-hidden">
-        {/* Spreadsheet section */}
-        <div
-          className="flex flex-col flex-1" 
-          style={{ width: isMinimized ? "calc(100% - 40px)" : `calc(100% - ${chatWidth}px)` }}
-        >
-          <ToolbarRibbon />
-          <div className="flex-1 min-h-0 overflow-auto">
-            {loading ? (
-              <div className="flex items-center justify-center h-full">
-                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-              </div>
-            ) : sheetData ? (
-              <SpreadsheetView data={sheetData} onCellUpdate={updateCell} readOnly={readOnly} />
-            ) : null}
+    <EditingProvider>
+      <div className="flex flex-col h-full w-full overflow-hidden bg-white">
+        <div className="flex flex-1 overflow-hidden">
+          {/* Spreadsheet section */}
+          <div
+            className="flex flex-col flex-1" 
+            style={{ width: isMinimized ? "calc(100% - 40px)" : `calc(100% - ${chatWidth}px)` }}
+          >
+            <ToolbarRibbon />
+            <FormulaBar handleCellUpdate={updateCell} />
+            <div className="flex-1 min-h-0 overflow-auto">
+              {loading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                </div>
+              ) : sheetData ? (
+                <SpreadsheetView data={sheetData} onCellUpdate={updateCell} readOnly={readOnly} />
+              ) : null}
+            </div>
+            <SheetTabs />
           </div>
-          <SheetTabs />
-        </div>
 
-        {/* Resize handle */}
-        <div
-          className="w-1 cursor-col-resize hover:bg-blue-400 active:bg-blue-500 transition-colors"
-          onMouseDown={startResizing}
-        />
-
-        {/* Chat panel */}
-        <div
-          className="flex flex-col border-l border-gray-200 max-w-[40vw]"
-          style={{ width: isMinimized ? "40px" : `${chatWidth}px`, flexShrink: 0 }}
-        >
-          <ChatInterface
-            messages={messages}
-            setMessages={setMessages}
-            mode={mode}
-            setMode={setMode}
-            isMinimized={isMinimized}
-            toggleMinimize={toggleMinimize}
-            readOnly={readOnly}
+          {/* Resize handle */}
+          <div
+            className="w-1 cursor-col-resize hover:bg-blue-400 active:bg-blue-500 transition-colors"
+            onMouseDown={startResizing}
           />
+
+          {/* Chat panel */}
+          <div
+            className="flex flex-col border-l border-gray-200 max-w-[40vw]"
+            style={{ width: isMinimized ? "40px" : `${chatWidth}px`, flexShrink: 0 }}
+          >
+            <ChatInterface
+              messages={messages}
+              setMessages={setMessages}
+              mode={mode}
+              setMode={setMode}
+              isMinimized={isMinimized}
+              toggleMinimize={toggleMinimize}
+              readOnly={readOnly}
+            />
+          </div>
         </div>
       </div>
-    </div>
+    </EditingProvider>
   )
 }

@@ -18,7 +18,8 @@ export async function chatBackend(
   if (!res.ok) throw new Error(await res.text());
   return (await res.json()) as { 
     reply: string; 
-    sheet: any; 
+    sheet: any;
+    all_sheets: Record<string, any>; 
     log: { cell: string; old_value: any; new: any }[] 
   };
 }

@@ -6,22 +6,50 @@ import type { WorkbookState, SpreadsheetData } from "@/types/spreadsheet"
 import { fetchSheet } from "@/utils/backend"
 import { supabase } from "@/lib/supabase/client"
 
+// Add formula editing interface
+interface FormulaEdit {
+  active: boolean
+  originSheet: string        // where the edit began
+  cellId: string             // e.g. "B4"
+  buffer: string             // current text, starts with "="
+  anchor: number             // insert-point inside buffer
+}
+
 type Action =
   | {type:"INIT"; wid:string; sheets:string[]; active:string; data: Record<string,SpreadsheetData>}
   | {type:"SWITCH"; sid:string}
   | {type:"UPDATE_SHEET"; sid:string; data:SpreadsheetData}
   | {type:"ADD_SHEET"; sid:string; data:SpreadsheetData}
+  | {type:"MERGE_SHEETS_DATA"; data: Record<string,SpreadsheetData>}
+  | {type:"START_FORMULA_EDIT"; data: FormulaEdit}
+  | {type:"UPDATE_FORMULA_BUFFER"; buffer:string}
+  | {type:"END_FORMULA_EDIT"; commit:boolean}
+  | {type:"SELECT_CELL"; cell:string}
 
 function reducer(state:WorkbookState, action:Action):WorkbookState {
   switch(action.type){
     case "INIT": return {wid:action.wid, sheets:action.sheets,
-                         active:action.active, data:action.data}
+                         active:action.active, data:action.data,
+                         formula: {active: false}}
     case "SWITCH": return {...state, active:action.sid}
     case "UPDATE_SHEET": return {...state, data:{...state.data,[action.sid]:{...action.data}}}
     case "ADD_SHEET": return {...state,
                               sheets:[...state.sheets,action.sid],
                               active:action.sid,
                               data:{...state.data,[action.sid]:{...action.data}}}
+    case "MERGE_SHEETS_DATA": return {...state, data:{...state.data, ...action.data}}
+    case "START_FORMULA_EDIT": return {...state, formula: action.data}
+    case "UPDATE_FORMULA_BUFFER": 
+      return {
+        ...state, 
+        formula: {
+          ...state.formula, 
+          buffer: action.buffer,
+          anchor: action.buffer.length // Keep caret at end for better typing experience
+        }
+      }
+    case "END_FORMULA_EDIT": return {...state, formula: {active: false}}
+    case "SELECT_CELL": return {...state, selected: action.cell}
   }
 }
 
@@ -52,7 +80,8 @@ export function WorkbookProvider({children}:{children:React.ReactNode}){
     wid: getWorkbookId(), 
     sheets: [], 
     active: "Sheet1", 
-    data: {}
+    data: {},
+    formula: { active: false }
   } as WorkbookState);
   
   // Load initial sheet data

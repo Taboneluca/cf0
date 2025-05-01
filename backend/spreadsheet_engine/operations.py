@@ -56,12 +56,14 @@ def set_cell(cell_ref: str, value: Any, sheet=None) -> Dict[str, Any]:
         "new": value
     }
 
-def set_cells(updates: list[dict[str, Any]], sheet=None):
+def set_cells(updates: Union[list[dict[str, Any]], dict[str, Any]], sheet=None):
     """
     Apply many cell updates at once
     
     Args:
-        updates: List of update dictionaries, each containing 'cell' and 'value'
+        updates: Either:
+          - List of update dictionaries, each containing 'cell' and 'value'
+          - Dictionary of {cell_ref: value} pairs
         sheet: The sheet to update
         
     Returns:
@@ -69,8 +71,20 @@ def set_cells(updates: list[dict[str, Any]], sheet=None):
     """
     print(f'[{sheet.name}] bulk set_cells: {updates}')  # Log bulk updates
     changed = []
-    for u in updates:
-        changed.append(set_cell(u["cell"], u["value"], sheet))
+    
+    # Handle both formats: list of dicts or dict of cell->value
+    if isinstance(updates, dict):
+        # Dictionary format {cell: value, ...}
+        for cell, value in updates.items():
+            changed.append(set_cell(cell, value, sheet))
+    else:
+        # List format [{cell: "A1", value: 123}, ...]
+        for u in updates:
+            if isinstance(u, dict) and "cell" in u and "value" in u:
+                changed.append(set_cell(u["cell"], u["value"], sheet))
+            else:
+                print(f"Skipping invalid update item: {u}")
+                
     return {"updates": changed}
 
 def add_row(values: Optional[List[Any]] = None, sheet=None, row_index: Optional[int] = None) -> Dict[str, Any]:

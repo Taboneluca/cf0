@@ -3,6 +3,15 @@
 **/.env
 .env.local
 **/.env.local
+.env.development
+**/.env.development
+.env.test
+**/.env.test
+.env.production
+**/.env.production
+# Keep example env
+!.env.example
+!**/.env.example
 
 # Python
 __pycache__/

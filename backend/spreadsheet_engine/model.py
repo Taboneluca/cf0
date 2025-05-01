@@ -88,7 +88,7 @@ class Spreadsheet:
             sheet_name, col, row = match.groups()
             ref = f"{sheet_name}!{col}{row}"
             try:
-                from backend.workbook_store import get_workbook  # Import here to avoid circular import
+                from workbook_store import get_workbook  # Import here to avoid circular import
                 # Try to get the workbook and sheet from the cross-reference
                 # This is handled by the _split_ref method and the parent workbook
                 value = self.get_cell(ref, visited_cells)
@@ -170,7 +170,12 @@ class Spreadsheet:
         """
         match = re.match(r'^([A-Za-z]+)(\d+)$', cell_ref)
         if not match:
-            raise ValueError(f"Invalid cell reference: {cell_ref}")
+            # Check if it's potentially a cross-sheet reference that was passed incorrectly
+            if '!' in cell_ref:
+                sheet, local_ref = cell_ref.split('!', 1)
+                if re.match(r'^([A-Za-z]+)(\d+)$', local_ref):
+                    raise ValueError(f"Invalid cell reference format: {cell_ref}. Use sheet.get_cell('{cell_ref}') for cross-sheet references.")
+            raise ValueError(f"Invalid cell reference format: {cell_ref}. Expected format like 'A1', got '{cell_ref}'")
         
         col_str, row_str = match.groups()
         col_str = col_str.upper()  # Convert to uppercase for consistency
@@ -230,11 +235,18 @@ class Spreadsheet:
         # Handle cross-sheet references
         sheet_name, local_cell_ref = self._split_ref(cell_ref)
         
+        # Special case for dummy sheets created for missing references
+        if self.name.startswith("_MISSING_"):
+            return f"#REF!-{sheet_name}"
+            
         if sheet_name != self.name.upper():
             # This is a cross-sheet reference
             if self.workbook:
                 try:
                     other_sheet = self.workbook.sheet(sheet_name)
+                    if not other_sheet:
+                        print(f"Sheet '{sheet_name}' not found in workbook")
+                        return f"#REF!-{sheet_name}"
                     return other_sheet.get_cell(local_cell_ref, visited_cells.copy())
                 except Exception as e:
                     print(f"Error getting cross-sheet reference: {e}")
@@ -243,27 +255,36 @@ class Spreadsheet:
                 return f"#WORKBOOK!"  # No workbook reference available
                 
         # Handle local cell reference
-        row, col = self._parse_cell_ref(local_cell_ref)
-        
-        if row < 0 or row >= self.n_rows or col < 0 or col >= self.n_cols:
-            return f"#REF!-{local_cell_ref}"  # Out of bounds
-        
-        value = self.cells[row][col]
-        if isinstance(value, str) and value.startswith('='):
-            try:
-                # Pass the visited cells to detect circular references
-                return self._evaluate_formula(value, visited_cells.copy())
-            except Exception as e:
-                print(f"Formula evaluation error: {e}")
-                return f"#ERROR!-{local_cell_ref}"
-        return value
+        try:
+            row, col = self._parse_cell_ref(local_cell_ref)
+            
+            if row < 0 or row >= self.n_rows or col < 0 or col >= self.n_cols:
+                return f"#REF!-{local_cell_ref}"  # Out of bounds
+            
+            value = self.cells[row][col]
+            if isinstance(value, str) and value.startswith('=') and len(value.strip()) > 1:
+                try:
+                    # Pass the visited cells to detect circular references
+                    return self._evaluate_formula(value, visited_cells.copy())
+                except Exception as e:
+                    print(f"Formula evaluation error: {e}")
+                    return f"#ERROR!-{local_cell_ref}"
+            return value
+        except Exception as e:
+            print(f"Error accessing cell {local_cell_ref}: {e}")
+            return f"#REF!-{local_cell_ref}"
     
     def set_cell(self, cell_ref: str, value: Any) -> None:
         """Set the value of a cell by its reference"""
         # Handle only local cell references for setting
         if '!' in cell_ref:
             raise ValueError("Cannot set cross-sheet cell directly")
-            
+        
+        # Reject lone "=" to prevent unnecessary formula processing
+        if isinstance(value, str) and value.strip() == "=":
+            # treat as empty entry, do *not* save single "="
+            value = ""
+        
         row, col = self._parse_cell_ref(cell_ref)
         
         if row < 0 or row >= self.n_rows or col < 0 or col >= self.n_cols:

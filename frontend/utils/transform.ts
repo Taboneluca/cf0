@@ -35,4 +35,17 @@ export function backendSheetToUI(sheet: {
   }
   
   return { columns, rows, cells };
+}
+
+// Add this function to convert a map of backend sheets to a map of UI sheets
+export function backendSheetToUIMap(sheets: Record<string, any>): Record<string, any> {
+  if (!sheets) return {};
+  
+  const result: Record<string, any> = {};
+  
+  for (const [sheetName, sheet] of Object.entries(sheets)) {
+    result[sheetName] = backendSheetToUI(sheet);
+  }
+  
+  return result;
 } 
