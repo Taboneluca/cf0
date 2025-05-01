@@ -76,13 +76,43 @@ async def process_message(
         list_sheets, get_sheet_summary
     )
     
+    # Helper wrapper functions to accept multiple parameter naming styles
+    def _wrap_get_cell(get_cell_fn, sheet):
+        """accept both `cell` and `cell_ref` so the agent never 500s"""
+        def _f(cell_ref: str = None, cell: str = None, **kw):
+            ref = cell_ref or cell
+            if ref is None:
+                return {"error": "Missing cell reference"}
+            return get_cell_fn(ref, sheet=sheet)
+        return _f
+    
+    def _wrap_get_range(get_range_fn, sheet):
+        def _f(range_ref: str = None, range: str = None, **kw):
+            ref = range_ref or range
+            if ref is None:
+                return {"error": "Missing range reference"}
+            return get_range_fn(ref, sheet=sheet)
+        return _f
+    
+    def _wrap_calculate(calculate_fn, sheet):
+        def _f(formula: str = None, **kw):
+            if not formula:
+                return {"error": "Missing formula"}
+            return calculate_fn(formula, sheet=sheet)
+        return _f
+    
     # Function to handle cross-sheet references in set_cell
-    def set_cell_with_xref(cell: str, value: Any, **kwargs):
+    def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, **kwargs):
+        # Accept either cell_ref or cell parameter name
+        ref = cell_ref if cell_ref is not None else cell
+        if ref is None:
+            return {"error": "Missing cell reference parameter"}
+        
         target_sheet = sheet
         
         # If the cell reference includes a sheet name (e.g., Sheet2!A1)
-        if "!" in cell:
-            sheet_name, cell_ref = cell.split("!", 1)
+        if "!" in ref:
+            sheet_name, cell_ref = ref.split("!", 1)
             try:
                 target_sheet = workbook.sheet(sheet_name)
                 return set_cell(cell_ref, value, sheet=target_sheet)
@@ -90,25 +120,43 @@ async def process_message(
                 return {"error": f"Error with cross-sheet reference: {e}"}
         
         # Regular cell reference
-        return set_cell(cell, value, **kwargs)
+        return set_cell(ref, value, **kwargs)
     
     # Function to handle set_cells with cross-sheet references
-    def set_cells_with_xref(cells_dict: Dict[str, Any], **kwargs):
+    def set_cells_with_xref(updates: list[dict[str, Any]] = None, cells_dict: dict[str, Any] = None, **kwargs):
+        from collections import defaultdict
         results = []
         
-        # Group by sheet
-        sheet_cells = {}
+        # Handle both parameter naming styles
+        if updates is None and cells_dict is None:
+            return {"error": "Missing updates parameter"}
         
-        for cell, value in cells_dict.items():
-            if "!" in cell:
-                sheet_name, cell_ref = cell.split("!", 1)
-                if sheet_name not in sheet_cells:
-                    sheet_cells[sheet_name] = {}
-                sheet_cells[sheet_name][cell_ref] = value
-            else:
-                if sid not in sheet_cells:
-                    sheet_cells[sid] = {}
-                sheet_cells[sid][cell] = value
+        # Use whichever parameter is provided
+        data = updates if updates is not None else cells_dict
+        
+        if isinstance(data, dict):
+            # Convert dict format to list format for uniformity
+            items = []
+            for cell, value in data.items():
+                items.append({"cell": cell, "value": value})
+            data = items
+        
+        # Group by sheet
+        sheet_cells = defaultdict(dict)
+        
+        for item in data:
+            if isinstance(item, dict):
+                cell = item.get("cell")
+                value = item.get("value")
+                
+                if cell is None or value is None:
+                    continue
+                
+                if "!" in cell:
+                    sheet_name, cell_ref = cell.split("!", 1)
+                    sheet_cells[sheet_name][cell_ref] = value
+                else:
+                    sheet_cells[sid][cell] = value
         
         # Apply changes by sheet
         for sheet_name, cells in sheet_cells.items():
@@ -123,10 +171,10 @@ async def process_message(
     
     # Create partial functions for all tools with the sheet parameter
     tools = {
-        "get_cell": partial(get_cell, sheet=sheet),
-        "get_range": partial(get_range, sheet=sheet),
+        "get_cell": _wrap_get_cell(get_cell, sheet),
+        "get_range": _wrap_get_range(get_range, sheet),
         "summarize_sheet": partial(summarize_sheet, sheet=sheet),
-        "calculate": partial(calculate, sheet=sheet),
+        "calculate": _wrap_calculate(calculate, sheet),
         "set_cell": set_cell_with_xref,  # Use wrapper for cross-sheet references
         "add_row": partial(add_row, sheet=sheet),
         "add_column": partial(add_column, sheet=sheet),
@@ -189,6 +237,7 @@ You can now work with cross-sheet formulas. Examples:
     # Return the reply, updated sheet state, and log of changes
     return {
         "reply": result["reply"], 
-        "sheet": sheet.to_dict(), 
+        "sheet": sheet.to_dict(),
+        "all_sheets": {name: s.to_dict() for name, s in workbook.all_sheets().items()},
         "log": collected_updates
     } 

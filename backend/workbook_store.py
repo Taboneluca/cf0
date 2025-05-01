@@ -26,8 +26,12 @@ class Workbook:
         for sheet_name, sheet in self.sheets.items():
             if sheet_name.upper() == sid_upper:
                 return sheet
-                
-        raise KeyError(f"Sheet {sid} not in workbook {self.id}")
+        
+        # If sheet doesn't exist, create it instead of returning a dummy
+        # (this fixes the cross-sheet reference error)
+        self.sheets[sid] = Spreadsheet(name=sid)
+        self.sheets[sid].workbook = self
+        return self.sheets[sid]
 
     def new_sheet(self, name: str) -> Spreadsheet:
         # Check case-insensitive to avoid confusion with similar sheet names

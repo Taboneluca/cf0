@@ -14,7 +14,7 @@ from spreadsheet_engine import (
     DEFAULT_ROWS,
     DEFAULT_COLS
 )
-from workbook_store import get_sheet, get_workbook
+from workbook_store import get_sheet, get_workbook, workbooks
 from chat.router import process_message
 from agents.openai_client import client, OpenAIError
 from chat.memory import clear_history
@@ -103,6 +103,20 @@ async def update_sheet(request: SheetUpdateRequest, wid: str, sid: str):
         # Ensure the response has 'new' instead of 'new_value' for consistency
         if 'new_value' in result and 'new' not in result:
             result['new'] = result['new_value']
+        
+        # Get workbook to return all sheets
+        wb = get_workbook(wid)
+        
+        # Add all sheets data to the response
+        result.update({
+            "sheet": sheet.to_dict(),
+            "all_sheets": {
+                name: s.to_dict()
+                for name, s in wb.all_sheets().items()
+            },
+            "active": target_sid
+        })
+        
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -221,6 +235,17 @@ async def reset_session(session_id: str = "default"):
     """Reset conversation history for a specific session"""
     clear_history(session_id)
     return {"status": "success"}
+
+# Add a delete endpoint for workbooks
+@app.delete("/workbook/{wid}")
+async def delete_workbook(wid: str):
+    """Delete a workbook and all its sheets"""
+    try:
+        # Safely remove from memory (no error if missing)
+        workbooks.pop(wid, None)
+        return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

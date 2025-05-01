@@ -26,7 +26,7 @@ const FUNCTIONS: { [key: string]: (...args: number[]) => number } = {
 
 // Check if a string is a formula (starts with =)
 export const isFormula = (value: string): boolean => {
-  return value.trim().startsWith("=")
+  return value.trim().startsWith("=") && value.trim().length > 1
 }
 
 // Interface for cell references, including cross-sheet references
@@ -66,6 +66,31 @@ export const getCellReferences = (formula: string): CellReference[] => {
 
   return refs
 }
+
+// Create a safe sandbox for formula evaluation
+const createFormulaSandbox = () => {
+  return {
+    SUM: (...args: number[]) => args.reduce((sum, val) => sum + val, 0),
+    AVG: (...args: number[]) => (args.length ? args.reduce((sum, val) => sum + val, 0) / args.length : 0),
+    MIN: Math.min,
+    MAX: Math.max,
+    COUNT: (...args: any[]) => args.length,
+    ABS: Math.abs,
+    ROUND: (a: number, decimals = 0) => Number(Math.round(Number(a + "e" + decimals)) + "e-" + decimals),
+    
+    // Helper for getting cell values
+    get: (sheet: string, cell: string, getCellValue: Function, activeSheet: string) => {
+      const value = getCellValue(cell, sheet === "currentSheet" ? activeSheet : sheet);
+      return isNaN(Number(value)) ? 0 : Number(value);
+    },
+    
+    // Helper for ranges (simplified implementation)
+    range: (start: string, end: string) => {
+      // This is a placeholder - in a real implementation, you'd extract all cells in the range
+      return [0]; // Return dummy value for now
+    }
+  };
+};
 
 // Evaluate a formula
 export const evaluateFormula = (
@@ -128,53 +153,81 @@ export const evaluateFormula = (
     // Replace cell references with their values
     const cellRefs = getCellReferences(expression)
 
-    for (const ref of cellRefs) {
-      const fullRef = ref.sheet ? `${ref.sheet}!${ref.cell}` : ref.cell
-      const value = evaluateReference(ref)
-      
-      // Replace the reference with its value in the formula
-      // For sheet references like "Sheet1!A1", need to escape the !
+    // Replace cell references with unique tokens first
+    const replacements: Record<string, string> = {};
+
+    cellRefs.forEach((ref, i) => {
+      const token = `__REF_${i}__`;
+      const getCall = ref.sheet
+        ? `get("${ref.sheet}","${ref.cell}",getCellValue,"${activeSheet || ''}")`
+        : `get("currentSheet","${ref.cell}",getCellValue,"${activeSheet || ''}")`;
+
       const pattern = ref.sheet
         ? new RegExp(`${ref.sheet}\\!${ref.cell}`, 'gi')
-        : new RegExp(`\\b${ref.cell}\\b`, 'gi')
-        
-      expression = expression.replace(pattern, isNaN(Number(value)) ? "0" : value)
-    }
+        : new RegExp(`\\b${ref.cell}\\b`, 'gi');
 
-    // Handle functions
+      expression = expression.replace(pattern, token);
+      replacements[token] = getCall;
+    });
+
+    // Once all tokens are in place, expand them
+    Object.keys(replacements).forEach(token => {
+      expression = expression.replaceAll(token, replacements[token]);
+    });
+
+    // Handle built-in functions by replacing with sandbox functions
     for (const funcName of Object.keys(FUNCTIONS)) {
       const funcRegex = new RegExp(`${funcName}\\(([^)]+)\\)`, "gi")
+      expression = expression.replace(funcRegex, (match, args) => {
+        // Don't actually evaluate here, keep the function call intact
+        return match;
+      })
+    }
 
-      while (funcRegex.test(expression)) {
-        expression = expression.replace(funcRegex, (match, args) => {
-          const argValues = args.split(",").map((arg: string) => {
-            // Evaluate each argument
-            try {
-              return Function('"use strict";return (' + arg.trim() + ")")()
-            } catch (e) {
-              return 0
-            }
-          })
+    // Defensive check for empty expression
+    if (!expression.trim()) return "#EMPTY!"
+    
+    // Check for incomplete expressions that would cause syntax errors
+    if (/[\+\-\*\/\^]$/.test(expression.trim())) return "#ERROR!"
 
-          return FUNCTIONS[funcName](...argValues).toString()
-        })
+    // Create sandbox with helper functions and built-in functions
+    const sandbox = createFormulaSandbox();
+    
+    // Add getCellValue to the sandbox
+    const sandboxWithContext = {
+      ...sandbox,
+      getCellValue: getCellValue
+    };
+    
+    // Extract function names for the Function constructor
+    const functionNames = [...Object.keys(sandboxWithContext)];
+    
+    // Evaluate the expression safely within the sandbox
+    try {
+      try {
+        const evaluator = Function(...functionNames, `"use strict"; return (${expression})`);
+        const result = evaluator(...functionNames.map(name => sandboxWithContext[name as keyof typeof sandboxWithContext]));
+
+        // Format the result
+        if (typeof result === "number") {
+          // Handle special cases
+          if (isNaN(result)) return "#NaN"
+          if (!isFinite(result)) return "#DIV/0!"
+
+          // Format number to avoid excessive decimal places
+          return result.toString()
+        }
+
+        return result?.toString() || "#ERROR!";
+      } catch (error) {
+        console.error("Expression evaluation error:", error);
+        console.error("Failed expression:", expression);
+        return "#ERROR!";
       }
+    } catch (error) {
+      console.error("Formula evaluation error:", error)
+      return "#ERROR!"
     }
-
-    // Evaluate the expression
-    const result = Function('"use strict";return (' + expression + ")")()
-
-    // Format the result
-    if (typeof result === "number") {
-      // Handle special cases
-      if (isNaN(result)) return "#NaN"
-      if (!isFinite(result)) return "#DIV/0!"
-
-      // Format number to avoid excessive decimal places
-      return result.toString()
-    }
-
-    return result.toString()
   } catch (error) {
     console.error("Formula evaluation error:", error)
     return "#ERROR!"

@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react"
 import type { SpreadsheetData } from "@/types/spreadsheet"
 import { isFormula, evaluateFormula, detectCircularReferences } from "@/utils/formula-engine"
 import { useWorkbook } from "@/context/workbook-context"
-import SheetTabs from "./sheet-tabs"
+import { useEditing, makeA1 } from "@/context/editing-context"
 
 interface SpreadsheetViewProps {
   data: SpreadsheetData
@@ -14,31 +14,22 @@ interface SpreadsheetViewProps {
   readOnly?: boolean
 }
 
-interface EditingState {
-  formulaMode: boolean;
-  buffer: string;
-  originalValue: string;
-  cursorPosition: number;
-  anchor: number;       // Position where the current reference starts
-}
-
 export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }: SpreadsheetViewProps) {
-  const [selectedCell, setSelectedCell] = useState<string | null>(null)
-  const [editingCell, setEditingCell] = useState<string | null>(null)
-  const [editValue, setEditValue] = useState("")
-  const [editingState, setEditingState] = useState<EditingState>({
-    formulaMode: false,
-    buffer: "",
-    originalValue: "",
-    cursorPosition: 0,
-    anchor: 0
-  })
+  const [wb, dispatch] = useWorkbook()
+  const { active, data: allSheets, selected } = wb
+  const { 
+    editingState, 
+    startEdit, 
+    updateDraft, 
+    appendReference, 
+    commitEdit, 
+    cancelEdit 
+  } = useEditing()
+
   const inputRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cellRefs = useRef<{ [key: string]: HTMLTableCellElement | null }>({})
-  const [wb, dispatch] = useWorkbook()
-  const { wid, active } = wb
 
   // Function to get cell coordinates from cell ID (e.g., "A1" -> {col: "A", row: 1})
   const getCellCoords = (cellId: string) => {
@@ -54,9 +45,10 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     return `${col}${row}`
   }
 
-  // Function to get the raw value of a cell
-  const getCellRawValue = (cellId: string): string => {
-    return data.cells[cellId]?.value || ""
+  // Function to get the raw value of a cell, supports cross-sheet references
+  const getCellRawValue = (cellId: string, sheet = active): string => {
+    const sheetData = allSheets[sheet]
+    return sheetData?.cells[cellId]?.value ?? ""
   }
 
   // Function to get the displayed value of a cell (evaluates formulas)
@@ -64,7 +56,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     const rawValue = getCellRawValue(cellId)
 
     if (isFormula(rawValue)) {
-      return evaluateFormula(rawValue, getCellRawValue)
+      return evaluateFormula(rawValue, getCellRawValue, active, allSheets)
     }
 
     return rawValue
@@ -73,7 +65,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
   // Function to select a cell without entering edit mode
   const selectCell = (col: string, row: number) => {
     const cellId = getCellId(col, row)
-    setSelectedCell(cellId)
+    dispatch({ type: "SELECT_CELL", cell: cellId })
 
     // Scroll cell into view immediately
     const cell = cellRefs.current[cellId]
@@ -82,35 +74,28 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     }
   }
 
+  // Check if a cell is currently being edited
+  const isEditingCell = (cellId: string): boolean => {
+    if (!editingState.isEditing) return false;
+    
+    const isOriginCell = (
+      editingState.originSheet === active &&
+      editingState.originCol === getCellCoords(cellId).col &&
+      editingState.originRow === getCellCoords(cellId).row
+    );
+    
+    return isOriginCell;
+  }
+
   // Function to enter edit mode for a cell
   const editCell = (cellId: string, initialValue?: string, cursorToEnd = true) => {
     if (readOnly) return // Don't allow editing in read-only mode
-
-    setEditingCell(cellId)
-    // When editing, show the raw formula, not the evaluated result
-    const cellValue = initialValue !== undefined ? initialValue : getCellRawValue(cellId)
-    setEditValue(cellValue)
     
-    // Reset formula mode state
-    setEditingState({
-      formulaMode: false,
-      buffer: cellValue,
-      originalValue: cellValue,
-      cursorPosition: cursorToEnd ? cellValue.length : 0,
-      anchor: 0
-    })
-
-    // Check if this is a formula and set formula mode
-    if (cellValue && cellValue.startsWith('=')) {
-      setEditingState({
-        formulaMode: true,
-        buffer: cellValue,
-        originalValue: cellValue,
-        cursorPosition: cellValue.length,
-        anchor: 1 // Right after the = sign
-      })
-    }
-
+    const { col, row } = getCellCoords(cellId);
+    const cellValue = initialValue !== undefined ? initialValue : getCellRawValue(cellId);
+    
+    startEdit(active, row, col, cellValue);
+    
     // Focus and position cursor appropriately after render
     setTimeout(() => {
       if (inputRef.current) {
@@ -127,106 +112,10 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     }, 0)
   }
 
-  // Insert cell reference at current cursor position
-  const insertCellReference = (col: string, row: number) => {
-    if (!inputRef.current || !editingState.formulaMode) return
-    
-    const cellRef = getCellId(col, row)
-    const { buffer, anchor } = editingState
-    
-    // Replace any existing reference after anchor point with the new reference
-    const newValue = 
-      buffer.substring(0, anchor) + 
-      cellRef
-    
-    // Update the buffer and cursor position
-    setEditValue(newValue)
-    setEditingState({
-      ...editingState,
-      buffer: newValue,
-      cursorPosition: anchor + cellRef.length,
-      anchor: anchor  // Keep same anchor point for potential further navigation
-    })
-    
-    // Set cursor position after reference
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus()
-        inputRef.current.setSelectionRange(
-          anchor + cellRef.length,
-          anchor + cellRef.length
-        )
-      }
-    }, 0)
-  }
-
-  // Handle single click - just select the cell
-  const handleCellClick = (cellId: string) => {
-    // If already editing, commit changes first
-    if (editingCell) {
-      commitEdit()
-    }
-
-    setSelectedCell(cellId)
-  }
-
-  // Handle double click - enter edit mode
-  const handleCellDoubleClick = (cellId: string) => {
-    if (readOnly) return // Don't allow editing in read-only mode
-
-    setSelectedCell(cellId)
-    editCell(cellId, undefined, true) // Position cursor at end on double-click (Excel behavior)
-  }
-
-  // Commit the current edit
-  const commitEdit = async () => {
-    if (editingCell) {
-      const { col, row } = getCellCoords(editingCell)
-
-      // Check for circular references if it's a formula
-      if (isFormula(editValue)) {
-        if (detectCircularReferences(editingCell, editValue, getCellRawValue)) {
-          // Handle circular reference error
-          alert("Circular reference detected. Formula not applied.")
-          return
-        }
-      }
-
-      // Update the UI state
-      onCellUpdate(row, col, editValue)
-      
-      // Send update to backend
-      try {
-        if (wid) {
-          await fetch(
-            `${process.env.NEXT_PUBLIC_BACKEND_URL}/workbook/${wid}/sheet/${active}/update`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ cell: editingCell, value: editValue })
-            }
-          );
-        }
-      } catch (error) {
-        console.error("Error updating cell on backend:", error)
-      }
-      
-      // Exit formula mode and editing mode
-      setEditingState({
-        formulaMode: false,
-        buffer: "",
-        originalValue: "",
-        cursorPosition: 0,
-        anchor: 0
-      })
-      setEditingCell(null)
-    }
-  }
-
-  // Handle keyboard navigation
-  const navigateSelection = (direction: "up" | "down" | "left" | "right") => {
-    if (selectedCell) {
-      const { col, row } = getCellCoords(selectedCell)
+  // Move selection by direction
+  const moveSelectionBy = (direction: "up" | "down" | "left" | "right") => {
+    if (selected) {
+      const { col, row } = getCellCoords(selected)
       const colIndex = data.columns.indexOf(col)
 
       let newCol = col
@@ -255,254 +144,266 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
           break
       }
 
-      // If in formula mode, insert the cell reference
-      if (editingState.formulaMode && editingCell) {
-        insertCellReference(newCol, newRow)
-      }
-      
-      // Always select the new cell to give visual feedback
       selectCell(newCol, newRow)
+      return { col: newCol, row: newRow };
     }
+    return null;
   }
 
-  // Update cursor position when input value changes
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = e.target.value
-    setEditValue(newValue)
+  // Move selection to specific coordinates
+  const moveSelectionTo = (row: number, col: string) => {
+    selectCell(col, row);
+    return { col, row };
+  }
+
+  // Handle single click - select cell and insert reference if in formula mode
+  const handleCellClick = (cellId: string) => {
+    const { col, row } = getCellCoords(cellId);
     
-    if (editingState.formulaMode) {
-      setEditingState({
-        ...editingState,
-        buffer: newValue,
-        cursorPosition: e.target.selectionStart || 0
-      })
+    // If editing a formula, insert a reference to the clicked cell
+    if (editingState.isEditing && editingState.draft.startsWith("=")) {
+      const ref = makeA1(row, col, active, editingState.originSheet);
+      appendReference(ref);
+      selectCell(col, row);
+      return;
     }
+    
+    // Otherwise just select the cell
+    selectCell(col, row);
   }
 
-  // Track cursor position as user navigates within input
-  const handleInputSelect = (e: React.SyntheticEvent<HTMLInputElement>) => {
-    if (editingState.formulaMode) {
-      const input = e.target as HTMLInputElement
-      setEditingState({
-        ...editingState,
-        cursorPosition: input.selectionStart || 0
-      })
-    }
+  // Handle double click - enter edit mode
+  const handleCellDoubleClick = (cellId: string) => {
+    if (readOnly) return; // Don't allow editing in read-only mode
+    
+    // Enter edit mode for this cell
+    editCell(cellId);
   }
 
-  // Handle key press when editing a cell
-  const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    if (!editingCell) return
-
-    // If the user types "=" at the beginning of the input, enter formula mode
-    if (e.key === "=" && !editingState.formulaMode && 
-        (editValue === "" || inputRef.current?.selectionStart === 0)) {
-      setEditingState({
-        formulaMode: true,
-        buffer: "=",
-        originalValue: editValue,
-        cursorPosition: 1,
-        anchor: 1  // Set anchor right after the = sign
-      })
-      setEditValue("=")
-      e.preventDefault()
-      return
-    }
-
-    // If in formula mode and user presses an arrow key, navigate and insert cell reference
-    if (editingState.formulaMode && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
-      const direction = e.key.replace("Arrow", "").toLowerCase() as "up" | "down" | "left" | "right"
-      navigateSelection(direction)
-      e.preventDefault()
-      return
-    }
-
-    // Handle formula mode operators
-    if (editingState.formulaMode && ["+", "-", "*", "/", "^", "(", ")"].includes(e.key)) {
-      const { buffer, cursorPosition } = editingState
-      const newValue = 
-        buffer.substring(0, cursorPosition) + 
-        e.key + 
-        buffer.substring(cursorPosition)
+  // Commit the current edit
+  const handleCommitEdit = async () => {
+    if (editingState.isEditing && editingState.originSheet && editingState.originRow && editingState.originCol) {
+      const row = editingState.originRow;
+      const col = editingState.originCol;
       
-      setEditValue(newValue)
-      const newCursorPos = cursorPosition + 1
-      setEditingState({
-        ...editingState,
-        buffer: newValue,
-        cursorPosition: newCursorPos,
-        anchor: newCursorPos  // Set anchor after the operator for next cell reference
-      })
-      
-      // Set cursor position after the operator
-      setTimeout(() => {
-        if (inputRef.current) {
-          inputRef.current.focus()
-          inputRef.current.setSelectionRange(
-            newCursorPos,
-            newCursorPos
-          )
-        }
-      }, 0)
-      
-      e.preventDefault()
-      return
-    }
-
-    // Add navigation across sheets with Ctrl+PgUp/PgDn
-    if (e.ctrlKey && (e.key === "PageUp" || e.key === "PageDown")) {
-      const currentIndex = wb.sheets.indexOf(active);
-      if (currentIndex >= 0) {
-        const direction = e.key === "PageUp" ? -1 : 1;
-        const nextIndex = (currentIndex + direction + wb.sheets.length) % wb.sheets.length;
-        const nextSheet = wb.sheets[nextIndex];
-        if (nextSheet && editingState.formulaMode) {
-          // Only switch sheet during formula editing
-          dispatch({ type: "SWITCH", sid: nextSheet });
-          e.preventDefault();
+      // Check for circular references if it's a formula
+      if (isFormula(editingState.draft)) {
+        const cellId = getCellId(col, row);
+        if (detectCircularReferences(cellId, editingState.draft, getCellRawValue)) {
+          // Handle circular reference error
+          alert("Circular reference detected. Formula not applied.");
           return;
         }
       }
-    }
-
-    switch (e.key) {
-      case "Enter":
-        commitEdit()
-        if (e.shiftKey) {
-          navigateSelection("up")
-        } else {
-          navigateSelection("down")
-        }
-        e.preventDefault()
-        break
-      case "Tab":
-        commitEdit()
-        if (e.shiftKey) {
-          navigateSelection("left")
-        } else {
-          navigateSelection("right")
-        }
-        e.preventDefault()
-        break
-      case "Escape":
-        // Cancel edit and revert to original value
-        setEditingCell(null)
-        setEditingState({
-          formulaMode: false,
-          buffer: "",
-          originalValue: "",
-          cursorPosition: 0,
-          anchor: 0
-        })
-        e.preventDefault()
-        break
+      
+      // Update the cell value
+      onCellUpdate(row, col, editingState.draft);
+      
+      // Exit editing mode
+      commitEdit();
     }
   }
 
-  // Handle key press when a cell is selected but not in edit mode
+  // Handle keyboard input when editing a cell
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (!editingState.isEditing) return;
+    
+    // Handle special keys for formula navigation
+    if (editingState.draft.startsWith("=") && 
+       ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      
+      e.preventDefault(); // Don't move cursor in input
+      
+      // Move selection according to arrow key
+      const direction = e.key.replace("Arrow", "").toLowerCase() as "up" | "down" | "left" | "right";
+      const newPos = moveSelectionBy(direction);
+      
+      // Insert reference at cursor position if we successfully moved
+      if (newPos) {
+        // If this is the first navigation after typing "=", add the reference
+        // Otherwise, just update the UI highlight without modifying the formula
+        if (editingState.draft === "=") {
+          const ref = makeA1(newPos.row, newPos.col, active, editingState.originSheet);
+          appendReference(ref);
+        }
+
+        // Re-focus the input so the toolbar doesn't grab the focus
+        setTimeout(() => {
+          if (inputRef.current) {
+            inputRef.current.focus();
+            // Position cursor at the end
+            inputRef.current.setSelectionRange(editingState.caretPos, editingState.caretPos);
+          }
+        }, 0);
+      }
+      
+      return;
+    }
+    
+    // Excel-like special handling for F4 key to cycle through reference types (A1, $A1, A$1, $A$1)
+    if (e.key === "F4" && editingState.draft.startsWith("=")) {
+      e.preventDefault();
+      // This would require a more complex implementation to cycle through reference types
+      // by modifying the formula - a future enhancement
+      return;
+    }
+    
+    // Handle F2 toggle between navigation and editing mode
+    if (e.key === "F2") {
+      e.preventDefault();
+      // In Excel, F2 toggles between navigating with arrow keys and moving cursor in formula
+      // This would require a mode flag - a future enhancement
+      return;
+    }
+    
+    // Handle other editing keys
+    switch (e.key) {
+      case "Enter":
+        if (!e.shiftKey) {
+          e.preventDefault();
+          handleCommitEdit();
+          
+          // Move down if not holding Ctrl
+          if (!e.ctrlKey) {
+            moveSelectionBy("down");
+          }
+        }
+        break;
+        
+      case "Tab":
+        e.preventDefault();
+        handleCommitEdit();
+        
+        // Move left or right
+        if (e.shiftKey) {
+          moveSelectionBy("left");
+        } else {
+          moveSelectionBy("right");
+        }
+        break;
+        
+      case "Escape":
+        e.preventDefault();
+        cancelEdit();
+        break;
+    }
+  }
+
+  // Handle input change when editing
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    updateDraft(newValue, e.target.selectionStart || 0);
+  }
+
+  // Handle cursor position changes
+  const handleInputSelect = (e: React.SyntheticEvent<HTMLInputElement>) => {
+    const input = e.target as HTMLInputElement;
+    updateDraft(editingState.draft, input.selectionStart || 0);
+  }
+
+  // Handle key press when cell is selected but not in edit mode
   const handleSelectionKeyDown = (e: React.KeyboardEvent) => {
-    if (!selectedCell || editingCell) return
+    if (!selected || editingState.isEditing) return;
 
     switch (e.key) {
       case "ArrowUp":
-        navigateSelection("up")
-        e.preventDefault()
-        break
       case "ArrowDown":
-        navigateSelection("down")
-        e.preventDefault()
-        break
       case "ArrowLeft":
-        navigateSelection("left")
-        e.preventDefault()
-        break
       case "ArrowRight":
-        navigateSelection("right")
-        e.preventDefault()
-        break
+        e.preventDefault();
+        moveSelectionBy(e.key.replace("Arrow", "").toLowerCase() as any);
+        break;
+        
+      case "=":
+        // Start formula edit mode
+        if (!readOnly) {
+          e.preventDefault();
+          const { col, row } = getCellCoords(selected);
+          startEdit(active, row, col, "=");
+        }
+        break;
+        
       case "Enter":
         if (readOnly) {
           // In read-only mode, just navigate
           if (e.shiftKey) {
-            navigateSelection("up")
+            moveSelectionBy("up");
           } else {
-            navigateSelection("down")
+            moveSelectionBy("down");
           }
         } else {
           // In edit mode, enter edit mode
-          editCell(selectedCell)
+          e.preventDefault();
+          editCell(selected);
         }
-        e.preventDefault()
-        break
+        break;
+        
       case "Tab":
+        e.preventDefault();
         if (e.shiftKey) {
-          // Shift+Tab moves left in selection mode
-          navigateSelection("left")
+          moveSelectionBy("left");
         } else {
-          // Tab moves right in selection mode
-          navigateSelection("right")
+          moveSelectionBy("right");
         }
-        e.preventDefault()
-        break
-      case "F2":
-        if (!readOnly) {
-          // F2 enters edit mode with cursor at the end (Excel behavior)
-          editCell(selectedCell, undefined, true)
-        }
-        e.preventDefault()
-        break
-      case "=":
-        if (!readOnly) {
-          // Starting with = enters formula mode
-          editCell(selectedCell, "=", true)
-          setEditingState({
-            formulaMode: true,
-            buffer: "=",
-            originalValue: "",
-            cursorPosition: 1,
-            anchor: 1  // Set anchor right after the = for formula mode
-          })
-          e.preventDefault()
-        }
-        break
+        break;
+        
       case "Home":
+        e.preventDefault();
         if (e.ctrlKey) {
-          // Ctrl+Home goes to A1 (Excel behavior)
-          selectCell("A", 1)
+          // Ctrl+Home goes to A1
+          selectCell("A", 1);
         } else {
-          // Home goes to first cell in row (Excel behavior)
-          const { row } = getCellCoords(selectedCell)
-          selectCell(data.columns[0], row)
+          // Home goes to first cell in row
+          const { row } = getCellCoords(selected);
+          selectCell(data.columns[0], row);
         }
-        e.preventDefault()
-        break
+        break;
+        
       case "End":
+        e.preventDefault();
         if (e.ctrlKey) {
-          // Ctrl+End goes to last cell with data (simplified here)
-          selectCell(data.columns[data.columns.length - 1], data.rows[data.rows.length - 1])
+          // Ctrl+End goes to last cell
+          selectCell(data.columns[data.columns.length - 1], data.rows[data.rows.length - 1]);
         } else {
-          // End goes to last cell in row (Excel behavior)
-          const { row } = getCellCoords(selectedCell)
-          selectCell(data.columns[data.columns.length - 1], row)
+          // End goes to last cell in row
+          const { row } = getCellCoords(selected);
+          selectCell(data.columns[data.columns.length - 1], row);
         }
-        e.preventDefault()
-        break
+        break;
+        
       case "Delete":
       case "Backspace":
         if (!readOnly) {
-          // Clear cell content (Excel behavior)
-          const { col, row } = getCellCoords(selectedCell)
-          onCellUpdate(row, col, "")
+          // Clear cell content
+          e.preventDefault();
+          const { col, row } = getCellCoords(selected);
+          onCellUpdate(row, col, "");
         }
-        e.preventDefault()
-        break
+        break;
+        
+      case "F2":
+        // Excel-like F2 to enter edit mode without clearing cell
+        if (!readOnly) {
+          e.preventDefault();
+          editCell(selected, undefined, true);
+        }
+        break;
+        
       default:
-        // If user starts typing, enter edit mode and set the first character
+        // If user starts typing a printable character, enter edit mode with that character
         if (!readOnly && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-          editCell(selectedCell, e.key, true)
-          e.preventDefault()
+          e.preventDefault();
+          const { col, row } = getCellCoords(selected);
+          startEdit(active, row, col, e.key);
+          
+          // Ensure focus stays in the cell
+          setTimeout(() => {
+            if (inputRef.current) {
+              inputRef.current.focus();
+            }
+          }, 0);
         }
-        break
+        break;
     }
   }
 
@@ -510,32 +411,21 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
   const handleContainerKeyDown = (e: React.KeyboardEvent) => {
     // Don't handle keyboard events for toolbar navigation
     if (e.target !== containerRef.current && !(e.target as Element)?.closest?.("table")) {
-      return
+      return;
     }
 
-    if (editingCell) {
+    if (editingState.isEditing) {
       // Let the editing input handle its own keyboard events
-      return
+      return;
     }
 
-    if (selectedCell) {
+    if (selected) {
       // Handle navigation when a cell is selected
-      handleSelectionKeyDown(e)
-    } else {
+      handleSelectionKeyDown(e);
+    } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Tab", "Home", "End"].includes(e.key)) {
       // If no cell is selected, select A1 on any navigation key
-      switch (e.key) {
-        case "ArrowUp":
-        case "ArrowDown":
-        case "ArrowLeft":
-        case "ArrowRight":
-        case "Enter":
-        case "Tab":
-        case "Home":
-        case "End":
-          selectCell("A", 1)
-          e.preventDefault()
-          break
-      }
+      e.preventDefault();
+      selectCell("A", 1);
     }
   }
 
@@ -544,11 +434,12 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     cellRefs.current[cellId] = element;
   };
 
+  // Auto-focus the cell input when editing starts
   useEffect(() => {
-    if (editingCell && inputRef.current) {
-      inputRef.current.focus()
+    if (editingState.isEditing && inputRef.current) {
+      inputRef.current.focus();
     }
-  }, [editingCell])
+  }, [editingState.isEditing]);
 
   return (
     <div
@@ -580,13 +471,15 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                 </td>
                 {data.columns.map((col) => {
                   const cellId = `${col}${row}`
-                  const isSelected = selectedCell === cellId
-                  const isEditing = editingCell === cellId
+                  const isSelected = selected === cellId
+                  const currentlyEditing = isEditingCell(cellId)
                   const rawValue = getCellRawValue(cellId)
                   const displayValue = getCellDisplayValue(cellId)
                   const isFormulaCell = isFormula(rawValue)
-                  const isReferenced = editingState.formulaMode && selectedCell && selectedCell !== cellId && 
-                                       editValue.includes(cellId);
+                  const isReferenced = editingState.isEditing && 
+                                      editingState.draft.startsWith('=') && 
+                                      selected === cellId &&
+                                      !currentlyEditing;
 
                   return (
                     <td
@@ -604,18 +497,16 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                       onDoubleClick={() => handleCellDoubleClick(cellId)}
                       tabIndex={-1}
                     >
-                      {isEditing ? (
+                      {currentlyEditing ? (
                         <input
                           ref={inputRef}
                           type="text"
-                          value={editValue}
+                          value={editingState.draft}
                           onChange={handleInputChange}
-                          onSelect={handleInputSelect}
-                          onBlur={commitEdit}
                           onKeyDown={handleEditKeyDown}
-                          className={`w-full h-full p-1 outline-none border border-blue-400 absolute top-0 left-0 z-30 ${
-                            editingState.formulaMode ? "bg-yellow-50" : ""
-                          }`}
+                          onSelect={handleInputSelect}
+                          className="w-full h-full border-none focus:ring-0 focus:outline-none text-xs p-0"
+                          autoFocus
                         />
                       ) : (
                         <div className="w-full h-full overflow-hidden text-xs p-1">{displayValue}</div>

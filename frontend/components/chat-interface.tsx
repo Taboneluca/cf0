@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import type { Message } from "@/types/spreadsheet"
 import { chatBackend } from "@/utils/backend"
-import { backendSheetToUI } from "@/utils/transform"
+import { backendSheetToUI, backendSheetToUIMap } from "@/utils/transform"
 import { useWorkbook } from "@/context/workbook-context"
 
 interface ChatInterfaceProps {
@@ -62,14 +62,22 @@ export default function ChatInterface({
 
     try {
       // Send the chat request with workbook/sheet ID
-      const { reply, sheet: backendSheet } = await chatBackend(mode, input, wid, active)
+      const { reply, sheet: backendSheet, all_sheets } = await chatBackend(mode, input, wid, active)
       
-      // Update the sheet directly from the backend response
+      // Update the active sheet directly from the backend response
       dispatch({
         type: "UPDATE_SHEET", 
         sid: active, 
         data: backendSheetToUI(backendSheet)
       })
+      
+      // Merge all sheets data into the context
+      if (all_sheets) {
+        dispatch({
+          type: "MERGE_SHEETS_DATA",
+          data: backendSheetToUIMap(all_sheets)
+        })
+      }
 
       const assistantMessage: Message = {
         role: "assistant",
