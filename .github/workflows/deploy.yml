@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        svc: [frontend, api-gateway, workers]
+        svc: [api-gateway, workers]
     steps:
       - uses: actions/checkout@v4
       - uses: railwayapp/railway-deploy@v1
