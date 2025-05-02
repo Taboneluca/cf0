@@ -28,7 +28,12 @@ app = FastAPI(title="Intelligent Spreadsheet Assistant")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development, restrict in production
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:4200",  # Nx default port
+        "https://cf0.ai",
+        "https://www.cf0.ai",
+    ],  # Specifically allow cf0.ai
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
