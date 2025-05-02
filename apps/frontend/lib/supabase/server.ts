@@ -32,4 +32,9 @@ export function createServerClient() {
   })
 }
 
-export const supabaseServer = createServerClient()
+// Export with the original name for compatibility with existing code
+export const createSupabaseServerComponentClient = createServerClient
+
+// Don't initialize at module level - this causes cookies() to be called outside request context
+// Instead, call the function directly when needed
+// export const supabaseServer = createServerClient()
