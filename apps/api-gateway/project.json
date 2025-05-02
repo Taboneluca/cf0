@@ -1,0 +1,40 @@
+{
+  "name": "api-gateway",
+  "sourceRoot": "apps/api-gateway",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/api-gateway && python -m pip install -r requirements.txt"
+        ]
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/api-gateway && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+        ]
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/api-gateway && python -m flake8 ."
+        ]
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/api-gateway && python -m pytest"
+        ]
+      }
+    }
+  },
+  "tags": []
+} 

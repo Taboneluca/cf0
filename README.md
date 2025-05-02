@@ -1,95 +1,132 @@
-# AI Assistant Application
+# CF0 Monorepo
 
-This project consists of a Next.js frontend and a FastAPI backend that communicate with each other.
+This project is structured as an Nx monorepo containing three applications:
+
+- `frontend`: Next.js web application
+- `api-gateway`: FastAPI backend service
+- `workers`: Python worker processes for background tasks
+
+## Prerequisites
+
+- Node.js 18+
+- Python 3.12+
+- Docker Desktop
+- Supabase account
+- Railway account
+
+## Tools Already Installed
+
+The following tools have been installed globally:
+
+- Nx CLI: `npm i -g nx@latest`
+- Railway CLI: `curl -sL https://railway.app/install.sh | sh`
+- Supabase CLI: `brew install supabase/tap/supabase`
+- Docker Desktop: `brew install --cask docker`
+
+## Getting Started
+
+### 1. Setup Environment Variables
+
+Create the following files with appropriate Supabase credentials:
+
+- `apps/frontend/.env.local`
+```
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon>
+```
+
+- `apps/api-gateway/.env`
+```
+DATABASE_URL=postgresql://.../postgres?sslmode=require
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service-role>
+```
+
+- `apps/workers/.env`
+```
+DATABASE_URL=postgresql://.../postgres?sslmode=require
+SUPABASE_SERVICE_ROLE_KEY=<service-role>
+```
+
+### 2. Running Locally with Docker
+
+```bash
+# Start Docker Desktop
+open -a Docker
+
+# Start all services with Docker Compose
+npm run docker:up
+
+# Or using Docker Compose directly
+docker compose up --build
+```
+
+Visit:
+- Frontend: http://localhost:3000
+- API Docs: http://localhost:8000/docs
+
+### 3. Development Workflow
+
+#### Using Nx
+
+```bash
+# Start all services in development mode
+npm start
+
+# Start individual services
+npm run dev:frontend
+npm run dev:api
+npm run dev:workers
+
+# Build all services
+npm run build
+
+# Run tests
+npm run test
+
+# Lint code
+npm run lint
+```
+
+### 4. Database Migrations
+
+```bash
+# Login to Supabase
+supabase login
+
+# Link to your Supabase project
+supabase link --project-ref <project-ref>
+
+# Pull the current schema
+supabase db pull
+
+# Push new migrations
+supabase db push
+```
+
+### 5. Deployment
+
+The project is set up to deploy automatically to Railway through GitHub Actions.
+Each push to the main branch triggers a deployment.
 
 ## Project Structure
 
-- `/frontend`: Next.js application
-- `/backend`: FastAPI application
+```
+cf0/
+  ├── apps/
+  │   ├── frontend/      # Next.js application
+  │   ├── api-gateway/   # FastAPI service
+  │   └── workers/       # Python workers
+  ├── libs/
+  │   └── common/        # Shared types and utilities
+  ├── .github/
+  │   └── workflows/     # GitHub Actions CI/CD
+  ├── docker-compose.yml # Local development
+  └── nx.json            # Nx configuration
+```
 
-## Setup
+## Additional Resources
 
-### Backend Setup
-
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-
-2. Create a virtual environment (if not already created):
-   ```bash
-   python -m venv venv
-   ```
-
-3. Activate the virtual environment:
-   - On macOS/Linux:
-     ```bash
-     source venv/bin/activate
-     ```
-   - On Windows:
-     ```bash
-     venv\Scripts\activate
-     ```
-
-4. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-5. Create a `.env` file in the backend directory with your OpenAI API key:
-   ```
-   OPENAI_API_KEY=your_api_key_here
-   ```
-
-6. Start the backend server:
-   ```bash
-   uvicorn main:app --reload
-   ```
-
-The backend server will run on http://localhost:8000.
-
-### Frontend Setup
-
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
-
-The frontend will run on http://localhost:3000.
-
-## API Endpoints
-
-The backend provides the following endpoints:
-
-- `GET /`: Welcome message
-- `POST /api/chat`: General chat endpoint
-- `POST /api/ask`: Chat endpoint with general assistant behavior
-- `POST /api/analyst`: Chat endpoint with financial analyst behavior
-
-## Environment Variables
-
-### Frontend
-
-- `NEXT_PUBLIC_API_URL`: URL of the backend API (default: http://localhost:8000)
-
-### Backend
-
-- `OPENAI_API_KEY`: Your OpenAI API key
-
-## Production Deployment
-
-For production deployment:
-
-1. Update the CORS settings in the backend to only allow specific origins
-2. Set the `NEXT_PUBLIC_API_URL` to your production backend URL
-3. Deploy the backend and frontend to your preferred hosting providers 
+- [Nx Documentation](https://nx.dev)
+- [Railway Documentation](https://docs.railway.app)
+- [Supabase Documentation](https://supabase.io/docs) 
