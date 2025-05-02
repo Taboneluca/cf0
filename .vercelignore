@@ -1,0 +1,8 @@
+apps/api-gateway/**
+apps/workers/**
+supabase/**
+node_modules/**
+**/node_modules/**
+.git/**
+.github/**
+README.md 
