@@ -1,5 +1,39 @@
 {
   "dependencies": {
     "react-hot-toast": "^2.5.2"
+  },
+  "name": "cf0",
+  "version": "1.0.0",
+  "description": "This project consists of a Next.js frontend and a FastAPI backend that communicate with each other.",
+  "main": "index.js",
+  "scripts": {
+    "start": "nx run-many --target=serve --projects=frontend,api-gateway,workers --parallel",
+    "build": "nx run-many --target=build --projects=frontend,api-gateway,workers --parallel",
+    "test": "nx run-many --target=test --projects=frontend,api-gateway,workers --parallel",
+    "lint": "nx run-many --target=lint --projects=frontend,api-gateway,workers --parallel",
+    "dev:frontend": "nx serve frontend",
+    "dev:api": "nx serve api-gateway",
+    "dev:workers": "nx serve workers",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Taboneluca/cf0.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Taboneluca/cf0/issues"
+  },
+  "homepage": "https://github.com/Taboneluca/cf0#readme",
+  "devDependencies": {
+    "@nx/eslint": "latest",
+    "@nx/jest": "latest",
+    "@nx/js": "latest",
+    "@nx/linter": "latest",
+    "@nx/next": "latest",
+    "nx": "latest"
   }
 }

@@ -1,0 +1,40 @@
+{
+  "name": "workers",
+  "sourceRoot": "apps/workers",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/workers && python -m pip install -r requirements.txt"
+        ]
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/workers && python worker.py"
+        ]
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/workers && python -m flake8 ."
+        ]
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cd apps/workers && python -m pytest"
+        ]
+      }
+    }
+  },
+  "tags": []
+} 

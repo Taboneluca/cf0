@@ -1,0 +1,15 @@
+name: Railway Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        svc: [frontend, api-gateway, workers]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: railwayapp/railway-deploy@v1
+        with:
+          service: ${{ matrix.svc }}
+          railwayToken: ${{ secrets.RAILWAY_TOKEN }} 
