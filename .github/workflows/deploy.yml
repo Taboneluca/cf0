@@ -12,9 +12,11 @@ jobs:
       
       - name: Deploy API Gateway
         working-directory: apps/api-gateway
-        run: railway up
+        run: |
+          echo "Deploying API Gateway with token"
+          railway up --service $RAILWAY_SERVICE_ID --project $RAILWAY_PROJECT_ID
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_API_GATEWAY }}
           RAILWAY_SERVICE_ID: 342c49f2-e2c6-4a08-8c86-40e822edbb9c
           RAILWAY_PROJECT_ID: 0f5e4e5a-09f8-4904-89a0-f3ed6c405bc3
           
@@ -28,8 +30,10 @@ jobs:
       
       - name: Deploy Workers
         working-directory: apps/workers
-        run: railway up
+        run: |
+          echo "Deploying Workers with token"
+          railway up --service $RAILWAY_SERVICE_ID --project $RAILWAY_PROJECT_ID
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
           RAILWAY_SERVICE_ID: 8d5f9fc1-262c-4223-ab72-9a83bc66fe27
           RAILWAY_PROJECT_ID: 7482e741-8ca2-453e-bc2f-a39c7680d145 
