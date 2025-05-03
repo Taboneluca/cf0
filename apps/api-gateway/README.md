@@ -68,4 +68,8 @@ It also houses the core logic for the LLM "Ask" and "Analyst" agents and the spr
 
 - Implement agent logic with OpenAI API integration
 - Add chat routing functionality
-- Connect with the frontend 
+- Connect with the frontend
+
+## Deployment Information
+
+Last deployment update: 2025-05-03 

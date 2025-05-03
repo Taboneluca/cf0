@@ -15,7 +15,7 @@ jobs:
           echo "Deploying API Gateway with token"
           railway logout || true
           # Ignore prefix not found error since it still deploys successfully
-          railway up --service $RAILWAY_SERVICE_ID --detach ./apps/api-gateway || echo "Deployment started - check Railway dashboard for status"
+          railway up --service $RAILWAY_SERVICE_ID --detach ./apps/api-gateway --no-watch-paths || echo "Deployment started - check Railway dashboard for status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_API_GATEWAY }}
@@ -38,7 +38,7 @@ jobs:
           # Clean install of railway CLI to avoid corrupt state
           npm uninstall -g @railway/cli
           npm i -g @railway/cli
-          railway up --service $RAILWAY_SERVICE_ID --detach ./apps/workers || echo "Check Railway dashboard for deployment status"
+          railway up --service $RAILWAY_SERVICE_ID --detach ./apps/workers --no-watch-paths || echo "Check Railway dashboard for deployment status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
