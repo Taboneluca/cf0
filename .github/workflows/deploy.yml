@@ -2,18 +2,28 @@ name: Railway Deploy
 on: [push]
 
 jobs:
-  deploy:
+  deploy-api:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        svc: [api-gateway, workers]
     steps:
       - uses: actions/checkout@v4
       
       - name: Install Railway CLI
         run: npm i -g @railway/cli
       
-      - name: Deploy to Railway
-        run: railway up --service ${{ matrix.svc }}
+      - name: Deploy API Gateway
+        run: railway up --service 0f5e4e5a-09f8-4904-89a0-f3ed6c405bc3
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          
+  deploy-workers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      
+      - name: Deploy Workers
+        run: railway up --service 7482e741-8ca2-453e-bc2f-a39c7680d145
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }} 
