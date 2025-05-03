@@ -194,4 +194,9 @@ For optimal development experience with Cursor:
 
 ## Database Migrations
 
-Supabase migrations are stored in `supabase/migrations/` and should be committed to Git. 
+Supabase migrations are stored in `supabase/migrations/` and should be committed to Git.
+
+## CI/CD Status
+
+Deployment status: Ready for production
+Last updated: 2025-05-03 
