@@ -4,9 +4,16 @@ import logging
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import sentry_sdk
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Sentry
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_DSN"),
+    traces_sample_rate=0.2,
+)
 
 # Configure logging
 logging.basicConfig(

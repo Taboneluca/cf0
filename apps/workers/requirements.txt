@@ -5,4 +5,5 @@ pydantic==2.11.3
 supabase==2.4.0
 httpx<0.26,>=0.24.0
 redis==5.0.1
-celery==5.3.6 
+celery==5.3.6
+sentry-sdk==1.44.0 

@@ -1,4 +1,4 @@
-# CF0 Monorepo
+# CF0 - Intelligent Spreadsheet Platform
 
 This project is structured as an Nx monorepo containing three applications:
 
@@ -129,4 +129,69 @@ cf0/
 
 - [Nx Documentation](https://nx.dev)
 - [Railway Documentation](https://docs.railway.app)
-- [Supabase Documentation](https://supabase.io/docs) 
+- [Supabase Documentation](https://supabase.io/docs)
+
+## Deployment Architecture
+
+This monorepo is deployed across three platforms:
+
+### Frontend - Vercel
+- Located in `apps/frontend`
+- Next.js application with React 
+- Deployed automatically via Vercel integration
+
+### API Gateway - Railway
+- Located in `apps/api-gateway`
+- FastAPI service handling spreadsheet operations and AI integration
+- Deployed via GitHub Actions to Railway
+
+### Workers - Railway
+- Located in `apps/workers`
+- Background processing service for asynchronous tasks
+- Deployed via GitHub Actions to Railway
+
+## Environment Variables
+
+### Frontend (Vercel)
+- `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Supabase anonymous key
+- `SENTRY_DSN`: Sentry error monitoring DSN
+- `SENTRY_AUTH_TOKEN`: Sentry authentication token (for source maps)
+
+### API Gateway (Railway)
+- `DATABASE_URL`: Supabase connection string
+- `SUPABASE_URL`: Supabase project URL
+- `SUPABASE_KEY`: Supabase service key
+- `OPENAI_API_KEY`: OpenAI API key
+- `SENTRY_DSN`: Sentry error monitoring DSN
+
+### Workers (Railway)
+- `DATABASE_URL`: Supabase connection string
+- `SENTRY_DSN`: Sentry error monitoring DSN
+
+## Development Setup
+
+```bash
+# Start Docker services (API + Workers)
+docker compose up --build
+
+# In another terminal, start frontend
+nx serve frontend
+```
+
+## Cursor Setup
+
+For optimal development experience with Cursor:
+- Use File → Open → apps/frontend (or api-gateway, or workers) to open just one app at a time
+- Run ⌘⇧P → Re-index project to ensure fast indexing
+
+## Deployment Process
+
+- Frontend: Auto-deploys via Vercel on push to main branch
+- Backend services: Deploy via GitHub Actions on push to main branch
+  - Matrix build ensures each service is built independently
+  - Railway settings use root directory and watch paths to optimize builds
+
+## Database Migrations
+
+Supabase migrations are stored in `supabase/migrations/` and should be committed to Git. 

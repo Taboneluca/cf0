@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, Union
 import os
 from dotenv import load_dotenv
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
 from spreadsheet_engine import (
     Spreadsheet, 
     set_cell, 
@@ -21,6 +23,13 @@ from chat.memory import clear_history
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Sentry
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_DSN"),
+    integrations=[FastApiIntegration()],
+    traces_sample_rate=0.2,
+)
 
 # Initialize FastAPI app
 app = FastAPI(title="Intelligent Spreadsheet Assistant")
