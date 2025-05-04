@@ -5,15 +5,10 @@ from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 # Load environment variables
 load_dotenv()
-
-# Initialize Sentry
-sentry_sdk.init(
-    dsn=os.environ.get("SENTRY_DSN"),
-    traces_sample_rate=0.2,
-)
 
 # Configure logging
 logging.basicConfig(
@@ -21,6 +16,19 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Set up Sentry with enhanced logging integration
+sentry_logging = LoggingIntegration(
+    level=logging.INFO,        # Capture info and above as breadcrumbs
+    event_level=logging.ERROR  # Send errors as events
+)
+
+# Initialize Sentry
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_DSN"),
+    traces_sample_rate=0.2,
+    integrations=[sentry_logging],
+)
 
 # Database connection string
 DATABASE_URL = os.environ.get("DATABASE_URL")

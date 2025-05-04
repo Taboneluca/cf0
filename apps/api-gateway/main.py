@@ -69,6 +69,18 @@ class NewSheetRequest(BaseModel):
 async def root():
     return {"status": "Intelligent Spreadsheet Assistant API is running"}
 
+# Dedicated health check endpoint
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring systems.
+    Returns a 200 OK response if the service is healthy.
+    """
+    return {
+        "status": "healthy",
+        "version": os.environ.get("APP_VERSION", "development")
+    }
+
 # Get the workbook sheet data
 @app.get("/workbook/{wid}/sheet/{sid}")
 async def get_sheet_endpoint(wid: str, sid: str):
