@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createClient } from '@supabase/supabase-js';
+import { createPagesServerClient } from '@supabase/auth-helpers-nextjs';
 
 export default async function handler(
   req: NextApiRequest,
@@ -15,13 +15,15 @@ export default async function handler(
     return res.status(400).json({ error: 'Email is required' });
   }
 
-  try {
-    // Create a Supabase client with the service role key
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+  console.log(`Magic link requested for: ${email.substring(0, 3)}...`);
 
+  try {
+    // Use the same auth helper for consistent cookie handling
+    const supabase = createPagesServerClient({ req, res });
+    
+    // Log important environment values to debug redirects
+    console.log('Site URL:', process.env.NEXT_PUBLIC_SITE_URL || req.headers.origin);
+    
     // Send magic link email
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -31,8 +33,11 @@ export default async function handler(
     });
 
     if (error) {
+      console.error('Magic link error:', error.message);
       return res.status(400).json({ error: error.message });
     }
+
+    console.log('Magic link sent successfully');
 
     // Return success response
     return res.status(200).json({ 

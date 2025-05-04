@@ -18,6 +18,8 @@ export default async function handler(
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
+  console.log(`Login attempt for email: ${email.substring(0, 3)}...`);
+  
   // Create Supabase client specifically for Pages API routes
   const supabase = createPagesServerClient/*<Database>*/({ req, res }); // Pass req and res
 
@@ -40,9 +42,18 @@ export default async function handler(
         return res.status(500).json({ error: 'Login failed, please try again.' });
     }
 
-    // ---- IMPORTANT: Remove the manual cookie setting ----
-    // The createPagesServerClient handles setting the auth cookies automatically
-    // based on the successful signInWithPassword call.
+    console.log('Login successful for user ID:', data.user.id);
+    console.log('Session expires at:', new Date(data.session?.expires_at! * 1000).toISOString());
+    
+    // Verify cookies are being set by logging cookie headers
+    const cookies = res.getHeader('set-cookie');
+    if (cookies) {
+      console.log('Setting cookies:', Array.isArray(cookies) ? 
+        cookies.map(c => c.split(';')[0]) : 
+        cookies.split(';')[0]);
+    } else {
+      console.warn('No cookies set in response headers');
+    }
 
     // Return success response (user data can be useful for the client)
     return res.status(200).json({
@@ -51,7 +62,9 @@ export default async function handler(
         id: data.user.id,
         email: data.user.email,
         // Avoid sending sensitive info like session tokens back in the JSON body
-      }
+      },
+      // Add the site URL to help debug redirection issues
+      siteUrl: process.env.NEXT_PUBLIC_SITE_URL || 'not set'
     });
   } catch (error: any) {
     console.error('Login API route error:', error);

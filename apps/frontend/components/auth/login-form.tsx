@@ -29,7 +29,12 @@ export function LoginForm() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email, password }),
+        // Important: Include credentials to ensure cookies are sent
+        credentials: 'include',
       })
+      
+      // Log the response status and headers for debugging
+      console.log("Login response status:", response.status)
       
       const data = await response.json()
       
@@ -39,8 +44,25 @@ export function LoginForm() {
       
       console.log("Login successful, navigating to dashboard")
       
-      // Hard navigate to ensure a full page refresh with the new session
-      window.location.href = '/dashboard'
+      // Check if cookies were set properly
+      document.cookie.split(';').forEach(cookie => {
+        const trimmed = cookie.trim()
+        if (trimmed.startsWith('sb-') || trimmed.startsWith('supabase-')) {
+          console.log("Auth cookie detected:", trimmed.split('=')[0])
+        }
+      })
+      
+      // Refresh all route caches
+      router.refresh()
+      
+      // Use router.push for navigation within Next.js app
+      router.push('/dashboard')
+      
+      // Give a slight delay to ensure router has time to process
+      setTimeout(() => {
+        // If we're still on this page after router.push, fall back to a hard navigation
+        window.location.href = '/dashboard'
+      }, 1000)
     } catch (err: any) {
       console.error("Login error:", err)
       setError(err.message || "An error occurred during login")
@@ -66,6 +88,7 @@ export function LoginForm() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email }),
+        credentials: 'include',
       })
       
       if (!response.ok) {

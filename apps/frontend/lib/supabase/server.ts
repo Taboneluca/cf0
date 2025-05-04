@@ -1,6 +1,6 @@
 // Purpose: Exports Supabase client initializers for SERVER-SIDE use in Next.js App Router.
 
-import { createClient } from '@supabase/supabase-js'
+import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
 import { cookies } from 'next/headers'
 
 // If you have database types generated (e.g., from 'supabase gen types typescript'), import them
@@ -10,26 +10,17 @@ import { cookies } from 'next/headers'
 export function createServerClient() {
   const cookieStore = cookies()
   
+  // Check environment variables are set
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   
   if (!supabaseUrl || !supabaseKey) {
+    console.error('Missing Supabase environment variables');
     throw new Error('Missing Supabase environment variables')
   }
   
-  return createClient(supabaseUrl, supabaseKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-    global: {
-      fetch: fetch.bind(globalThis),
-      headers: { 
-        'x-application-name': 'cf0',
-      },
-    },
-  })
+  // Use the official Next.js helper which handles cookie management correctly
+  return createServerComponentClient({ cookies: () => cookieStore })
 }
 
 // Export with the original name for compatibility with existing code

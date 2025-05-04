@@ -6,6 +6,13 @@ import { CreateWorkbookButton } from "@/components/dashboard/create-workbook-but
 export default async function DashboardPage() {
   const supabase = createSupabaseServerComponentClient()
 
+  // Add detailed session debugging
+  const { data: sessionData } = await supabase.auth.getSession()
+  console.log("Dashboard session check:", { 
+    hasSession: !!sessionData.session,
+    sessionExpiry: sessionData.session?.expires_at ? new Date(sessionData.session.expires_at * 1000).toISOString() : 'no-session'
+  })
+
   // Use getUser() for security
   const {
     data: { user },
@@ -14,10 +21,15 @@ export default async function DashboardPage() {
 
   // If no user or error, redirect to login
   if (userError || !user) {
-    console.error("Error fetching user or user not found:", userError?.message)
+    console.error("Error fetching user or user not found:", userError?.message || "Auth session missing!")
     redirect("/login?error=authentication_failed")
     return null
   }
+
+  console.log("User authenticated successfully:", { 
+    userId: user.id, 
+    email: user.email 
+  })
 
   // Get user's workbooks using the authenticated user ID
   const { data: workbooks, error: workbooksError } = await supabase
