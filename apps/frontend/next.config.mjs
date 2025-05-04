@@ -43,4 +43,7 @@ disableLogger: true,
 // https://docs.sentry.io/product/crons/
 // https://vercel.com/docs/cron-jobs
 automaticVercelMonitors: true,
+
+// Make sure the source maps are properly uploaded
+authToken: process.env.SENTRY_AUTH_TOKEN,
 });
