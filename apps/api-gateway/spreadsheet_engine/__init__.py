@@ -1,6 +1,6 @@
-from .model import Spreadsheet, DEFAULT_ROWS, DEFAULT_COLS
-# Remove circular import
-# from workbook_store import get_workbook, get_sheet
+from .model import DEFAULT_ROWS, DEFAULT_COLS  
+from .adapter import SpreadsheetAdapter, USE_DATAFRAME_MODEL, USE_FORMULA_ENGINE
+from workbook_store import get_workbook, get_sheet
 from .summary import sheet_summary
 from .operations import (
     # Read operations
@@ -25,13 +25,15 @@ from .operations import (
     apply_scalar_to_column
 )
 
+# Use the adapter to expose the current implementation
+Spreadsheet = SpreadsheetAdapter.create_sheet
+
 __all__ = [
     'Spreadsheet',
     'DEFAULT_ROWS',
     'DEFAULT_COLS',
-    # Remove circular imports
-    # 'get_workbook',
-    # 'get_sheet',
+    'get_workbook',
+    'get_sheet',
     'get_cell',
     'get_range',
     'summarize_sheet',
@@ -49,5 +51,8 @@ __all__ = [
     'find_replace',
     'create_new_sheet',
     'apply_scalar_to_row',
-    'apply_scalar_to_column'
+    'apply_scalar_to_column',
+    'USE_DATAFRAME_MODEL',
+    'USE_FORMULA_ENGINE',
+    'SpreadsheetAdapter'
 ] 

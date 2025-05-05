@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
@@ -20,6 +20,8 @@ from workbook_store import get_sheet, get_workbook, workbooks, initialize as ini
 from chat.router import process_message
 from agents.openai_client import client, OpenAIError
 from chat.memory import clear_history
+import json
+from fastapi.responses import StreamingResponse
 
 # Load environment variables
 load_dotenv()
@@ -274,6 +276,77 @@ async def chat(req: ChatRequest):
         total_time = time.time() - start_time
         print(f"[{request_id}] ❌ Request failed after {total_time:.2f}s")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Chat endpoint with streaming support
+@app.post("/chat/stream")
+async def stream_chat(req: ChatRequest):
+    """
+    Streaming version of the chat endpoint that uses Server-Sent Events (SSE)
+    to deliver partial responses as they are generated.
+    """
+    try:
+        # Try to use moderation if available
+        try:
+            moderation = client.moderations.create(input=req.message)
+            if moderation.results[0].flagged:
+                raise HTTPException(400, "Message violates policy")
+        except OpenAIError as moderation_error:
+            # Log the error but continue processing the message
+            print(f"Warning: Moderation check failed: {moderation_error}")
+        
+        # Get the workbook and active sheet
+        wb = get_workbook(req.wid)
+        sheet = wb.sheet(req.sid)
+        
+        # Create metadata with all sheets
+        all_sheets_data = {
+            name: sheet.to_dict() for name, sheet in wb.all_sheets().items()
+        }
+        
+        # Define the streaming generator
+        async def event_generator():
+            # First, send a "start" event
+            yield f"event: start\ndata: {json.dumps({'status': 'processing'})}\n\n"
+            
+            # Process the message with streaming
+            async for chunk in process_message_streaming(
+                req.mode, 
+                req.message, 
+                req.wid, 
+                req.sid, 
+                sheet,
+                workbook_metadata={
+                    "sheets": wb.list_sheets(),
+                    "active": req.sid,
+                    "all_sheets_data": all_sheets_data
+                }
+            ):
+                # Send each chunk as a "chunk" event
+                yield f"event: chunk\ndata: {json.dumps(chunk)}\n\n"
+            
+            # Add a final state event
+            final_sheet = sheet.optimized_to_dict(max_rows=30, max_cols=30)
+            final_state = {
+                "event": "complete",
+                "sheet": final_sheet,
+                "all_sheets": {name: s.optimized_to_dict(max_rows=30, max_cols=30) for name, s in wb.all_sheets().items()},
+            }
+            yield f"event: complete\ndata: {json.dumps(final_state)}\n\n"
+        
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream"
+        )
+        
+    except Exception as e:
+        print(f"Error processing streaming chat request: {str(e)}")
+        # Return an error event
+        async def error_generator():
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        return StreamingResponse(
+            error_generator(),
+            media_type="text/event-stream"
+        )
 
 # Keep old endpoints for backwards compatibility but mark as deprecated
 @app.get("/sheet", deprecated=True)
