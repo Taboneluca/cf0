@@ -12,8 +12,6 @@ from spreadsheet_engine import (
     set_cell, 
     create_new_sheet,
     summarize_sheet,
-    get_workbook,
-    get_sheet,
     DEFAULT_ROWS,
     DEFAULT_COLS
 )
