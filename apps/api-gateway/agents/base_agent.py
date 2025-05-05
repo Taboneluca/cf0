@@ -90,7 +90,7 @@ class BaseAgent:
                     messages=messages,
                     functions=[_serialize_tool(t) for t in self.tools],
                     function_call="auto",
-                    temperature=1,  # Use 1e-8 instead of 0.0 for Groq compatibility
+                    temperature=0.3,  # Reduced from 1.0 to 0.3 for more consistent responses
                 )
             except (OpenAIError, APIStatusError) as e:
                 return {
