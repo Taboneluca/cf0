@@ -1,4 +1,9 @@
-import tiktoken
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None  # fallback: disable token trimming
+    print("WARNING: tiktoken not found, token counting/trimming will be disabled")
+
 from typing import List, Dict, Any
 
 # Maximum tokens for conversation history
@@ -15,6 +20,10 @@ def count_tokens(text: str, model: str = "gpt-4o") -> int:
     Returns:
         Number of tokens
     """
+    if tiktoken is None:
+        # Fallback approximation if tiktoken is not available
+        return len(text) // 4
+        
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
@@ -37,6 +46,13 @@ def count_message_tokens(messages: List[Dict[str, Any]], model: str = "gpt-4o") 
     # Initialize token count (per-message overhead)
     num_tokens = 0
     
+    if tiktoken is None:
+        # Fallback approximation if tiktoken is not available
+        for message in messages:
+            content = message.get("content", "")
+            num_tokens += (len(content if content else "") // 4) + 4
+        return num_tokens
+        
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
@@ -78,6 +94,15 @@ def trim_history(messages: List[Dict[str, Any]], system_message: Dict[str, Any],
     Returns:
         Trimmed message list that fits within token limit
     """
+    # If tiktoken is not available, return a conservative subset of history
+    if tiktoken is None:
+        # Simplified approach: keep system message and last 5 messages
+        if len(messages) <= 6:  # system + 5 messages
+            return messages
+        else:
+            # Keep the system message and last 5 messages
+            return [system_message] + messages[-5:]
+            
     # Always keep system message and the most recent message (typically user's query)
     if len(messages) <= 2:
         return messages
