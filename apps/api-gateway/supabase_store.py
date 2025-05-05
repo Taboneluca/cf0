@@ -1,10 +1,13 @@
 import os
 import asyncio
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from supabase import create_client, Client
 from spreadsheet_engine.model import Spreadsheet
-from workbook_store import Workbook
+
+# Use TYPE_CHECKING to avoid circular imports
+if TYPE_CHECKING:
+    from workbook_store import Workbook
 
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")
