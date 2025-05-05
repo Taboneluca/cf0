@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, Union
 import os
+import asyncio
 from dotenv import load_dotenv
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
@@ -16,7 +17,7 @@ from spreadsheet_engine import (
     DEFAULT_ROWS,
     DEFAULT_COLS
 )
-from workbook_store import get_sheet, get_workbook, workbooks
+from workbook_store import get_sheet, get_workbook, workbooks, initialize as initialize_workbook_store
 from chat.router import process_message
 from agents.openai_client import client, OpenAIError
 from chat.memory import clear_history
@@ -33,6 +34,12 @@ sentry_sdk.init(
 
 # Initialize FastAPI app
 app = FastAPI(title="Intelligent Spreadsheet Assistant")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize background tasks on startup"""
+    # Start the Supabase persistence worker
+    await initialize_workbook_store()
 
 # Configure CORS
 app.add_middleware(
@@ -63,6 +70,10 @@ class NewSheetRequest(BaseModel):
     name: Optional[str] = None
     rows: Optional[int] = 30
     columns: Optional[int] = 10
+
+# Create a semaphore to limit concurrent LLM requests
+llm_concurrency = int(os.getenv("LLM_CONCURRENCY", "5"))
+chat_limiter = asyncio.Semaphore(llm_concurrency)
 
 # Root route for API check
 @app.get("/")
@@ -180,19 +191,20 @@ async def chat(req: ChatRequest):
             name: sheet.to_dict() for name, sheet in wb.all_sheets().items()
         }
         
-        # Process the message with the sheet and workbook context
-        result = await process_message(
-            req.mode, 
-            req.message, 
-            req.wid, 
-            req.sid, 
-            sheet,
-            workbook_metadata={
-                "sheets": wb.list_sheets(),
-                "active": req.sid,
-                "all_sheets_data": all_sheets_data
-            }
-        )
+        # Process the message with the sheet and workbook context - rate limited
+        async with chat_limiter:
+            result = await process_message(
+                req.mode, 
+                req.message, 
+                req.wid, 
+                req.sid, 
+                sheet,
+                workbook_metadata={
+                    "sheets": wb.list_sheets(),
+                    "active": req.sid,
+                    "all_sheets_data": all_sheets_data
+                }
+            )
         
         return ChatResponse(**result)
     except Exception as e:
