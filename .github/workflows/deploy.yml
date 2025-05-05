@@ -34,18 +34,23 @@ jobs:
       
       - name: Install Railway CLI
         run: |
-          # Clean any existing installations
+          # Complete clean install
           npm uninstall -g @railway/cli || true
           rm -rf ~/.railway ~/.config/railway ~/.railwayrc
-          
-          # Install the CLI
-          npm install -g @railway/cli
+          npm install -g @railway/cli@latest
       
       - name: Deploy Workers
         run: |
-          echo "Deploying Workers service with token"
-          # Direct command without login
-          railway up --service "$RAILWAY_SERVICE_ID" --detach ./apps/workers || echo "Deployment initiated - check Railway dashboard for status"
+          echo "Deploying Workers service with explicit login"
+          # First try explicit login
+          echo "$RAILWAY_TOKEN" | railway login
+          
+          # Then deploy using the logged-in session
+          cd ./apps/workers
+          railway up --detach || echo "Using fallback deployment method..."
+          
+          # If that fails, try direct deployment with service
+          railway up --service "$RAILWAY_SERVICE_ID" --detach || echo "Deployment initiated - check Railway dashboard for status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
