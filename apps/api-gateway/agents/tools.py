@@ -1,4 +1,5 @@
 from spreadsheet_engine import operations as ops
+from spreadsheet_engine.summary import sheet_summary
 
 TOOL_CATALOG = [
     {
@@ -226,10 +227,14 @@ TOOL_CATALOG = [
     },
     {
         "name": "sheet_summary",
-        "description": "Compact summary (rows, cols, headers, first N rows, hash).",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-        "func": ops.summarize_sheet,
-        "read_only": True
+        "description": "Get a compact summary of the sheet including dimensions, headers, and sample rows.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "func": sheet_summary,
+        "read_only": True,
     }
 ]
 
