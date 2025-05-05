@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional, Union, Tuple
-from .model import Spreadsheet, get_sheet, sheets, DEFAULT_ROWS, DEFAULT_COLS
-from workbook_store import get_workbook, get_sheet as get_workbook_sheet
+from .model import Spreadsheet, sheets, DEFAULT_ROWS, DEFAULT_COLS
+# Import workbook functions during function execution to avoid circular imports
+# from workbook_store import get_workbook, get_sheet as get_workbook_sheet
 
 # Read operations (used by AskAgent)
 
@@ -432,6 +433,8 @@ def list_sheets(wid: str) -> List[str]:
     Returns:
         List of sheet names
     """
+    # Import within function to avoid circular imports
+    from workbook_store import get_workbook
     return get_workbook(wid).list_sheets()
 
 def get_sheet_summary(sid: str, wid: str) -> Dict[str, Any]:
@@ -445,5 +448,7 @@ def get_sheet_summary(sid: str, wid: str) -> Dict[str, Any]:
     Returns:
         Dictionary with sheet information
     """
+    # Import within function to avoid circular imports
+    from workbook_store import get_workbook
     sheet = get_workbook(wid).sheet(sid)
     return summarize_sheet(sheet=sheet) 
