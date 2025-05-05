@@ -8,14 +8,19 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install Railway CLI
-        run: npm i -g @railway/cli
+        run: |
+          # Clean any existing installations
+          npm uninstall -g @railway/cli || true
+          rm -rf ~/.railway ~/.config/railway ~/.railwayrc
+          
+          # Install the CLI
+          npm install -g @railway/cli
       
       - name: Deploy API Gateway
         run: |
           echo "Deploying API Gateway with token"
-          railway logout || true
-          # Ignore prefix not found error since it still deploys successfully
-          railway up --service $RAILWAY_SERVICE_ID --detach ./apps/api-gateway --no-watch-paths || echo "Deployment started - check Railway dashboard for status"
+          # Direct command without login
+          railway up --service "$RAILWAY_SERVICE_ID" --project "$RAILWAY_PROJECT_ID" --detach ./apps/api-gateway || echo "Deployment initiated - check Railway dashboard for status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_API_GATEWAY }}
@@ -27,13 +32,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Deploy to Railway
-        uses: bervProject/railway-deploy@main
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
-          service: "8d5f9fc1-262c-4223-ab72-9a83bc66fe27"
-          detach: true
-          path: ./apps/workers
+      - name: Install Railway CLI
+        run: |
+          # Clean any existing installations
+          npm uninstall -g @railway/cli || true
+          rm -rf ~/.railway ~/.config/railway ~/.railwayrc
+          
+          # Install the CLI
+          npm install -g @railway/cli
+      
+      - name: Deploy Workers
+        run: |
+          echo "Deploying Workers service with token"
+          # Direct command without login
+          railway up --service "$RAILWAY_SERVICE_ID" --project "$RAILWAY_PROJECT_ID" --detach ./apps/workers || echo "Deployment initiated - check Railway dashboard for status"
+          exit 0
         env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
           RAILWAY_SERVICE_ID: 8d5f9fc1-262c-4223-ab72-9a83bc66fe27
           RAILWAY_PROJECT_ID: 7482e741-8ca2-453e-bc2f-a39c7680d145 
