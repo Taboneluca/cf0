@@ -2,7 +2,32 @@ name: Railway Deploy
 on: [push]
 
 jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api-changed: ${{ steps.changes.outputs.api }}
+      workers-changed: ${{ steps.changes.outputs.workers }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for file changes
+        id: changes
+        run: |
+          # Check if files in API gateway directory have changed
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/api-gateway/" && echo "api=true" >> $GITHUB_OUTPUT || echo "api=false" >> $GITHUB_OUTPUT
+          
+          # Check if files in workers directory have changed
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/workers/" && echo "workers=true" >> $GITHUB_OUTPUT || echo "workers=false" >> $GITHUB_OUTPUT
+          
+          # Debug info
+          echo "Changed files:"
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }}
+
   deploy-api:
+    needs: check-changes
+    if: needs.check-changes.outputs.api-changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,11 +53,11 @@ jobs:
           RAILWAY_PROJECT_ID: 0f5e4e5a-09f8-4904-89a0-f3ed6c405bc3
           
   deploy-workers:
+    needs: check-changes
+    if: needs.check-changes.outputs.workers-changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Fetch all history so Railway can see the full diff
       
       - name: Install Railway CLI
         run: |
@@ -47,12 +72,12 @@ jobs:
           # First try explicit login
           echo "$RAILWAY_TOKEN" | railway login
           
-          # Force a full deployment ignoring git changes
+          # Deploy workers
           cd ./apps/workers
-          railway up --detach --no-gitignore || echo "Using fallback deployment method..."
+          railway up --detach || echo "Using fallback deployment method..."
           
           # If that fails, try direct deployment with service
-          railway up --service "$RAILWAY_SERVICE_ID" --detach --no-gitignore || echo "Deployment initiated - check Railway dashboard for status"
+          railway up --service "$RAILWAY_SERVICE_ID" --detach || echo "Deployment initiated - check Railway dashboard for status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
