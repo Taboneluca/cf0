@@ -27,18 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Deploy Workers
-        run: |
-          echo "Deploying Workers with token"
-          # More aggressive cleanup before login
-          rm -rf ~/.railway ~/.config/railway
-          npm uninstall -g @railway/cli || true
-          npm i -g @railway/cli
-          
-          # Try to deploy with fresh CLI install
-          railway up --service $RAILWAY_SERVICE_ID --detach ./apps/workers || echo "Check Railway dashboard for deployment status"
-          exit 0
+      - name: Deploy to Railway
+        uses: bervProject/railway-deploy@main
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
+          service: "8d5f9fc1-262c-4223-ab72-9a83bc66fe27"
+          detach: true
+          path: ./apps/workers
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
           RAILWAY_SERVICE_ID: 8d5f9fc1-262c-4223-ab72-9a83bc66fe27
           RAILWAY_PROJECT_ID: 7482e741-8ca2-453e-bc2f-a39c7680d145 
