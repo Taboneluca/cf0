@@ -8,9 +8,9 @@ import json  # for serializing sheet state
 from agents.ask_agent import AskAgent
 from agents.analyst_agent import AnalystAgent
 from spreadsheet_engine.model import Spreadsheet
+from spreadsheet_engine.summary import sheet_summary
 from workbook_store import get_sheet, get_workbook
 from chat.memory import get_history, add_to_history
-from spreadsheet_engine.summary import sheet_summary
 
 async def process_message(
     mode: str, 
@@ -62,7 +62,7 @@ async def process_message(
         # Create workbook metadata if not provided
         if workbook_metadata is None:
             print(f"[{request_id}] 📊 Creating workbook metadata")
-            all_sheets_data = {name: s.to_dict() for name, s in workbook.all_sheets().items()}
+            all_sheets_data = {name: sheet_summary(s) for name, s in workbook.all_sheets().items()}
             workbook_metadata = {
                 "sheets": workbook.list_sheets(),
                 "active": sid,
@@ -70,12 +70,14 @@ async def process_message(
             }
         
         # Inject current workbook/sheet info into history for LLM context
-        summary = sheet_summary(sheet=sheet)
+        sheet_info = sheet_summary(sheet)
         system_context = (
             f"Workbook: {wid}\nCurrent sheet: {sid}\n"
-            f"Available sheets: {', '.join(workbook_metadata['sheets'])}\n"
-            f"Sheet summary: {json.dumps(summary)}\n"
-            "Call get_range if you need more detail."
+            f"Available sheets: {', '.join(workbook_metadata['sheets'])}\n\n"
+            f"You can reference cells across sheets using Sheet2!A1 syntax in formulas.\n"
+            f"For example, =Sheet2!A1+Sheet3!B2 adds values from two different sheets.\n\n"
+            f"Current sheet summary: {json.dumps(sheet_info)}\n"
+            f"Call get_range or sheet_summary tools if you need more detail on the sheet."
         )
         
         print(f"[{request_id}] 📝 Injecting system context with {len(workbook_metadata['sheets'])} sheets")

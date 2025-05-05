@@ -391,49 +391,44 @@ class Spreadsheet:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert the spreadsheet to a dictionary representation"""
+        # Include the sheet name as well for context
         return {
             "name": self.name,
-            "headers": self.headers,
             "rows": self.n_rows,
-            "columns": self.n_cols,
+            "cols": self.n_cols,
+            "headers": self.headers,
             "cells": self.cells
         }
         
-    def optimized_to_dict(self, max_rows=30, max_cols=None) -> Dict[str, Any]:
+    def optimized_to_dict(self, max_rows=None, max_cols=None) -> Dict[str, Any]:
         """
-        Convert the spreadsheet to a dictionary representation with limited cells.
-        Only returns the first `max_rows` rows and first `max_cols` columns.
+        Convert the spreadsheet to a more efficient dictionary representation
         
         Args:
-            max_rows: Maximum number of rows to include
-            max_cols: Maximum number of columns to include
+            max_rows: Maximum number of rows to include (None for all)
+            max_cols: Maximum number of columns to include (None for all)
             
         Returns:
-            Dictionary with optimized data
+            Dict with spreadsheet data optimized for network transfer
         """
-        max_rows = min(self.n_rows, max_rows)
-        if max_cols is None:
-            max_cols = min(self.n_cols, 30)  # Default to a reasonable number
-        else:
-            max_cols = min(self.n_cols, max_cols)
-            
-        # Only include non-empty cells to reduce payload size
-        optimized_cells = []
-        for r in range(max_rows):
-            row = []
-            for c in range(max_cols):
-                if r < len(self.cells) and c < len(self.cells[r]):
-                    row.append(self.cells[r][c])
-                else:
-                    row.append(None)
-            optimized_cells.append(row)
-            
+        # Determine rows and columns to include
+        rows_to_include = min(self.n_rows, max_rows) if max_rows is not None else self.n_rows
+        cols_to_include = min(self.n_cols, max_cols) if max_cols is not None else self.n_cols
+        
+        # Trim the cells to the specified dimensions
+        trimmed_cells = [row[:cols_to_include] for row in self.cells[:rows_to_include]]
+        
+        # Return optimized representation
         return {
             "name": self.name,
-            "headers": self.headers[:max_cols],
-            "rows": self.n_rows,
-            "columns": self.n_cols,
-            "cells": optimized_cells
+            "rows": self.n_rows,  # Keep original dimensions
+            "cols": self.n_cols,  # Keep original dimensions 
+            "headers": self.headers[:cols_to_include],
+            "cells": trimmed_cells,
+            "trimmed": {
+                "rows": rows_to_include,
+                "cols": cols_to_include
+            }
         }
     
     @classmethod
