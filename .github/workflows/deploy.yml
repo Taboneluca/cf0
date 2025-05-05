@@ -20,7 +20,7 @@ jobs:
         run: |
           echo "Deploying API Gateway with token"
           # Direct command without login
-          railway up --service "$RAILWAY_SERVICE_ID" --project "$RAILWAY_PROJECT_ID" --detach ./apps/api-gateway || echo "Deployment initiated - check Railway dashboard for status"
+          railway up --service "$RAILWAY_SERVICE_ID" --detach ./apps/api-gateway || echo "Deployment initiated - check Railway dashboard for status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_API_GATEWAY }}
@@ -45,7 +45,7 @@ jobs:
         run: |
           echo "Deploying Workers service with token"
           # Direct command without login
-          railway up --service "$RAILWAY_SERVICE_ID" --project "$RAILWAY_PROJECT_ID" --detach ./apps/workers || echo "Deployment initiated - check Railway dashboard for status"
+          railway up --service "$RAILWAY_SERVICE_ID" --detach ./apps/workers || echo "Deployment initiated - check Railway dashboard for status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
