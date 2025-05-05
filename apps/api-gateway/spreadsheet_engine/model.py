@@ -398,6 +398,43 @@ class Spreadsheet:
             "columns": self.n_cols,
             "cells": self.cells
         }
+        
+    def optimized_to_dict(self, max_rows=30, max_cols=None) -> Dict[str, Any]:
+        """
+        Convert the spreadsheet to a dictionary representation with limited cells.
+        Only returns the first `max_rows` rows and first `max_cols` columns.
+        
+        Args:
+            max_rows: Maximum number of rows to include
+            max_cols: Maximum number of columns to include
+            
+        Returns:
+            Dictionary with optimized data
+        """
+        max_rows = min(self.n_rows, max_rows)
+        if max_cols is None:
+            max_cols = min(self.n_cols, 30)  # Default to a reasonable number
+        else:
+            max_cols = min(self.n_cols, max_cols)
+            
+        # Only include non-empty cells to reduce payload size
+        optimized_cells = []
+        for r in range(max_rows):
+            row = []
+            for c in range(max_cols):
+                if r < len(self.cells) and c < len(self.cells[r]):
+                    row.append(self.cells[r][c])
+                else:
+                    row.append(None)
+            optimized_cells.append(row)
+            
+        return {
+            "name": self.name,
+            "headers": self.headers[:max_cols],
+            "rows": self.n_rows,
+            "columns": self.n_cols,
+            "cells": optimized_cells
+        }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Spreadsheet':

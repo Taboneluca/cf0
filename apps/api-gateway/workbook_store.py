@@ -189,10 +189,17 @@ def get_workbook(wid: str) -> Workbook:
     if wid not in workbooks:
         # Try to load from Supabase asynchronously
         try:
-            # Run the async function in a new event loop
-            loop = asyncio.new_event_loop()
-            wb = loop.run_until_complete(_load_from_supabase(wid))
-            loop.close()
+            # Use an existing loop if one is running, or create a new one
+            try:
+                loop = asyncio.get_running_loop()
+                # Create a future and run a task that will set the future's result
+                future = asyncio.run_coroutine_threadsafe(_load_from_supabase(wid), loop)
+                wb = future.result(timeout=10)  # Wait for up to 10 seconds
+            except RuntimeError:
+                # No running event loop, create a new one
+                loop = asyncio.new_event_loop()
+                wb = loop.run_until_complete(_load_from_supabase(wid))
+                loop.close()
             
             if wb:
                 workbooks[wid] = wb

@@ -42,8 +42,13 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
       // Check if user is authenticated
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        console.log("User not authenticated - skipping save")
-        return
+        console.log("User not authenticated - retrying authentication")
+        // Try to refresh the session
+        const { data: refreshData } = await supabase.auth.refreshSession()
+        if (!refreshData.session) {
+          console.log("Authentication refresh failed - skipping save")
+          return
+        }
       }
 
       // Save to Supabase (as backup storage)
@@ -55,27 +60,40 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
           updated_at: new Date().toISOString(),
         })
         .eq("id", workbook.id)
-        .throwOnError()
 
-      if (error) throw error
+      if (error) {
+        console.error("Supabase save error:", error)
+        if (error.code === "42501") { // Permission error
+          console.log("Permissions issue - checking if user is authorized")
+          if (workbook.user_id !== userId) {
+            console.log("User does not own this workbook - skipping save to Supabase")
+          }
+        } else {
+          throw error
+        }
+      }
 
-      // Also save all sheets to the backend engine
-      await Promise.all(
-        Object.entries(workbookData).map(([sid, sheetData]) => 
-          // For each sheet with cells
-          sheetData.cells && Object.keys(sheetData.cells).length > 0 ? 
-            // Save each cell
-            Promise.all(
-              Object.entries(sheetData.cells).map(([cellId, cell]) => 
-                handleCellUpdate(cellId, cell.value, sid)
-              )
-            ) : Promise.resolve()
-        )
-      );
-
-      setLastSaved(new Date())
+      // Save to backend API regardless of Supabase result
+      try {
+        await Promise.all(
+          Object.entries(workbookData).map(([sid, sheetData]) => 
+            // For each sheet with cells
+            sheetData.cells && Object.keys(sheetData.cells).length > 0 ? 
+              // Save each cell
+              Promise.all(
+                Object.entries(sheetData.cells).map(([cellId, cell]) => 
+                  handleCellUpdate(cellId, cell.value, sid)
+                )
+              ) : Promise.resolve()
+          )
+        );
+        
+        setLastSaved(new Date())
+      } catch (apiError) {
+        console.error("Error saving to API:", apiError)
+      }
     } catch (error) {
-      console.error("Error saving workbook:", error)
+      console.error("Error in saveWorkbook:", error)
     } finally {
       setIsSaving(false)
     }

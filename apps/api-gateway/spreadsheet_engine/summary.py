@@ -21,6 +21,17 @@ def sheet_summary(sheet: Spreadsheet, sample_rows=None):
         - sample: Sample rows (first N rows)
         - hash: Content hash for change detection
     """
+    # Add null check for sheet
+    if sheet is None:
+        return {
+            "name": "Unknown",
+            "n_rows": 0,
+            "n_cols": 0,
+            "headers": [],
+            "sample": [],
+            "hash": ""
+        }
+        
     if sample_rows is None:
         sample_rows = int(os.getenv("SUMMARY_SAMPLE_ROWS", "5"))
     

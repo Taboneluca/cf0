@@ -237,7 +237,7 @@ You can now work with cross-sheet formulas. Examples:
     # Return the reply, updated sheet state, and log of changes
     return {
         "reply": result["reply"], 
-        "sheet": sheet.to_dict(),
-        "all_sheets": {name: s.to_dict() for name, s in workbook.all_sheets().items()},
+        "sheet": sheet.optimized_to_dict(max_rows=30, max_cols=30),
+        "all_sheets": {name: s.optimized_to_dict(max_rows=30, max_cols=30) for name, s in workbook.all_sheets().items()},
         "log": collected_updates
     } 
