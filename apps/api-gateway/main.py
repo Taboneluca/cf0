@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, Union
 import os
@@ -32,6 +33,9 @@ sentry_sdk.init(
 
 # Initialize FastAPI app
 app = FastAPI(title="Intelligent Spreadsheet Assistant")
+
+# Add compression middleware for large responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.on_event("startup")
 async def startup_event():

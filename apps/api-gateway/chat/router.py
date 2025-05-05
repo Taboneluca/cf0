@@ -120,7 +120,7 @@ async def process_message(
                 return {"error": f"Error with cross-sheet reference: {e}"}
         
         # Regular cell reference
-        return set_cell(ref, value, **kwargs)
+        return set_cell(ref, value, sheet=target_sheet)
     
     # Function to handle set_cells with cross-sheet references
     def set_cells_with_xref(updates: list[dict[str, Any]] = None, cells_dict: dict[str, Any] = None, **kwargs):
