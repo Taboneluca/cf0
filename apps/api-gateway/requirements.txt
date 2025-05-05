@@ -3,6 +3,8 @@ uvicorn==0.29.0
 openai==1.76.0
 python-dotenv==1.1.0
 pandas==2.2.3
+numpy==2.2.5
 sentry-sdk[fastapi]
 tenacity==8.2.3
-supabase==2.13.0 
+supabase==2.13.0
+statistics==1.0.3.5 

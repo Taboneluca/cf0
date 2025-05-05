@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import os
 import asyncio
 import json
@@ -294,3 +294,183 @@ class BaseAgent:
             additional_message: The message to add to the system prompt
         """
         self.system_prompt = f"{self.system_prompt}\n\n{additional_message}"
+
+    async def stream_run(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[str, None]:
+        """
+        Execute the tool-loop in streaming mode, yielding text chunks as they are generated.
+        
+        Args:
+            user_message: The user message to process
+            history: Optional conversation history
+            
+        Yields:
+            Text chunks of the assistant's response
+        """
+        agent_id = f"stream-agent-{int(time.time()*1000)}"
+        print(f"[{agent_id}] 🤖 Starting streaming agent run with message length: {len(user_message)}")
+        
+        # Prepare the basic message structure with system prompt
+        system_message = {"role": "system", "content": self.system_prompt}
+        messages = [system_message]
+        
+        # Add conversation history if provided
+        if history:
+            print(f"[{agent_id}] 📚 Adding {len(history)} history messages")
+            messages.extend(history)
+            
+        # Add the current user message
+        messages.append({"role": "user", "content": user_message})
+        
+        # Trim history to fit within token limits
+        orig_message_count = len(messages)
+        messages = trim_history(messages, system_message, MAX_TOKENS, MODEL)
+        if len(messages) < orig_message_count:
+            print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
+
+        # Allow many small tool calls without bailing out too early
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))
+        iterations = 0
+        collected_updates: list = []
+        mutating_calls = 0
+        final_text_buffer = ""
+        
+        print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
+        in_tool_calling_phase = True
+        
+        while iterations < max_iterations:
+            iterations += 1
+            loop_start = time.time()
+            print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations}")
+            
+            # Call the LLM model with streaming enabled
+            print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {MODEL}")
+            
+            try:
+                response_stream = client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    functions=[_serialize_tool(t) for t in self.tools],
+                    function_call="auto",
+                    temperature=0.3,
+                    stream=True  # Enable streaming
+                )
+                
+                # Process the streaming response
+                current_content = ""
+                function_name = None
+                function_args = ""
+                is_function_call = False
+                
+                # Collect the response chunks
+                async for chunk in response_stream:
+                    # Skip empty chunks
+                    if not chunk.choices:
+                        continue
+                        
+                    delta = chunk.choices[0].delta
+                    
+                    # Check if this is the start of a function call
+                    if delta.function_call and not is_function_call:
+                        is_function_call = True
+                        function_name = delta.function_call.name
+                        print(f"[{agent_id}] 🔧 Starting function call: {function_name}")
+                    
+                    # Accumulate function arguments
+                    if is_function_call and delta.function_call and delta.function_call.arguments:
+                        function_args += delta.function_call.arguments
+                    
+                    # Accumulate content for text response
+                    if delta.content:
+                        current_content += delta.content
+                        if in_tool_calling_phase:
+                            # We've transitioned from tool calling to final answer
+                            in_tool_calling_phase = False
+                            print(f"[{agent_id}] 💬 Transitioning to final answer")
+                        
+                        # Only yield content chunks, not function calls
+                        yield delta.content
+                
+                # Construct the complete message from gathered chunks
+                if is_function_call:
+                    msg = {
+                        "role": "assistant",
+                        "function_call": {
+                            "name": function_name,
+                            "arguments": function_args
+                        }
+                    }
+                else:
+                    msg = {"role": "assistant", "content": current_content}
+                    final_text_buffer += current_content
+                
+                # Add to messages for context
+                messages.append(msg)
+                
+                print(f"[{agent_id}] ⏱️ LLM response received: {'function_call' if is_function_call else 'text'}")
+                
+            except Exception as e:
+                print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")
+                yield f"\nError communicating with AI service: {str(e)}"
+                return
+            
+            # If it's a function call, process it
+            if is_function_call and function_name:
+                try:
+                    # Parse function arguments
+                    args = json.loads(function_args)
+                    
+                    # Check mutating call limits
+                    if function_name in mutating_tools:
+                        mutating_calls += 1
+                        print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {function_name}")
+                        
+                        # If this is more than the first mutation and not a set_cells call, abort
+                        if mutating_calls > 1 and function_name != "set_cells":
+                            print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
+                            yield "\nError: You should use a single set_cells call to make multiple updates."
+                            return
+                    
+                    # Find the function
+                    fn = next(t["func"] for t in self.tools if t["name"] == function_name)
+                    print(f"[{agent_id}] 🧰 Executing {function_name}")
+                    
+                    # Execute the function
+                    fn_start = time.time()
+                    result = fn(**args)
+                    fn_time = time.time() - fn_start
+                    print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
+                    
+                    # Collect updates
+                    if isinstance(result, dict):
+                        if "updates" in result and isinstance(result["updates"], list):
+                            collected_updates.extend(result["updates"])
+                        elif "cell" in result:
+                            collected_updates.append(result)
+                    
+                    # Add results to messages
+                    messages.append({
+                        "role": "assistant", 
+                        "name": function_name,
+                        "content": json.dumps(result)
+                    })
+                    
+                    # Continue the loop for another iteration
+                    continue
+                    
+                except Exception as e:
+                    print(f"[{agent_id}] ❌ Error executing function {function_name}: {str(e)}")
+                    yield f"\nError executing {function_name}: {str(e)}"
+                    return
+            else:
+                # No function call means we have a text response
+                # Already yielded incrementally, so we can exit the loop
+                break
+        
+        # If we reach here via break, we're done
+        # If we reach here via iteration limit, yield a warning
+        if iterations >= max_iterations:
+            print(f"[{agent_id}] ⚠️ Reached max iterations: {max_iterations}")
+            yield f"\n[Reached maximum number of operations ({max_iterations}). Consider simplifying your request.]"
+        
+        print(f"[{agent_id}] ✅ Streaming run complete in {iterations} iterations")
+        return

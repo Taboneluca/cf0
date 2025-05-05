@@ -2,9 +2,14 @@ from __future__ import annotations
 from typing import Dict, Set, List, Any, Optional
 from collections import defaultdict, deque
 import asyncio
+import os
 
 from spreadsheet_engine.model import Spreadsheet   # SAFE direction
 import supabase_store  # Import the Supabase persistence layer
+from spreadsheet_engine.dag_recalc import get_recalculation_order, clear_dirty_cells
+
+# Whether to use optimized incremental recalculation
+USE_INCREMENTAL_RECALC = os.getenv("USE_INCREMENTAL_RECALC", "1").lower() in ("1", "true", "yes")
 
 class Workbook:
     def __init__(self, wid: str):
@@ -59,8 +64,50 @@ class Workbook:
         
     def recalculate(self) -> None:
         """
-        Recalculate all formula cells in all sheets of the workbook.
-        Uses topological sort to compute in the correct order.
+        Recalculate formula cells in the workbook. 
+        Uses fast incremental recalculation if enabled, or full recalc otherwise.
+        """
+        if USE_INCREMENTAL_RECALC:
+            self._incremental_recalculate()
+        else:
+            self._full_recalculate()
+                
+    def _incremental_recalculate(self) -> None:
+        """
+        Perform incremental recalculation using the DAG-based engine.
+        Only recalculates cells that need to be updated.
+        """
+        # Get the optimal recalculation order
+        recalc_order = get_recalculation_order()
+        
+        # If no cells need recalculation, we're done
+        if not recalc_order:
+            return
+            
+        print(f"Incrementally recalculating {len(recalc_order)} cells")
+        
+        # Process cells in the proper order
+        for cell_ref in recalc_order:
+            # Handle cross-sheet references
+            if '!' in cell_ref:
+                sheet_name, local_cell = cell_ref.split('!', 1)
+                try:
+                    sheet = self.sheet(sheet_name)
+                    # Just accessing the cell will recalculate if it's a formula
+                    sheet.get_cell(local_cell)
+                except Exception as e:
+                    print(f"Error recalculating {cell_ref}: {e}")
+            else:
+                # Should not happen with qualified cell refs
+                print(f"Warning: unqualified cell reference {cell_ref} in recalculation order")
+        
+        # Clear dirty cells after recalculation
+        clear_dirty_cells()
+    
+    def _full_recalculate(self) -> None:
+        """
+        Legacy full recalculation method.
+        Recalculates all formula cells in all sheets using topological sort.
         """
         # Collect all dependencies from all sheets
         all_deps = defaultdict(set)
