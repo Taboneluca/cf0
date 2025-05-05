@@ -174,43 +174,105 @@ async def create_sheet(request: NewSheetRequest = None, wid: str = "default"):
 # Chat endpoint - main interaction
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
+    import time
+    import traceback
+    
+    start_time = time.time()
+    request_id = f"req-{int(time.time()*1000)}"
+    print(f"[{request_id}] 📝 Chat request received: mode={req.mode}, wid={req.wid}, sid={req.sid}")
+    
     try:
         # Try to use moderation if available, but don't fail if it doesn't work
         try:
             moderation = client.moderations.create(input=req.message)
             if moderation.results[0].flagged:
+                print(f"[{request_id}] ⚠️ Message flagged by moderation")
                 raise HTTPException(400, "Message violates policy")
         except OpenAIError as moderation_error:
             # Log the error but continue processing the message
-            print(f"Warning: Moderation check failed: {moderation_error}")
+            print(f"[{request_id}] ⚠️ Moderation check failed: {moderation_error}")
         
         # Get the workbook and active sheet
-        wb = get_workbook(req.wid)
-        sheet = wb.sheet(req.sid)
+        print(f"[{request_id}] 🔍 Getting workbook {req.wid} and sheet {req.sid}")
+        try:
+            wb = get_workbook(req.wid)
+            if not wb:
+                print(f"[{request_id}] ❌ Workbook not found: {req.wid}")
+                raise HTTPException(404, f"Workbook not found: {req.wid}")
+            
+            sheet = wb.sheet(req.sid)
+            if not sheet:
+                print(f"[{request_id}] ❌ Sheet not found: {req.sid} in workbook {req.wid}")
+                print(f"[{request_id}] 📋 Available sheets: {wb.list_sheets()}")
+                raise HTTPException(404, f"Sheet not found: {req.sid}")
+            
+            print(f"[{request_id}] ✅ Found workbook with {len(wb.list_sheets())} sheets")
+        except Exception as e:
+            print(f"[{request_id}] ❌ Error getting workbook/sheet: {str(e)}")
+            traceback.print_exc()
+            raise HTTPException(500, f"Error accessing workbook or sheet: {str(e)}")
         
         # Create metadata with all sheets in the workbook for cross-sheet formulas
         all_sheets_data = {
             name: sheet.to_dict() for name, sheet in wb.all_sheets().items()
         }
         
+        print(f"[{request_id}] 🕒 Preparing to process message with {len(wb.list_sheets())} available sheets")
+        
         # Process the message with the sheet and workbook context - rate limited
         async with chat_limiter:
-            result = await process_message(
-                req.mode, 
-                req.message, 
-                req.wid, 
-                req.sid, 
-                sheet,
-                workbook_metadata={
-                    "sheets": wb.list_sheets(),
-                    "active": req.sid,
-                    "all_sheets_data": all_sheets_data
-                }
-            )
+            print(f"[{request_id}] 🚀 Processing message through agent (mode: {req.mode})")
+            process_start = time.time()
+            
+            try:
+                result = await process_message(
+                    req.mode, 
+                    req.message, 
+                    req.wid, 
+                    req.sid, 
+                    sheet,
+                    workbook_metadata={
+                        "sheets": wb.list_sheets(),
+                        "active": req.sid,
+                        "all_sheets_data": all_sheets_data
+                    }
+                )
+                process_time = time.time() - process_start
+                print(f"[{request_id}] ⏱️ Message processed in {process_time:.2f}s")
+            except Exception as process_error:
+                print(f"[{request_id}] ❌ Error in process_message: {str(process_error)}")
+                traceback.print_exc()
+                raise HTTPException(500, f"Error processing message: {str(process_error)}")
+        
+        # Verify the result structure before returning
+        if not isinstance(result, dict) or "reply" not in result or "sheet" not in result:
+            print(f"[{request_id}] ❌ Invalid result structure: {result.keys() if isinstance(result, dict) else type(result)}")
+            raise HTTPException(500, "Invalid response format from agent")
+        
+        total_time = time.time() - start_time
+        print(f"[{request_id}] ✅ Request completed in {total_time:.2f}s with reply length: {len(result['reply'])}")
         
         return ChatResponse(**result)
+    except HTTPException:
+        # Re-raise HTTP exceptions without modifying them
+        raise
     except Exception as e:
-        print(f"Error processing chat request: {str(e)}")
+        print(f"[{request_id}] ❌ Unhandled error processing chat request: {str(e)}")
+        tb = traceback.format_exc()
+        print(f"[{request_id}] 📋 Traceback: {tb}")
+        
+        # For debugging purposes, try to identify if this is a sheet access error
+        if "Sheet is None" in str(e):
+            print(f"[{request_id}] 🔍 Sheet access error detected for wid={req.wid}, sid={req.sid}")
+            try:
+                wb = get_workbook(req.wid)
+                sheet_list = wb.list_sheets() if wb else []
+                print(f"[{request_id}] 📋 Available sheets: {sheet_list}")
+            except Exception as inner_e:
+                print(f"[{request_id}] ❌ Failed to get sheet list: {str(inner_e)}")
+        
+        total_time = time.time() - start_time
+        print(f"[{request_id}] ❌ Request failed after {total_time:.2f}s")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Keep old endpoints for backwards compatibility but mark as deprecated

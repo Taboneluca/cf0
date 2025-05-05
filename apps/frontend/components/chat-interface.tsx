@@ -59,29 +59,68 @@ export default function ChatInterface({
     setMessages((prev) => [...prev, userMessage])
     setInput("")
     setIsLoading(true)
+    
+    console.log(`💬 Sending chat message with mode=${mode}, wid=${wid}, sheet=${active}`)
 
     try {
       // Send the chat request with workbook/sheet ID
       const response = await chatBackend(mode, input, wid, active)
       
+      console.log(`📊 Chat response received:`, {
+        replyLength: response?.reply?.length,
+        hasSheet: !!response?.sheet,
+        sheetName: response?.sheet?.name,
+      })
+      
       // Defensive check for required fields
-      if (!response || !response.reply || !response.sheet) {
-        throw new Error("Invalid response format from server")
+      if (!response) {
+        console.error("❌ Empty response from chatBackend")
+        throw new Error("Empty response from server")
+      }
+      
+      if (!response.reply) {
+        console.error("❌ Missing reply in response:", response)
+        throw new Error("Missing reply in server response")
+      }
+      
+      if (!response.sheet) {
+        console.error("❌ Missing sheet data in response:", {
+          hasReply: !!response.reply,
+          hasSheet: !!response.sheet,
+        })
+        throw new Error("Missing sheet data in server response")
       }
       
       // Update the active sheet directly from the backend response
-      dispatch({
-        type: "UPDATE_SHEET", 
-        sid: active, 
-        data: backendSheetToUI(response.sheet)
-      })
+      console.log(`📝 Updating sheet ${active} from response`)
+      
+      try {
+        const uiSheet = backendSheetToUI(response.sheet)
+        dispatch({
+          type: "UPDATE_SHEET", 
+          sid: active, 
+          data: uiSheet
+        })
+        console.log(`✅ Sheet ${active} updated successfully`)
+      } catch (sheetError: any) {
+        console.error("❌ Error updating sheet:", sheetError)
+        throw new Error(`Error updating sheet: ${sheetError.message}`)
+      }
       
       // Merge all sheets data into the context
       if (response.all_sheets) {
-        dispatch({
-          type: "MERGE_SHEETS_DATA",
-          data: backendSheetToUIMap(response.all_sheets)
-        })
+        try {
+          console.log(`📊 Merging data for ${Object.keys(response.all_sheets).length} sheets`)
+          const uiSheets = backendSheetToUIMap(response.all_sheets)
+          dispatch({
+            type: "MERGE_SHEETS_DATA",
+            data: uiSheets
+          })
+          console.log(`✅ All sheets merged successfully`)
+        } catch (sheetsError: any) {
+          console.error("❌ Error merging sheets:", sheetsError)
+          // Don't throw here - we can continue with the single sheet update
+        }
       }
 
       const assistantMessage: Message = {
@@ -91,7 +130,17 @@ export default function ChatInterface({
 
       setMessages((prev) => [...prev, assistantMessage])
     } catch (error) {
-      console.error("Error generating response:", error)
+      console.error("❌ Error in handleSendMessage:", error)
+      
+      // Log more details about the current state
+      console.error("Current state:", {
+        mode,
+        wid,
+        active,
+        workbookData: !!wb,
+        messageCount: messages.length
+      })
+      
       setMessages((prev) => [
         ...prev,
         {
