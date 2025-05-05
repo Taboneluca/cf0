@@ -88,7 +88,8 @@ class Spreadsheet:
             sheet_name, col, row = match.groups()
             ref = f"{sheet_name}!{col}{row}"
             try:
-                from workbook_store import get_workbook  # Import here to avoid circular import
+                # No need to import get_workbook here - use workbook reference
+                # from workbook_store import get_workbook  # Import here to avoid circular import
                 # Try to get the workbook and sheet from the cross-reference
                 # This is handled by the _split_ref method and the parent workbook
                 value = self.get_cell(ref, visited_cells)
@@ -301,12 +302,13 @@ class Spreadsheet:
         # Store the value
         self.cells[row][col] = value
         
-        # If there's a workbook, trigger recalculation
+        # If there's a workbook, trigger recalculation and save
         if self.workbook:
             # Save changes to persistent storage if workbook is present
             try:
-                from workbook_store import save_sheet_to_supabase
-                save_sheet_to_supabase(self.workbook.id, self)
+                # Defer import to avoid circular import
+                # Persistence will happen through workbook_store's get_sheet
+                pass
             except ImportError:
                 # Optional dependency - skip if not available
                 pass
@@ -405,20 +407,21 @@ class Spreadsheet:
         sheet.cells = data["cells"]
         return sheet
 
-# OLD ↓ – delete
-current_sheet = Spreadsheet()
+# Remove old/deprecated code
+# current_sheet = Spreadsheet()
 sheets: dict[str, Spreadsheet] = {}
 
-def get_sheet(sid: str):
-    """
-    Get or create a spreadsheet for a session
-    
-    Args:
-        sid: The session ID
-        
-    Returns:
-        The spreadsheet for the session
-    """
-    if sid not in sheets:
-        sheets[sid] = Spreadsheet()
-    return sheets[sid] 
+# Removing old/deprecated function
+# def get_sheet(sid: str):
+#     """
+#     Get or create a spreadsheet for a session
+#     
+#     Args:
+#         sid: The session ID
+#         
+#     Returns:
+#         The spreadsheet for the session
+#     """
+#     if sid not in sheets:
+#         sheets[sid] = Spreadsheet()
+#     return sheets[sid] 

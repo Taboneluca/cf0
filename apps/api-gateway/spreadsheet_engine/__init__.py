@@ -1,5 +1,6 @@
 from .model import Spreadsheet, DEFAULT_ROWS, DEFAULT_COLS
-from workbook_store import get_workbook, get_sheet
+# Remove circular import
+# from workbook_store import get_workbook, get_sheet
 from .summary import sheet_summary
 from .operations import (
     # Read operations
@@ -28,8 +29,9 @@ __all__ = [
     'Spreadsheet',
     'DEFAULT_ROWS',
     'DEFAULT_COLS',
-    'get_workbook',
-    'get_sheet',
+    # Remove circular imports
+    # 'get_workbook',
+    # 'get_sheet',
     'get_cell',
     'get_range',
     'summarize_sheet',
