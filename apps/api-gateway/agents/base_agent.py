@@ -6,6 +6,7 @@ import json
 import time
 from dotenv import load_dotenv
 from agents.openai_client import client, OpenAIError, APIStatusError
+from agents.openai_rate import chat_completion
 from .tools import TOOL_CATALOG
 from chat.token_utils import trim_history
 
@@ -73,32 +74,29 @@ class BaseAgent:
         # Trim history to fit within token limits
         messages = trim_history(messages, system_message, MAX_TOKENS, MODEL)
 
-        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 100)
-        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "100"))
+        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 10)
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))
         iterations = 0
         collected_updates: list = []
+        mutating_calls = 0
         
         while iterations < max_iterations:
             iterations += 1
             
             # Try to call the model with retries for transient errors
-            for retry in range(MAX_RETRIES):
-                try:
-                    response = client.chat.completions.create(
-                        model=MODEL,
-                        messages=messages,
-                        functions=[_serialize_tool(t) for t in self.tools],
-                        function_call="auto",
-                        temperature=1,  # Use 1e-8 instead of 0.0 for Groq compatibility
-                    )
-                    break  # Successful call, exit retry loop
-                except (OpenAIError, APIStatusError) as e:
-                    if retry == MAX_RETRIES - 1:  # Last retry failed
-                        return {
-                            "reply": f"Sorry, I encountered an error: {str(e)}",
-                            "updates": []
-                        }
-                    time.sleep(RETRY_DELAY * (2 ** retry))  # Exponential backoff
+            try:
+                response = chat_completion(
+                    model=MODEL,
+                    messages=messages,
+                    functions=[_serialize_tool(t) for t in self.tools],
+                    function_call="auto",
+                    temperature=1,  # Use 1e-8 instead of 0.0 for Groq compatibility
+                )
+            except (OpenAIError, APIStatusError) as e:
+                return {
+                    "reply": f"Sorry, I encountered an error: {str(e)}",
+                    "updates": []
+                }
             
             # Process the response
             msg = response.choices[0].message
@@ -113,6 +111,19 @@ class BaseAgent:
             if msg.function_call:
                 name = msg.function_call.name
                 args = json.loads(msg.function_call.arguments)
+                
+                # Check if this is a mutating call
+                is_mutating = not next((t for t in self.tools if t["name"] == name), {}).get("read_only", False)
+                if is_mutating:
+                    mutating_calls += 1
+                    
+                # Enforce single set_cells mutation per task
+                if mutating_calls > 1 and name != "set_cells" and is_mutating:
+                    return {
+                        "reply": "Error: use a single set_cells call for multiple updates.",
+                        "updates": collected_updates
+                    }
+                
                 # Invoke the Python function
                 fn = next(t["func"] for t in self.tools if t["name"] == name)
                 result = fn(**args)
@@ -134,22 +145,22 @@ class BaseAgent:
                 
                 # Continue the loop so the model can decide whether to call more functions or give a final answer
                 continue
-            else:
-                # No function call, we have our final answer
-                try:
-                    # First check if this is a code block with embedded JSON
-                    if isinstance(msg.content, str) and "```json" in msg.content:
-                        # Extract the JSON from the code block
-                        import re
-                        json_matches = re.findall(r'```json\s*(\{[\s\S]*?\})\s*```', msg.content)
-                        
-                        if json_matches:
-                            try:
-                                extracted_json = json.loads(json_matches[0])
-                                print(f"Extracted JSON from code block: {extracted_json}")
-                                
-                                # Apply updates from the extracted JSON
+            
+            # 2) No function call - model gave a direct answer
+            elif msg.content:
+                # Look for updates embedded in JSON
+                if isinstance(msg.content, str):
+                    # Try to extract JSON wrapped in ```json ... ``` or other code blocks
+                    import re
+                    json_matches = re.findall(r'```(?:json)?\s*([\s\S]*?)\s*```', msg.content)
+                    
+                    for json_str in json_matches:
+                        try:
+                            extracted_json = json.loads(json_str)
+                            if isinstance(extracted_json, dict) and "reply" in extracted_json:
+                                # We found a valid message structure, extract updates
                                 updates = extracted_json.get("updates", [])
+                                
                                 if updates and isinstance(updates, list):
                                     print(f"Found {len(updates)} updates in extracted JSON")
                                     actually_applied_updates = []
@@ -170,11 +181,12 @@ class BaseAgent:
                                     # Include the applied updates in the result, or fallback to collected_updates
                                     extracted_json["updates"] = actually_applied_updates if actually_applied_updates else collected_updates
                                     return extracted_json
-                            except json.JSONDecodeError as e:
-                                print(f"Error parsing extracted JSON: {e}")
-                    
-                    # Attempt to parse JSON response if it starts with a brace
-                    if isinstance(msg.content, str) and msg.content.strip().startswith("{"):
+                        except json.JSONDecodeError as e:
+                            print(f"Error parsing extracted JSON: {e}")
+                
+                # Attempt to parse JSON response if it starts with a brace
+                if isinstance(msg.content, str) and msg.content.strip().startswith("{"):
+                    try:
                         json_result = json.loads(msg.content)
                         
                         # Check if the JSON response is describing a JSON structure with updates
@@ -200,28 +212,23 @@ class BaseAgent:
                                             actually_applied_updates.append(tool_result)
                                             break
                             
-                            # Include the applied updates in the result, or fallback to collected_updates
-                            if actually_applied_updates:
-                                json_result["updates"] = actually_applied_updates
-                            else:
-                                json_result["updates"] = collected_updates
-                                
-                        return json_result
-                    else:
-                        return {
-                            "reply": msg.content,
-                            "updates": collected_updates
-                        }
-                except json.JSONDecodeError:
-                    # If JSON parsing fails, return the raw content
-                    return {
-                        "reply": msg.content,
-                        "updates": collected_updates
-                    }
+                            # Include the applied updates in the result
+                            json_result["updates"] = actually_applied_updates if actually_applied_updates else collected_updates
+                            return json_result
+                    except json.JSONDecodeError:
+                        # If we can't parse JSON, just treat it as a regular message
+                        pass
+                
+                # Process as a regular message
+                reply = msg.content.strip()
+                return {
+                    "reply": reply,
+                    "updates": collected_updates
+                }
         
-        # If we exceed max_iterations
+        # If we get here, we've exceeded the maximum iterations
         return {
-            "reply": "I apologize, but I've made too many consecutive actions. Let's try a different approach.",
+            "reply": "[max-tool-iterations exceeded] I've reached the maximum number of operations allowed. Please simplify your request or break it into smaller steps.",
             "updates": collected_updates
         }
 

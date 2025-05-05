@@ -8,6 +8,7 @@ from agents.analyst_agent import AnalystAgent
 from spreadsheet_engine.model import Spreadsheet
 from workbook_store import get_sheet, get_workbook
 from chat.memory import get_history, add_to_history
+from spreadsheet_engine.summary import sheet_summary
 
 async def process_message(
     mode: str, 
@@ -52,13 +53,12 @@ async def process_message(
         }
     
     # Inject current workbook/sheet info into history for LLM context
-    sheet_state = sheet.to_dict()
+    summary = sheet_summary(sheet=sheet)
     system_context = (
         f"Workbook: {wid}\nCurrent sheet: {sid}\n"
-        f"Available sheets: {', '.join(workbook_metadata['sheets'])}\n\n"
-        f"You can reference cells across sheets using Sheet2!A1 syntax in formulas.\n"
-        f"For example, =Sheet2!A1+Sheet3!B2 adds values from two different sheets.\n\n"
-        f"Current sheet state: {json.dumps(sheet_state)}"
+        f"Available sheets: {', '.join(workbook_metadata['sheets'])}\n"
+        f"Sheet summary: {json.dumps(summary)}\n"
+        "Call get_range if you need more detail."
     )
     
     history.insert(0, {

@@ -224,6 +224,13 @@ TOOL_CATALOG = [
         "func": ops.get_sheet_summary,
         "read_only": True,
     },
+    {
+        "name": "sheet_summary",
+        "description": "Compact summary (rows, cols, headers, first N rows, hash).",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "func": ops.summarize_sheet,
+        "read_only": True
+    }
 ]
 
 READ_ONLY_TOOLS = [t for t in TOOL_CATALOG if t["read_only"]]

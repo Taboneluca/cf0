@@ -303,6 +303,14 @@ class Spreadsheet:
         
         # If there's a workbook, trigger recalculation
         if self.workbook:
+            # Save changes to persistent storage if workbook is present
+            try:
+                from workbook_store import save_sheet_to_supabase
+                save_sheet_to_supabase(self.workbook.id, self)
+            except ImportError:
+                # Optional dependency - skip if not available
+                pass
+                
             self.workbook.recalculate()
     
     def get_range(self, range_ref: str) -> List[List[Any]]:

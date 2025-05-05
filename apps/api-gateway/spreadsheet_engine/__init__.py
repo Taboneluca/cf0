@@ -1,5 +1,6 @@
 from .model import Spreadsheet, DEFAULT_ROWS, DEFAULT_COLS
 from workbook_store import get_workbook, get_sheet
+from .summary import sheet_summary
 from .operations import (
     # Read operations
     get_cell,
@@ -32,6 +33,7 @@ __all__ = [
     'get_cell',
     'get_range',
     'summarize_sheet',
+    'sheet_summary',
     'calculate',
     'get_row_by_header',
     'get_column_by_header',

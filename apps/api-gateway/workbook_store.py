@@ -1,8 +1,10 @@
 from __future__ import annotations
-from typing import Dict, Set, List, Any
+from typing import Dict, Set, List, Any, Optional
 from collections import defaultdict, deque
+import asyncio
 
 from spreadsheet_engine.model import Spreadsheet   # SAFE direction
+import supabase_store  # Import the Supabase persistence layer
 
 class Workbook:
     def __init__(self, wid: str):
@@ -42,6 +44,10 @@ class Workbook:
         self.sheets[name] = Spreadsheet(name=name)
         self.sheets[name].workbook = self  # Set reference to workbook
         self.active = name
+        
+        # Persist the new sheet
+        supabase_store.save_sheet(self.id, self.sheets[name])
+        
         return self.sheets[name]
 
     def list_sheets(self) -> list[str]:
@@ -142,10 +148,98 @@ class Workbook:
 # GLOBAL REGISTRY  ------------------------------------------
 workbooks: Dict[str, Workbook] = {}
 
+async def _load_from_supabase(wid: str) -> Optional[Workbook]:
+    """Try to load a workbook from Supabase"""
+    try:
+        sheets_data = await supabase_store.load_workbook(wid)
+        if not sheets_data:
+            return None
+            
+        # Create workbook
+        wb = Workbook(wid)
+        
+        # Clear default sheets
+        wb.sheets.clear()
+        
+        # Add all sheets from Supabase
+        for sheet_name, sheet_data in sheets_data.items():
+            sheet = Spreadsheet.from_dict(sheet_data)
+            sheet.workbook = wb
+            wb.sheets[sheet_name] = sheet
+            
+        if wb.sheets:
+            # Set active sheet to first one
+            wb.active = next(iter(wb.sheets.keys()))
+            
+        return wb
+    except Exception as e:
+        print(f"Error loading workbook from Supabase: {str(e)}")
+        return None
+
 def get_workbook(wid: str) -> Workbook:
+    """
+    Get a workbook by ID, loading from persistence if needed.
+    
+    Args:
+        wid: Workbook ID
+        
+    Returns:
+        The workbook instance
+    """
     if wid not in workbooks:
-        workbooks[wid] = Workbook(wid)
+        # Try to load from Supabase asynchronously
+        try:
+            # Run the async function in a new event loop
+            loop = asyncio.new_event_loop()
+            wb = loop.run_until_complete(_load_from_supabase(wid))
+            loop.close()
+            
+            if wb:
+                workbooks[wid] = wb
+            else:
+                # Create a new workbook if not found in Supabase
+                workbooks[wid] = Workbook(wid)
+        except Exception as e:
+            print(f"Error loading workbook: {str(e)}")
+            # Fall back to creating a new in-memory workbook
+            workbooks[wid] = Workbook(wid)
+    
     return workbooks[wid]
 
+def save_sheet_to_supabase(wid: str, sheet: Spreadsheet):
+    """
+    Save a sheet to persistent storage.
+    
+    This function is called directly from Spreadsheet.set_cell 
+    to ensure changes are persisted.
+    
+    Args:
+        wid: Workbook ID
+        sheet: The spreadsheet to save
+    """
+    # Use the Supabase store for persistence
+    supabase_store.save_sheet(wid, sheet)
+
 def get_sheet(wid: str, sid: str) -> Spreadsheet:
-    return get_workbook(wid).sheet(sid) 
+    """
+    Get a sheet from a workbook.
+    
+    Args:
+        wid: Workbook ID
+        sid: Sheet ID
+        
+    Returns:
+        The spreadsheet instance
+    """
+    sheet = get_workbook(wid).sheet(sid)
+    
+    # After any get_sheet operation, schedule persistence
+    supabase_store.save_sheet(wid, sheet)
+    
+    return sheet
+
+
+# Module initialization
+async def initialize():
+    """Initialize the workbook store and start background workers"""
+    await supabase_store.start_background_worker() 
