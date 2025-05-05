@@ -47,9 +47,14 @@ def calculate(formula: str, sheet=None) -> Any:
 
 def set_cell(cell_ref: str, value: Any, sheet=None) -> Dict[str, Any]:
     """Set the value of a specific cell"""
-    print(f'[{sheet.name}] {cell_ref} <- {value}')  # Log cell update
+    # Add null check for sheet
+    if sheet is None:
+        return {"error": "Sheet is None - cannot set cell value"}
+        
+    sheet_name = getattr(sheet, 'name', 'Unknown')
+    print(f'[{sheet_name}] {cell_ref} <- {value}')  # Log cell update
     old_value = get_cell(cell_ref, sheet)
-    print(f"Setting cell {cell_ref} from '{old_value}' to '{value}' in sheet {sheet.name}")
+    print(f"Setting cell {cell_ref} from '{old_value}' to '{value}' in sheet {sheet_name}")
     sheet.set_cell(cell_ref, value)
     return {
         "cell": cell_ref,
@@ -70,7 +75,12 @@ def set_cells(updates: Union[list[dict[str, Any]], dict[str, Any]], sheet=None):
     Returns:
         List of changes made to cells
     """
-    print(f'[{sheet.name}] bulk set_cells: {updates}')  # Log bulk updates
+    # Add null check for sheet
+    if sheet is None:
+        return {"error": "Sheet is None - cannot set cell values"}
+        
+    sheet_name = getattr(sheet, 'name', 'Unknown')
+    print(f'[{sheet_name}] bulk set_cells: {updates}')  # Log bulk updates
     changed = []
     
     # Handle both formats: list of dicts or dict of cell->value
