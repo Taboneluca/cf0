@@ -4,6 +4,7 @@ import os
 import asyncio
 import json
 import time
+import traceback
 from dotenv import load_dotenv
 from agents.openai_client import client, OpenAIError, APIStatusError
 from agents.openai_rate import chat_completion
@@ -60,19 +61,27 @@ class BaseAgent:
         Execute the tool-loop until the model produces a final answer.
         Returns { 'reply': str, 'updates': list }
         """
+        start_time = time.time()
+        agent_id = f"agent-{int(start_time*1000)}"
+        print(f"[{agent_id}] 🤖 Starting agent run with message length: {len(user_message)}")
+        
         # Prepare the basic message structure with system prompt
         system_message = {"role": "system", "content": self.system_prompt}
         messages = [system_message]
         
         # Add conversation history if provided
         if history:
+            print(f"[{agent_id}] 📚 Adding {len(history)} history messages")
             messages.extend(history)
             
         # Add the current user message
         messages.append({"role": "user", "content": user_message})
         
         # Trim history to fit within token limits
+        orig_message_count = len(messages)
         messages = trim_history(messages, system_message, MAX_TOKENS, MODEL)
+        if len(messages) < orig_message_count:
+            print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
         # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 40)
         max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "40"))
@@ -80,11 +89,18 @@ class BaseAgent:
         collected_updates: list = []
         mutating_calls = 0
         
+        print(f"[{agent_id}] 🔄 Starting tool loop with max_iterations={max_iterations}")
+        
         while iterations < max_iterations:
             iterations += 1
+            loop_start = time.time()
+            print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations}")
             
             # Try to call the model with retries for transient errors
             try:
+                call_start = time.time()
+                print(f"[{agent_id}] 🔌 Calling LLM model: {MODEL}")
+                
                 response = chat_completion(
                     model=MODEL,
                     messages=messages,
@@ -92,7 +108,11 @@ class BaseAgent:
                     function_call="auto",
                     temperature=0.3,  # Reduced from 1.0 to 0.3 for more consistent responses
                 )
+                
+                call_time = time.time() - call_start
+                print(f"[{agent_id}] ⏱️ LLM call completed in {call_time:.2f}s")
             except (OpenAIError, APIStatusError) as e:
+                print(f"[{agent_id}] ❌ Error calling LLM: {str(e)}")
                 return {
                     "reply": f"Sorry, I encountered an error: {str(e)}",
                     "updates": []
@@ -112,28 +132,46 @@ class BaseAgent:
                 name = msg.function_call.name
                 args = json.loads(msg.function_call.arguments)
                 
+                print(f"[{agent_id}] 🔧 Function call: {name}")
+                
                 # Check if this is a mutating call
                 is_mutating = not next((t for t in self.tools if t["name"] == name), {}).get("read_only", False)
                 if is_mutating:
                     mutating_calls += 1
+                    print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}({args})")
                     
                 # Enforce single set_cells mutation per task
                 if mutating_calls > 1 and name != "set_cells" and is_mutating:
+                    print(f"[{agent_id}] ⚠️ Multiple mutation calls detected - enforcing set_cells usage")
                     return {
                         "reply": "Error: use a single set_cells call for multiple updates.",
                         "updates": collected_updates
                     }
                 
                 # Invoke the Python function
-                fn = next(t["func"] for t in self.tools if t["name"] == name)
-                result = fn(**args)
+                try:
+                    fn = next(t["func"] for t in self.tools if t["name"] == name)
+                    print(f"[{agent_id}] 🧰 Executing {name} with args: {json.dumps(args)[:100]}...")
+                    
+                    fn_start = time.time()
+                    result = fn(**args)
+                    fn_time = time.time() - fn_start
+                    
+                    print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
+                except Exception as fn_error:
+                    print(f"[{agent_id}] ❌ Error executing function {name}: {str(fn_error)}")
+                    traceback.print_exc()
+                    result = {"error": f"Function execution error: {str(fn_error)}"}
                 
                 # Accumulate updates if provided
                 if isinstance(result, dict):
                     if "updates" in result and isinstance(result["updates"], list):
+                        update_count = len(result["updates"])
+                        print(f"[{agent_id}] 📊 Collected {update_count} updates from function result")
                         collected_updates.extend(result["updates"])
                     # Normalise single-cell result (handles keys 'new', 'new_value' or 'value')
                     elif "cell" in result:
+                        print(f"[{agent_id}] 📝 Added single cell update to collected updates")
                         collected_updates.append(result)
                 
                 # Add the function's output back into the conversation
@@ -143,11 +181,16 @@ class BaseAgent:
                     "content": json.dumps(result)
                 })
                 
+                loop_time = time.time() - loop_start
+                print(f"[{agent_id}] ⏱️ Iteration {iterations} completed in {loop_time:.2f}s")
+                
                 # Continue the loop so the model can decide whether to call more functions or give a final answer
                 continue
             
             # 2) No function call - model gave a direct answer
             elif msg.content:
+                print(f"[{agent_id}] 💬 Model returned direct response, length: {len(msg.content)}")
+                
                 # Look for updates embedded in JSON
                 if isinstance(msg.content, str):
                     # Try to extract JSON wrapped in ```json ... ``` or other code blocks
@@ -162,14 +205,14 @@ class BaseAgent:
                                 updates = extracted_json.get("updates", [])
                                 
                                 if updates and isinstance(updates, list):
-                                    print(f"Found {len(updates)} updates in extracted JSON")
+                                    print(f"[{agent_id}] 📄 Found {len(updates)} updates in extracted JSON")
                                     actually_applied_updates = []
                                     
                                     for update in updates:
                                         if "cell" in update and ("new_value" in update or "new" in update or "value" in update):
                                             cell = update["cell"]
                                             value = update.get("new_value", update.get("new", update.get("value")))
-                                            print(f"Executing set_cell from JSON for {cell} = {value}")
+                                            print(f"[{agent_id}] 📝 Executing set_cell from JSON for {cell} = {value}")
                                             
                                             # Apply the update directly
                                             for t in self.tools:
@@ -180,9 +223,12 @@ class BaseAgent:
                                     
                                     # Include the applied updates in the result, or fallback to collected_updates
                                     extracted_json["updates"] = actually_applied_updates if actually_applied_updates else collected_updates
+                                    
+                                    total_time = time.time() - start_time
+                                    print(f"[{agent_id}] ✅ Agent run completed in {total_time:.2f}s with {len(extracted_json['updates'])} updates")
                                     return extracted_json
                         except json.JSONDecodeError as e:
-                            print(f"Error parsing extracted JSON: {e}")
+                            print(f"[{agent_id}] ⚠️ Error parsing extracted JSON: {e}")
                 
                 # Attempt to parse JSON response if it starts with a brace
                 if isinstance(msg.content, str) and msg.content.strip().startswith("{"):
@@ -197,12 +243,14 @@ class BaseAgent:
                             
                             # Check if there are updates described in JSON but no tool calls were made to apply them
                             actually_applied_updates = []
+                            print(f"[{agent_id}] 📄 Found {len(updates)} updates in direct JSON response")
+                            
                             for update in updates:
                                 if "cell" in update and ("new_value" in update or "new" in update or "value" in update):
                                     cell = update["cell"]
                                     value = update.get("new_value", update.get("new", update.get("value")))
                                     
-                                    print(f"Executing set_cell from direct JSON for {cell} = {value}")
+                                    print(f"[{agent_id}] 📝 Executing set_cell from direct JSON for {cell} = {value}")
                                     
                                     # Apply the update directly
                                     tool_result = None
@@ -214,19 +262,29 @@ class BaseAgent:
                             
                             # Include the applied updates in the result
                             json_result["updates"] = actually_applied_updates if actually_applied_updates else collected_updates
+                            
+                            total_time = time.time() - start_time
+                            print(f"[{agent_id}] ✅ Agent run completed in {total_time:.2f}s with {len(json_result['updates'])} updates")
                             return json_result
                     except json.JSONDecodeError:
                         # If we can't parse JSON, just treat it as a regular message
-                        pass
+                        print(f"[{agent_id}] ℹ️ Could not parse response as JSON, treating as regular message")
                 
                 # Process as a regular message
                 reply = msg.content.strip()
+                
+                total_time = time.time() - start_time
+                print(f"[{agent_id}] ✅ Agent run completed in {total_time:.2f}s with {len(collected_updates)} updates")
+                
                 return {
                     "reply": reply,
                     "updates": collected_updates
                 }
         
         # If we get here, we've exceeded the maximum iterations
+        total_time = time.time() - start_time
+        print(f"[{agent_id}] ⚠️ Reached maximum iterations ({max_iterations}) after {total_time:.2f}s")
+        
         return {
             "reply": "[max-tool-iterations exceeded] I've reached the maximum number of operations allowed. Please simplify your request or break it into smaller steps.",
             "updates": collected_updates
