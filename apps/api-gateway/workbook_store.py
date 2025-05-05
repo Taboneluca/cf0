@@ -45,8 +45,8 @@ class Workbook:
         self.sheets[name].workbook = self  # Set reference to workbook
         self.active = name
         
-        # Persist the new sheet
-        supabase_store.save_sheet(self.id, self.sheets[name])
+        # Trigger persistence
+        self._schedule_save()
         
         return self.sheets[name]
 
@@ -143,105 +143,90 @@ class Workbook:
                         print(f"Error recalculating {cell_ref}: {e}")
             except Exception as e:
                 print(f"Error during recalculation: {e}")
+                
+    def _schedule_save(self):
+        """Schedule this workbook to be saved to the database."""
+        try:
+            from db import save_workbook
+            save_workbook(self)
+        except ImportError:
+            # DB module not available, skip
+            pass
+        except Exception as e:
+            print(f"Error scheduling workbook save: {e}")
 
 
 # GLOBAL REGISTRY  ------------------------------------------
 workbooks: Dict[str, Workbook] = {}
 
-async def _load_from_supabase(wid: str) -> Optional[Workbook]:
-    """Try to load a workbook from Supabase"""
-    try:
-        sheets_data = await supabase_store.load_workbook(wid)
-        if not sheets_data:
-            return None
-            
-        # Create workbook
-        wb = Workbook(wid)
-        
-        # Clear default sheets
-        wb.sheets.clear()
-        
-        # Add all sheets from Supabase
-        for sheet_name, sheet_data in sheets_data.items():
-            sheet = Spreadsheet.from_dict(sheet_data)
-            sheet.workbook = wb
-            wb.sheets[sheet_name] = sheet
-            
-        if wb.sheets:
-            # Set active sheet to first one
-            wb.active = next(iter(wb.sheets.keys()))
-            
-        return wb
-    except Exception as e:
-        print(f"Error loading workbook from Supabase: {str(e)}")
-        return None
+# Flag to indicate if we should attempt to load from database
+_try_load_from_db = True
 
 def get_workbook(wid: str) -> Workbook:
-    """
-    Get a workbook by ID, loading from persistence if needed.
+    global _try_load_from_db
     
-    Args:
-        wid: Workbook ID
-        
-    Returns:
-        The workbook instance
-    """
     if wid not in workbooks:
-        # Try to load from Supabase asynchronously
-        try:
-            # Use an existing loop if one is running, or create a new one
+        # Check if we can load from the database
+        if _try_load_from_db:
             try:
-                loop = asyncio.get_running_loop()
-                # Create a future and run a task that will set the future's result
-                future = asyncio.run_coroutine_threadsafe(_load_from_supabase(wid), loop)
-                wb = future.result(timeout=10)  # Wait for up to 10 seconds
-            except RuntimeError:
-                # No running event loop, create a new one
-                loop = asyncio.new_event_loop()
-                wb = loop.run_until_complete(_load_from_supabase(wid))
-                loop.close()
+                from db import load_workbook
+                import asyncio
+                
+                # Try to load the workbook from the database
+                sheet_data = asyncio.run(load_workbook(wid))
+                
+                if sheet_data:
+                    # Workbook exists in the database, create it
+                    workbooks[wid] = Workbook(wid)
+                    
+                    # Fill in sheets from database
+                    for sheet_name, data in sheet_data.items():
+                        if sheet_name == "Sheet1" and sheet_name in workbooks[wid].sheets:
+                            # Update existing Sheet1
+                            sheet = workbooks[wid].sheets[sheet_name]
+                            sheet.n_rows = data["n_rows"]
+                            sheet.n_cols = data["n_cols"]
+                            sheet.cells = data["cells"]
+                        else:
+                            # Create new sheet
+                            sheet = Spreadsheet(
+                                rows=data["n_rows"],
+                                cols=data["n_cols"],
+                                name=sheet_name
+                            )
+                            sheet.cells = data["cells"]
+                            workbooks[wid].sheets[sheet_name] = sheet
+                            sheet.workbook = workbooks[wid]
+                    
+                    # Don't schedule save since we just loaded
+                    return workbooks[wid]
             
-            if wb:
-                workbooks[wid] = wb
-            else:
-                # Create a new workbook if not found in Supabase
-                workbooks[wid] = Workbook(wid)
-        except Exception as e:
-            print(f"Error loading workbook: {str(e)}")
-            # Fall back to creating a new in-memory workbook
-            workbooks[wid] = Workbook(wid)
+            except ImportError:
+                # DB module not available, skipping load attempt
+                _try_load_from_db = False
+            except Exception as e:
+                print(f"Error loading workbook from database: {e}")
+        
+        # No database data or error loading, create a new workbook
+        workbooks[wid] = Workbook(wid)
+        
+        # Schedule save for new workbook
+        workbooks[wid]._schedule_save()
     
     return workbooks[wid]
 
-def save_sheet_to_supabase(wid: str, sheet: Spreadsheet):
-    """
-    Save a sheet to persistent storage.
-    
-    This function is called directly from Spreadsheet.set_cell 
-    to ensure changes are persisted.
-    
-    Args:
-        wid: Workbook ID
-        sheet: The spreadsheet to save
-    """
-    # Use the Supabase store for persistence
-    supabase_store.save_sheet(wid, sheet)
-
 def get_sheet(wid: str, sid: str) -> Spreadsheet:
-    """
-    Get a sheet from a workbook.
-    
-    Args:
-        wid: Workbook ID
-        sid: Sheet ID
-        
-    Returns:
-        The spreadsheet instance
-    """
     sheet = get_workbook(wid).sheet(sid)
     
-    # After any get_sheet operation, schedule persistence
-    supabase_store.save_sheet(wid, sheet)
+    # Schedule save whenever a sheet is accessed
+    try:
+        from db import save_sheet
+        save_sheet(wid, sheet)
+    except ImportError:
+        # DB module not available, skip
+        pass
+    except Exception as e:
+        print(f"Error scheduling sheet save: {e}")
     
     return sheet
 

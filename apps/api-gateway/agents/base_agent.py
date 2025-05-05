@@ -83,11 +83,14 @@ class BaseAgent:
         if len(messages) < orig_message_count:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
-        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 40)
-        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "40"))
+        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 10)
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
+        mutating_tools = {"set_cell", "set_cells", "add_row", "add_column", "delete_row", 
+                          "delete_column", "sort_range", "find_replace", "apply_scalar_to_row",
+                          "apply_scalar_to_column", "create_new_sheet"}
         
         print(f"[{agent_id}] 🔄 Starting tool loop with max_iterations={max_iterations}")
         
@@ -131,37 +134,30 @@ class BaseAgent:
             if msg.function_call:
                 name = msg.function_call.name
                 args = json.loads(msg.function_call.arguments)
+                print(f"[{agent_id}] 🛠️ Tool call: {name}")
                 
-                print(f"[{agent_id}] 🔧 Function call: {name}")
-                
-                # Check if this is a mutating call
-                is_mutating = not next((t for t in self.tools if t["name"] == name), {}).get("read_only", False)
-                if is_mutating:
+                # Track mutating calls
+                if name in mutating_tools:
                     mutating_calls += 1
-                    print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}({args})")
+                    print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
                     
-                # Enforce single set_cells mutation per task
-                if mutating_calls > 1 and name != "set_cells" and is_mutating:
-                    print(f"[{agent_id}] ⚠️ Multiple mutation calls detected - enforcing set_cells usage")
-                    return {
-                        "reply": "Error: use a single set_cells call for multiple updates.",
-                        "updates": collected_updates
-                    }
-                
+                    # If this is more than the first mutation and not a set_cells call, abort
+                    if mutating_calls > 1 and name != "set_cells":
+                        print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
+                        return {
+                            "reply": "Error: You should use a single set_cells call to make multiple updates. Please try again with a single batch operation.",
+                            "updates": collected_updates
+                        }
+
                 # Invoke the Python function
-                try:
-                    fn = next(t["func"] for t in self.tools if t["name"] == name)
-                    print(f"[{agent_id}] 🧰 Executing {name} with args: {json.dumps(args)[:100]}...")
-                    
-                    fn_start = time.time()
-                    result = fn(**args)
-                    fn_time = time.time() - fn_start
-                    
-                    print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
-                except Exception as fn_error:
-                    print(f"[{agent_id}] ❌ Error executing function {name}: {str(fn_error)}")
-                    traceback.print_exc()
-                    result = {"error": f"Function execution error: {str(fn_error)}"}
+                fn = next(t["func"] for t in self.tools if t["name"] == name)
+                print(f"[{agent_id}] 🧰 Executing {name} with args: {json.dumps(args)[:100]}...")
+                
+                fn_start = time.time()
+                result = fn(**args)
+                fn_time = time.time() - fn_start
+                
+                print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
                 
                 # Accumulate updates if provided
                 if isinstance(result, dict):
