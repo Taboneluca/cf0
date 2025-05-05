@@ -62,26 +62,31 @@ export default function ChatInterface({
 
     try {
       // Send the chat request with workbook/sheet ID
-      const { reply, sheet: backendSheet, all_sheets } = await chatBackend(mode, input, wid, active)
+      const response = await chatBackend(mode, input, wid, active)
+      
+      // Defensive check for required fields
+      if (!response || !response.reply || !response.sheet) {
+        throw new Error("Invalid response format from server")
+      }
       
       // Update the active sheet directly from the backend response
       dispatch({
         type: "UPDATE_SHEET", 
         sid: active, 
-        data: backendSheetToUI(backendSheet)
+        data: backendSheetToUI(response.sheet)
       })
       
       // Merge all sheets data into the context
-      if (all_sheets) {
+      if (response.all_sheets) {
         dispatch({
           type: "MERGE_SHEETS_DATA",
-          data: backendSheetToUIMap(all_sheets)
+          data: backendSheetToUIMap(response.all_sheets)
         })
       }
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: reply,
+        content: response.reply,
       }
 
       setMessages((prev) => [...prev, assistantMessage])

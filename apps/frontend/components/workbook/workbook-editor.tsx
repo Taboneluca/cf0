@@ -39,38 +39,22 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
     setIsSaving(true)
 
     try {
-      // Check if user is authenticated
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
+      // Check if user is authenticated - use getUser instead of getSession for better security
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
         console.log("User not authenticated - retrying authentication")
         // Try to refresh the session
         const { data: refreshData } = await supabase.auth.refreshSession()
-        if (!refreshData.session) {
-          console.log("Authentication refresh failed - skipping save")
-          return
-        }
-      }
-
-      // Save to Supabase (as backup storage)
-      const { error } = await supabase
-        .from("workbooks")
-        .update({
-          data: workbookData,
-          sheets: sheets,  // Save the sheets array to persist empty sheets
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", workbook.id)
-
-      if (error) {
-        console.error("Supabase save error:", error)
-        if (error.code === "42501") { // Permission error
-          console.log("Permissions issue - checking if user is authorized")
-          if (workbook.user_id !== userId) {
-            console.log("User does not own this workbook - skipping save to Supabase")
-          }
+        if (!refreshData.user) {
+          console.log("Authentication refresh failed - skipping Supabase save")
+          // Continue with API saves even if Supabase auth fails
         } else {
-          throw error
+          // Save to Supabase (as backup storage) only if authenticated
+          await saveToSupabase()
         }
+      } else {
+        // User is authenticated, proceed with Supabase save
+        await saveToSupabase()
       }
 
       // Save to backend API regardless of Supabase result
@@ -96,6 +80,34 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
       console.error("Error in saveWorkbook:", error)
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  // Helper function to save to Supabase
+  const saveToSupabase = async () => {
+    try {
+      const { error } = await supabase
+        .from("workbooks")
+        .update({
+          data: workbookData,
+          sheets: sheets,  // Save the sheets array to persist empty sheets
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", workbook.id)
+
+      if (error) {
+        console.error("Supabase save error:", error)
+        if (error.code === "42501") { // Permission error
+          console.log("Permissions issue - checking if user is authorized")
+          if (workbook.user_id !== userId) {
+            console.log("User does not own this workbook - skipping save to Supabase")
+          }
+        } else {
+          throw error
+        }
+      }
+    } catch (error) {
+      console.error("Error saving to Supabase:", error)
     }
   }
 
