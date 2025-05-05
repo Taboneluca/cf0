@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history so Railway can see the full diff
       
       - name: Install Railway CLI
         run: |
@@ -45,12 +47,12 @@ jobs:
           # First try explicit login
           echo "$RAILWAY_TOKEN" | railway login
           
-          # Then deploy using the logged-in session
+          # Force a full deployment ignoring git changes
           cd ./apps/workers
-          railway up --detach || echo "Using fallback deployment method..."
+          railway up --detach --no-gitignore || echo "Using fallback deployment method..."
           
           # If that fails, try direct deployment with service
-          railway up --service "$RAILWAY_SERVICE_ID" --detach || echo "Deployment initiated - check Railway dashboard for status"
+          railway up --service "$RAILWAY_SERVICE_ID" --detach --no-gitignore || echo "Deployment initiated - check Railway dashboard for status"
           exit 0
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
