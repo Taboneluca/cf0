@@ -74,8 +74,8 @@ class BaseAgent:
         # Trim history to fit within token limits
         messages = trim_history(messages, system_message, MAX_TOKENS, MODEL)
 
-        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 10)
-        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))
+        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 40)
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "40"))
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
