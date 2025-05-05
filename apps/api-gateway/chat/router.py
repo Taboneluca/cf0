@@ -204,6 +204,7 @@ You can now work with cross-sheet formulas. Examples:
 2. To create a formula that adds values from Sheet1 and Sheet2: =Sheet1!A1+Sheet2!B2
 3. To update a cell with a cross-sheet reference: set_cell("Sheet2!A1", "=Sheet1!B3*2")
 4. You can also navigate through different sheets to examine and modify data
+5. When you need to set more than ~5 cells at once, **always use set_cells** with a dictionary so you don't hit the iteration cap.
 """
     
     # Update the tool functions in the agents
