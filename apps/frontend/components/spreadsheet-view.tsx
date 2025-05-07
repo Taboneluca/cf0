@@ -102,6 +102,9 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     if (cell) {
       cell.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" })
     }
+    
+    // Ensure the key-down listener receives upcoming keystrokes
+    containerRef.current?.focus()
   }
 
   // Function to start a range selection
