@@ -272,6 +272,12 @@ def parse_expression(tokens: List[str], sheet, visited_cells: Set[str]) -> Any:
             # Convert to number if possible
             if isinstance(value, (int, float)):
                 processed_tokens.append(value)
+            # Try to convert string to number if it looks numeric
+            elif isinstance(value, str) and value.replace('.', '', 1).replace('-', '', 1).isdigit():
+                try:
+                    processed_tokens.append(float(value) if '.' in value else int(value))
+                except (ValueError, TypeError):
+                    processed_tokens.append(0)
             else:
                 # Non-numeric values in formulas
                 if value is None:

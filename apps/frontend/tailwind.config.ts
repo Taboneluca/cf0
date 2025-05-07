@@ -13,6 +13,11 @@ const config: Config = {
   		colors: {
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
+        cf0: {
+          100: "#f6f6f6",
+          500: "#606060",   // mid-gray from logo
+          900: "#000000"
+        },
   			card: {
   				DEFAULT: 'hsl(var(--card))',
   				foreground: 'hsl(var(--card-foreground))'

@@ -63,6 +63,7 @@ class ChatRequest(BaseModel):
     message: str
     wid: str
     sid: str
+    contexts: Optional[List[str]] = []
 
 class ChatResponse(BaseModel):
     reply: str
@@ -240,7 +241,8 @@ async def chat(req: ChatRequest):
                     workbook_metadata={
                         "sheets": wb.list_sheets(),
                         "active": req.sid,
-                        "all_sheets_data": all_sheets_data
+                        "all_sheets_data": all_sheets_data,
+                        "contexts": req.contexts
                     }
                 )
                 process_time = time.time() - process_start

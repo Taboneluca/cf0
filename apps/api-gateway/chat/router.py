@@ -80,6 +80,41 @@ async def process_message(
             f"Call get_range or sheet_summary tools if you need more detail on the sheet."
         )
         
+        # Add any context ranges if provided
+        contexts = workbook_metadata.get('contexts', [])
+        if contexts:
+            context_data = []
+            for i, context_range in enumerate(contexts, 1):
+                try:
+                    # Split sheet name from range if present (e.g., Sheet2!A1:B3)
+                    if '!' in context_range:
+                        sheet_name, range_ref = context_range.split('!', 1)
+                        context_sheet = workbook.sheet(sheet_name)
+                    else:
+                        context_sheet = sheet
+                        range_ref = context_range
+                    
+                    # Get the range values
+                    if context_sheet:
+                        range_data = context_sheet.get_range(range_ref)
+                        # Format the range data as a simple table
+                        rows_str = []
+                        for row in range_data:
+                            row_str = ",".join(str(cell) for cell in row)
+                            rows_str.append(row_str)
+                        
+                        # Add to context data
+                        context_str = f"### Context {i} ({context_range})\n" + "\n".join(rows_str)
+                        context_data.append(context_str)
+                except Exception as e:
+                    print(f"Error getting context range {context_range}: {e}")
+                    context_data.append(f"### Context {i} ({context_range})\nError: Unable to retrieve data")
+            
+            # Add contexts to system prompt if any were processed successfully
+            if context_data:
+                system_context += "\n\n" + "\n\n".join(context_data)
+                system_context += "\n\nRefer to the numbered contexts above in your response as needed."
+        
         print(f"[{request_id}] 📝 Injecting system context with {len(workbook_metadata['sheets'])} sheets")
         
         history.insert(0, {
@@ -235,9 +270,6 @@ async def process_message(
         # Track updates made to the sheet
         collected_updates = []
         
-        # Prepare system instructions with cross-sheet formula examples
-        cross_sheet_instructions = "You can reference cells in other sheets using Sheet2!A1 syntax in formulas."
-        
         # Update the tool functions in the agents
         print(f"[{request_id}] 🤖 Creating agent for mode: {mode}")
         agent_start = time.time()
@@ -246,14 +278,14 @@ async def process_message(
             # Clone the agent with updated tool functions
             agent = AskAgent.clone_with_tools(tools)
             # Add cross-sheet instructions
-            agent.add_system_message(cross_sheet_instructions)
+            agent.add_system_message(system_context)
             print(f"[{request_id}] 🚀 Running AskAgent with message length: {len(message)}")
             result = await agent.run(message, history)
         elif mode == "analyst":
             # Clone the agent with updated tool functions
             agent = AnalystAgent.clone_with_tools(tools)
             # Add cross-sheet instructions
-            agent.add_system_message(cross_sheet_instructions)
+            agent.add_system_message(system_context)
             print(f"[{request_id}] 🚀 Running AnalystAgent with message length: {len(message)}")
             result = await agent.run(message, history)
             
@@ -359,6 +391,41 @@ async def process_message_streaming(
             f"Current sheet summary: {json.dumps(sheet_info)}\n"
             f"Call get_range or sheet_summary tools if you need more detail on the sheet."
         )
+        
+        # Add any context ranges if provided
+        contexts = workbook_metadata.get('contexts', [])
+        if contexts:
+            context_data = []
+            for i, context_range in enumerate(contexts, 1):
+                try:
+                    # Split sheet name from range if present (e.g., Sheet2!A1:B3)
+                    if '!' in context_range:
+                        sheet_name, range_ref = context_range.split('!', 1)
+                        context_sheet = workbook.sheet(sheet_name)
+                    else:
+                        context_sheet = sheet
+                        range_ref = context_range
+                    
+                    # Get the range values
+                    if context_sheet:
+                        range_data = context_sheet.get_range(range_ref)
+                        # Format the range data as a simple table
+                        rows_str = []
+                        for row in range_data:
+                            row_str = ",".join(str(cell) for cell in row)
+                            rows_str.append(row_str)
+                        
+                        # Add to context data
+                        context_str = f"### Context {i} ({context_range})\n" + "\n".join(rows_str)
+                        context_data.append(context_str)
+                except Exception as e:
+                    print(f"Error getting context range {context_range}: {e}")
+                    context_data.append(f"### Context {i} ({context_range})\nError: Unable to retrieve data")
+            
+            # Add contexts to system prompt if any were processed successfully
+            if context_data:
+                system_context += "\n\n" + "\n\n".join(context_data)
+                system_context += "\n\nRefer to the numbered contexts above in your response as needed."
         
         print(f"[{request_id}] 📝 Injecting system context with {len(workbook_metadata['sheets'])} sheets")
         
@@ -518,51 +585,10 @@ async def process_message_streaming(
         # Yield a startup notification
         yield {"type": "start", "mode": mode}
         
-        # Prepare system instructions with cross-sheet formula examples
-        cross_sheet_instructions = "You can reference cells in other sheets using Sheet2!A1 syntax in formulas."
-        
         # Create tool wrappers that yield status updates
-        def create_streaming_wrapper(fn, name):
-            async def wrapper(**kwargs):
-                # Yield a tool start notification
-                yield {"type": "tool", "status": "start", "tool": name, "args": kwargs}
-                
-                # Call the actual tool
-                start_time = time.time()
-                result = fn(**kwargs)
-                duration = time.time() - start_time
-                
-                # Collect updates for mutating operations
-                nonlocal collected_updates
-                if isinstance(result, dict):
-                    if "updates" in result and isinstance(result["updates"], list):
-                        collected_updates.extend(result["updates"])
-                        # Stream the updates immediately to the client for real-time UI updates
-                        if name in {"set_cells", "apply_updates_and_reply"}:
-                            yield {
-                                "type": "delta",
-                                "updates": result["updates"]
-                            }
-                            # Also send a lightweight summary of the current sheet state
-                            yield {
-                                "type": "summary",
-                                "sheet": sheet.optimized_to_dict(max_rows=5, max_cols=5)
-                            }
-                    elif "cell" in result:
-                        collected_updates.append(result)
-                        # Stream single cell updates as well
-                        yield {
-                            "type": "delta",
-                            "updates": [result]
-                        }
-                
-                # Yield a tool complete notification
-                yield {"type": "tool", "status": "complete", "tool": name, "result": result, "duration": duration}
-                
-            return wrapper
+        streaming_tools = {}
         
         # Create streaming versions of the tools
-        streaming_tools = {}
         for name, tool_fn in tools.items():
             streaming_tools[name] = create_streaming_wrapper(tool_fn, name)
         
@@ -573,7 +599,7 @@ async def process_message_streaming(
         if mode == "ask":
             # Create an Ask agent with streaming tools
             agent = AskAgent.clone_with_tools(streaming_tools)
-            agent.add_system_message(cross_sheet_instructions)
+            agent.add_system_message(system_context)
             
             # Use the streaming run method
             print(f"[{request_id}] 🚀 Running streaming AskAgent with message length: {len(message)}")
@@ -586,7 +612,7 @@ async def process_message_streaming(
         elif mode == "analyst":
             # Create an Analyst agent with streaming tools
             agent = AnalystAgent.clone_with_tools(streaming_tools)
-            agent.add_system_message(cross_sheet_instructions)
+            agent.add_system_message(system_context)
             
             # Use the streaming run method
             print(f"[{request_id}] 🚀 Running streaming AnalystAgent with message length: {len(message)}")

@@ -5,9 +5,10 @@ export async function chatBackend(
   mode: "ask" | "analyst",
   message: string,
   wid: string,
-  sid: string
+  sid: string,
+  contexts: string[] = []
 ) {
-  console.log(`📝 Chat request: mode=${mode}, wid=${wid}, sid=${sid}`);
+  console.log(`📝 Chat request: mode=${mode}, wid=${wid}, sid=${sid}, contexts=${contexts.length}`);
   
   try {
     console.log(`⏳ Sending request to ${process.env.NEXT_PUBLIC_BACKEND_URL}/chat`);
@@ -18,7 +19,7 @@ export async function chatBackend(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, message, wid, sid }),
+        body: JSON.stringify({ mode, message, wid, sid, contexts }),
       }
     );
     const requestTime = performance.now() - startTime;
