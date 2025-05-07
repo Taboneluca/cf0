@@ -74,11 +74,14 @@ class Spreadsheet:
                 
             try:
                 value = self.get_cell(cell_ref, visited_cells)
-                # Return numeric value or 0 if not numeric
+                # Return numeric value
                 if isinstance(value, (int, float)):
                     return str(value)
+                # Try to convert string to number if it's numeric
+                elif isinstance(value, str) and value.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    return value  # Keep as string, AST will convert it
                 else:
-                    return "0"
+                    return "0"  # Default to 0 for non-numeric values
             except Exception as e:
                 print(f"Error getting cell value for {cell_ref}: {e}")
                 return "0"  # Default to 0 on error
@@ -93,7 +96,14 @@ class Spreadsheet:
                 # Try to get the workbook and sheet from the cross-reference
                 # This is handled by the _split_ref method and the parent workbook
                 value = self.get_cell(ref, visited_cells)
-                processed_formula = processed_formula.replace(ref, str(value) if isinstance(value, (int, float)) else "0")
+                # Process the value numerically if possible
+                if isinstance(value, (int, float)):
+                    processed_formula = processed_formula.replace(ref, str(value))
+                elif isinstance(value, str) and value.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    # Handle string that looks like a number
+                    processed_formula = processed_formula.replace(ref, value)
+                else:
+                    processed_formula = processed_formula.replace(ref, "0")
             except Exception as e:
                 print(f"Error with cross-sheet reference {ref}: {e}")
                 processed_formula = processed_formula.replace(ref, "0")

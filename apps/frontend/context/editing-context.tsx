@@ -15,6 +15,7 @@ type EditingAction =
   | { type: "START_EDIT"; sheet: string; row: number; col: string; value: string }
   | { type: "UPDATE_DRAFT"; value: string; caretPos?: number }
   | { type: "APPEND_REFERENCE"; ref: string; }
+  | { type: "APPEND_RANGE_REFERENCE"; range: string; }
   | { type: "COMMIT_EDIT" }
   | { type: "CANCEL_EDIT" };
 
@@ -59,6 +60,19 @@ function editingReducer(state: EditingState, action: EditingAction): EditingStat
         draft: newDraft,
         caretPos: state.caretPos + action.ref.length,
       };
+    case "APPEND_RANGE_REFERENCE":
+      // Insert the range reference at the cursor position
+      const prevRangeDraft = state.draft;
+      const newRangeDraft = 
+        prevRangeDraft.substring(0, state.caretPos) + 
+        action.range + 
+        prevRangeDraft.substring(state.caretPos);
+
+      return {
+        ...state,
+        draft: newRangeDraft,
+        caretPos: state.caretPos + action.range.length,
+      };
     case "COMMIT_EDIT":
     case "CANCEL_EDIT":
       return initialState;
@@ -73,6 +87,7 @@ type EditingContextType = {
   startEdit: (sheet: string, row: number, col: string, value: string) => void;
   updateDraft: (value: string, caretPos?: number) => void;
   appendReference: (ref: string) => void;
+  appendRangeReference: (range: string) => void;
   commitEdit: () => void;
   cancelEdit: () => void;
 };
@@ -96,6 +111,10 @@ export function EditingProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "APPEND_REFERENCE", ref });
   };
 
+  const appendRangeReference = (range: string) => {
+    dispatch({ type: "APPEND_RANGE_REFERENCE", range });
+  };
+
   const commitEdit = () => {
     dispatch({ type: "COMMIT_EDIT" });
   };
@@ -111,6 +130,7 @@ export function EditingProvider({ children }: { children: React.ReactNode }) {
         startEdit, 
         updateDraft, 
         appendReference, 
+        appendRangeReference,
         commitEdit, 
         cancelEdit 
       }}
@@ -134,4 +154,20 @@ export function makeA1(row: number, col: string, sheetName: string, originSheet?
   const cellRef = `${col}${row}`;
   // Only add sheet prefix if we're referencing a different sheet than the origin
   return sheetName !== originSheet ? `${sheetName}!${cellRef}` : cellRef;
+}
+
+// Helper function to create range references
+export function makeRangeA1(anchor: string, focus: string, sheetName: string, originSheet?: string | null): string {
+  if (anchor === focus) {
+    return makeA1(
+      parseInt(focus.match(/\d+/)?.[0] || "1"), 
+      focus.match(/[A-Za-z]+/)?.[0] || "A",
+      sheetName,
+      originSheet
+    );
+  }
+
+  // Add sheet prefix if referencing a different sheet
+  const rangeRef = `${anchor}:${focus}`;
+  return sheetName !== originSheet ? `${sheetName}!${rangeRef}` : rangeRef;
 } 

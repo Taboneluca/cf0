@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Loader2 } from "lucide-react"
+import { Send, Loader2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import type { Message } from "@/types/spreadsheet"
@@ -21,6 +21,13 @@ interface ChatInterfaceProps {
   readOnly?: boolean
 }
 
+// Define interface for context ranges
+interface ContextRange {
+  id: string;
+  text: string;
+  range: string;
+}
+
 export default function ChatInterface({
   messages,
   setMessages,
@@ -32,9 +39,12 @@ export default function ChatInterface({
 }: ChatInterfaceProps) {
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [waitingForContext, setWaitingForContext] = useState(false)
+  const [contexts, setContexts] = useState<ContextRange[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [wb, dispatch] = useWorkbook()
-  const { wid, active } = wb
+  const { wid, active, range } = wb
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -44,8 +54,71 @@ export default function ChatInterface({
     scrollToBottom()
   }, [messages])
 
+  // Effect to handle range selection for @-context
+  useEffect(() => {
+    if (waitingForContext && range) {
+      // Generate a context ID
+      const contextId = `ctx_${contexts.length + 1}`;
+      
+      // Create a display text for the context
+      const displayText = `@${range.anchor}:${range.focus}`;
+      
+      // Generate the actual range reference
+      const rangeRef = range.sheet === active 
+        ? `${range.anchor}:${range.focus}` 
+        : `${range.sheet}!${range.anchor}:${range.focus}`;
+      
+      // Add the context to our list
+      const newContext: ContextRange = {
+        id: contextId,
+        text: displayText,
+        range: rangeRef
+      };
+      
+      setContexts([...contexts, newContext]);
+      
+      // Insert the context reference at cursor position
+      if (textareaRef.current) {
+        const cursorPos = textareaRef.current.selectionStart;
+        const textBefore = input.substring(0, cursorPos);
+        const textAfter = input.substring(cursorPos);
+        
+        // Insert the context display text
+        setInput(textBefore + displayText + " " + textAfter);
+        
+        // Reset waiting state
+        setWaitingForContext(false);
+        
+        // Focus back on textarea and position cursor after inserted text
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            const newCursorPos = textBefore.length + displayText.length + 1;
+            textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+          }
+        }, 0);
+      }
+      
+      // Clear the range selection
+      dispatch({ type: "CLEAR_RANGE" });
+    }
+  }, [range, waitingForContext, contexts, input, active, dispatch]);
+
   const handleModeChange = (newMode: "ask" | "analyst") => {
     setMode(newMode)
+  }
+
+  const handleRemoveContext = (contextId: string) => {
+    // Find the context to remove
+    const contextToRemove = contexts.find(ctx => ctx.id === contextId);
+    if (!contextToRemove) return;
+    
+    // Remove the context text from the input
+    const newInput = input.replace(contextToRemove.text, "").replace(/\s+/g, " ").trim();
+    setInput(newInput);
+    
+    // Remove from contexts array
+    setContexts(contexts.filter(ctx => ctx.id !== contextId));
   }
 
   const handleSendMessage = async () => {
@@ -63,8 +136,14 @@ export default function ChatInterface({
     console.log(`💬 Sending chat message with mode=${mode}, wid=${wid}, sheet=${active}`)
 
     try {
-      // Send the chat request with workbook/sheet ID
-      const response = await chatBackend(mode, input, wid, active)
+      // Extract the context ranges to send to backend
+      const contextRanges = contexts.map(ctx => ctx.range);
+      
+      // Send the chat request with workbook/sheet ID and contexts
+      const response = await chatBackend(mode, input, wid, active, contextRanges)
+      
+      // Reset contexts after sending
+      setContexts([]);
       
       console.log(`📊 Chat response received:`, {
         replyLength: response?.reply?.length,
@@ -153,7 +232,13 @@ export default function ChatInterface({
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Check for @ symbol to start context selection
+    if (e.key === '@') {
+      setWaitingForContext(true);
+    }
+    
+    // Send on Enter (without shift)
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
@@ -215,14 +300,40 @@ export default function ChatInterface({
                 )}
               </div>
             </div>
+            
+            {/* Context tags */}
+            {contexts.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {contexts.map(ctx => (
+                  <div key={ctx.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                    {ctx.text}
+                    <button 
+                      onClick={() => handleRemoveContext(ctx.id)}
+                      className="ml-1 text-blue-600 hover:text-blue-800"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {/* @-context notification */}
+            {waitingForContext && (
+              <div className="text-xs text-blue-600 mb-1">
+                Select cells to add as context...
+              </div>
+            )}
+            
             <div className="flex gap-1">
               <Textarea
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={`${
                   mode === "ask" || readOnly
-                    ? "Ask about your data..."
+                    ? "Ask about your data... (Type @ to select cell range as context)"
                     : "Tell me what to change in your spreadsheet..."
                 }`}
                 className="flex-1 resize-none border-gray-200 focus:ring-blue-500 focus:border-blue-500 text-xs p-1 min-h-[40px]"

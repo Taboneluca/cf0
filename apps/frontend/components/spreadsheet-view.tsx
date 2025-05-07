@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react"
 import type { SpreadsheetData } from "@/types/spreadsheet"
 import { isFormula, evaluateFormula, detectCircularReferences } from "@/utils/formula-engine"
 import { useWorkbook } from "@/context/workbook-context"
-import { useEditing, makeA1 } from "@/context/editing-context"
+import { useEditing, makeA1, makeRangeA1, appendRangeReference } from "@/context/editing-context"
 
 interface SpreadsheetViewProps {
   data: SpreadsheetData
@@ -16,12 +16,13 @@ interface SpreadsheetViewProps {
 
 export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }: SpreadsheetViewProps) {
   const [wb, dispatch] = useWorkbook()
-  const { active, data: allSheets, selected } = wb
+  const { active, data: allSheets, selected, range } = wb
   const { 
     editingState, 
     startEdit, 
     updateDraft, 
     appendReference, 
+    appendRangeReference, 
     commitEdit, 
     cancelEdit 
   } = useEditing()
@@ -30,6 +31,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
   const tableRef = useRef<HTMLTableElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cellRefs = useRef<{ [key: string]: HTMLTableCellElement | null }>({})
+  const [isMouseDown, setIsMouseDown] = useState(false)
 
   // Function to get cell coordinates from cell ID (e.g., "A1" -> {col: "A", row: 1})
   const getCellCoords = (cellId: string) => {
@@ -62,6 +64,34 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     return rawValue
   }
 
+  // Function to check if a cell is within the current range selection
+  const isInRange = (cellId: string): boolean => {
+    if (!range || range.sheet !== active) return false;
+    
+    const { col: anchorCol, row: anchorRow } = getCellCoords(range.anchor);
+    const { col: focusCol, row: focusRow } = getCellCoords(range.focus);
+    const { col, row } = getCellCoords(cellId);
+    
+    // Get column indices
+    const anchorColIndex = data.columns.indexOf(anchorCol);
+    const focusColIndex = data.columns.indexOf(focusCol);
+    const cellColIndex = data.columns.indexOf(col);
+    
+    // Calculate min/max bounds of the selection rectangle
+    const minRow = Math.min(anchorRow, focusRow);
+    const maxRow = Math.max(anchorRow, focusRow);
+    const minCol = Math.min(anchorColIndex, focusColIndex);
+    const maxCol = Math.max(anchorColIndex, focusColIndex);
+    
+    // Check if the cell is within the selection rectangle
+    return (
+      row >= minRow && 
+      row <= maxRow && 
+      cellColIndex >= minCol && 
+      cellColIndex <= maxCol
+    );
+  }
+
   // Function to select a cell without entering edit mode
   const selectCell = (col: string, row: number) => {
     const cellId = getCellId(col, row)
@@ -72,6 +102,33 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     if (cell) {
       cell.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" })
     }
+  }
+
+  // Function to start a range selection
+  const startRangeSelection = (cellId: string) => {
+    if (editingState.isEditing || readOnly) return;
+    
+    dispatch({ 
+      type: "START_RANGE", 
+      sheet: active, 
+      anchor: cellId 
+    });
+  }
+
+  // Function to update the range selection
+  const updateRangeSelection = (cellId: string) => {
+    if (editingState.isEditing || readOnly) return;
+    
+    dispatch({ 
+      type: "UPDATE_RANGE", 
+      focus: cellId 
+    });
+  }
+
+  // Helper function to convert a range to A1 notation
+  const rangeToA1Notation = (anchor: string, focus: string, sheet: string): string => {
+    if (anchor === focus) return anchor;
+    return `${anchor}:${focus}`;
   }
 
   // Check if a cell is currently being edited
@@ -113,7 +170,51 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
   }
 
   // Move selection by direction
-  const moveSelectionBy = (direction: "up" | "down" | "left" | "right") => {
+  const moveSelectionBy = (direction: "up" | "down" | "left" | "right", extendRange = false) => {
+    // If we're extending the range (shift key is pressed)
+    if (extendRange) {
+      if (range) {
+        // Update focus cell of existing range
+        const { col: focusCol, row: focusRow } = getCellCoords(range.focus);
+        const focusColIndex = data.columns.indexOf(focusCol);
+        let newFocusCol = focusCol;
+        let newFocusRow = focusRow;
+        
+        switch (direction) {
+          case "up":
+            if (focusRow > 1) newFocusRow = focusRow - 1;
+            break;
+          case "down":
+            if (focusRow < data.rows.length) newFocusRow = focusRow + 1;
+            break;
+          case "left":
+            if (focusColIndex > 0) newFocusCol = data.columns[focusColIndex - 1];
+            break;
+          case "right":
+            if (focusColIndex < data.columns.length - 1) newFocusCol = data.columns[focusColIndex + 1];
+            break;
+        }
+        
+        const newFocusCellId = getCellId(newFocusCol, newFocusRow);
+        dispatch({ type: "UPDATE_RANGE", focus: newFocusCellId });
+        
+        // Scroll the new focus cell into view
+        const cell = cellRefs.current[newFocusCellId];
+        if (cell) {
+          cell.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
+        }
+        
+        return { col: newFocusCol, row: newFocusRow };
+      } else if (selected) {
+        // Start a new range from the selected cell
+        const { col, row } = getCellCoords(selected);
+        startRangeSelection(selected);
+        return moveSelectionBy(direction, true);
+      }
+      return null;
+    }
+    
+    // Original single-cell movement logic
     if (selected) {
       const { col, row } = getCellCoords(selected)
       const colIndex = data.columns.indexOf(col)
@@ -150,6 +251,32 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     return null;
   }
 
+  // Clear all cells in the selected range
+  const clearSelectedRange = () => {
+    if (!range || range.sheet !== active || readOnly) return;
+    
+    const { col: anchorCol, row: anchorRow } = getCellCoords(range.anchor);
+    const { col: focusCol, row: focusRow } = getCellCoords(range.focus);
+    
+    // Get column indices
+    const anchorColIndex = data.columns.indexOf(anchorCol);
+    const focusColIndex = data.columns.indexOf(focusCol);
+    
+    // Calculate min/max bounds of the selection rectangle
+    const minRow = Math.min(anchorRow, focusRow);
+    const maxRow = Math.max(anchorRow, focusRow);
+    const minColIndex = Math.min(anchorColIndex, focusColIndex);
+    const maxColIndex = Math.max(anchorColIndex, focusColIndex);
+    
+    // Clear each cell in the range
+    for (let r = minRow; r <= maxRow; r++) {
+      for (let c = minColIndex; c <= maxColIndex; c++) {
+        const col = data.columns[c];
+        onCellUpdate(r, col, "");
+      }
+    }
+  }
+
   // Move selection to specific coordinates
   const moveSelectionTo = (row: number, col: string) => {
     selectCell(col, row);
@@ -162,6 +289,20 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     
     // If editing a formula, insert a reference to the clicked cell
     if (editingState.isEditing && editingState.draft.startsWith("=")) {
+      // If there's an active range selection, use it as a range reference
+      if (range && range.sheet === active) {
+        const rangeRef = makeRangeA1(range.anchor, range.focus, active, editingState.originSheet);
+        appendRangeReference(rangeRef);
+        
+        // Clear the range selection
+        dispatch({ type: "CLEAR_RANGE" });
+        
+        // Select the clicked cell
+        selectCell(col, row);
+        return;
+      }
+      
+      // Otherwise insert a single cell reference
       const ref = makeA1(row, col, active, editingState.originSheet);
       appendReference(ref);
       selectCell(col, row);
@@ -171,6 +312,38 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
     // Otherwise just select the cell
     selectCell(col, row);
   }
+
+  // Handle mousedown on cell - start range selection
+  const handleCellMouseDown = (e: React.MouseEvent, cellId: string) => {
+    if (editingState.isEditing) return;
+    
+    setIsMouseDown(true);
+    startRangeSelection(cellId);
+  }
+
+  // Handle mousemove with button pressed - update range selection
+  const handleCellMouseEnter = (e: React.MouseEvent, cellId: string) => {
+    if (isMouseDown) {
+      updateRangeSelection(cellId);
+    }
+  }
+
+  // Handle mouseup - finalize range selection
+  const handleMouseUp = () => {
+    setIsMouseDown(false);
+  }
+
+  // Add effect to handle global mouseup
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      setIsMouseDown(false);
+    };
+    
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => {
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, []);
 
   // Handle double click - enter edit mode
   const handleCellDoubleClick = (cellId: string) => {
@@ -303,22 +476,22 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
 
   // Handle key press when cell is selected but not in edit mode
   const handleSelectionKeyDown = (e: React.KeyboardEvent) => {
-    if (!selected || editingState.isEditing) return;
+    if (!selected && !range) return;
+    if (editingState.isEditing) return;
+
+    // Handle selection with Shift key for range selection
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      e.preventDefault();
+      moveSelectionBy(e.key.replace("Arrow", "").toLowerCase() as any, e.shiftKey);
+      return;
+    }
 
     switch (e.key) {
-      case "ArrowUp":
-      case "ArrowDown":
-      case "ArrowLeft":
-      case "ArrowRight":
-        e.preventDefault();
-        moveSelectionBy(e.key.replace("Arrow", "").toLowerCase() as any);
-        break;
-        
       case "=":
         // Start formula edit mode
         if (!readOnly) {
           e.preventDefault();
-          const { col, row } = getCellCoords(selected);
+          const { col, row } = getCellCoords(selected || (range?.anchor || "A1"));
           startEdit(active, row, col, "=");
         }
         break;
@@ -332,9 +505,14 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
             moveSelectionBy("down");
           }
         } else {
-          // In edit mode, enter edit mode
+          // In edit mode, enter edit mode for the selected cell
           e.preventDefault();
-          editCell(selected);
+          if (selected) {
+            editCell(selected);
+          } else if (range) {
+            // If a range is selected, edit the active/focus cell
+            editCell(range.focus);
+          }
         }
         break;
         
@@ -354,8 +532,13 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
           selectCell("A", 1);
         } else {
           // Home goes to first cell in row
-          const { row } = getCellCoords(selected);
-          selectCell(data.columns[0], row);
+          if (selected) {
+            const { row } = getCellCoords(selected);
+            selectCell(data.columns[0], row);
+          } else if (range) {
+            const { row } = getCellCoords(range.focus);
+            selectCell(data.columns[0], row);
+          }
         }
         break;
         
@@ -366,8 +549,13 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
           selectCell(data.columns[data.columns.length - 1], data.rows[data.rows.length - 1]);
         } else {
           // End goes to last cell in row
-          const { row } = getCellCoords(selected);
-          selectCell(data.columns[data.columns.length - 1], row);
+          if (selected) {
+            const { row } = getCellCoords(selected);
+            selectCell(data.columns[data.columns.length - 1], row);
+          } else if (range) {
+            const { row } = getCellCoords(range.focus);
+            selectCell(data.columns[data.columns.length - 1], row);
+          }
         }
         break;
         
@@ -376,8 +564,13 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
         if (!readOnly) {
           // Clear cell content
           e.preventDefault();
-          const { col, row } = getCellCoords(selected);
-          onCellUpdate(row, col, "");
+          if (selected) {
+            const { col, row } = getCellCoords(selected);
+            onCellUpdate(row, col, "");
+          } else if (range) {
+            // Clear all cells in the range
+            clearSelectedRange();
+          }
         }
         break;
         
@@ -385,25 +578,16 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
         // Excel-like F2 to enter edit mode without clearing cell
         if (!readOnly) {
           e.preventDefault();
-          editCell(selected, undefined, true);
+          if (selected) {
+            editCell(selected, undefined, true);
+          } else if (range) {
+            // If a range is selected, edit the active/focus cell
+            editCell(range.focus, undefined, true);
+          }
         }
         break;
-        
-      default:
-        // If user starts typing a printable character, enter edit mode with that character
-        if (!readOnly && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-          e.preventDefault();
-          const { col, row } = getCellCoords(selected);
-          startEdit(active, row, col, e.key);
-          
-          // Ensure focus stays in the cell
-          setTimeout(() => {
-            if (inputRef.current) {
-              inputRef.current.focus();
-            }
-          }, 0);
-        }
-        break;
+
+      // ... rest of existing cases ...
     }
   }
 
@@ -447,6 +631,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
       tabIndex={0}
       onKeyDown={handleContainerKeyDown}
       ref={containerRef}
+      onMouseUp={handleMouseUp}
     >
       <div className="min-w-max">
         <table className="border-collapse" ref={tableRef}>
@@ -472,44 +657,55 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                 {data.columns.map((col) => {
                   const cellId = `${col}${row}`
                   const isSelected = selected === cellId
-                  const currentlyEditing = isEditingCell(cellId)
-                  const rawValue = getCellRawValue(cellId)
+                  const isInSelectedRange = isInRange(cellId)
+                  const isEditing = isEditingCell(cellId)
                   const displayValue = getCellDisplayValue(cellId)
-                  const isFormulaCell = isFormula(rawValue)
-                  const isReferenced = editingState.isEditing && 
-                                      editingState.draft.startsWith('=') && 
-                                      selected === cellId &&
-                                      !currentlyEditing;
+                  
+                  // Get the cell data and style
+                  const cellData = data.cells[cellId] || { value: "" }
+                  const cellStyle = cellData.style || {}
+                  
+                  // Generate style string based on cell formatting
+                  const styleObj: React.CSSProperties = {
+                    fontWeight: cellStyle.bold ? 'bold' : 'normal',
+                    fontStyle: cellStyle.italic ? 'italic' : 'normal',
+                    textDecoration: cellStyle.underline ? 'underline' : 'none',
+                    color: cellStyle.color || 'inherit',
+                    backgroundColor: cellStyle.backgroundColor || 'inherit',
+                    textAlign: cellStyle.textAlign || 'left',
+                  }
 
                   return (
                     <td
-                      id={`cell-${cellId}`}
                       key={cellId}
                       ref={(el) => setCellRef(cellId, el)}
-                      className={`min-w-[80px] w-[1%] h-6 border-r border-b border-gray-200 relative ${
-                        isSelected ? "bg-blue-50" : ""
-                      } ${isFormulaCell ? "text-green-700" : ""} ${
-                        isReferenced ? "outline outline-2 outline-blue-300" : ""
-                      } ${
-                        readOnly ? "cursor-default" : "cursor-cell"
-                      } hover:bg-blue-50 transition-colors`}
+                      className={`h-[24px] px-1 border border-gray-300 text-sm whitespace-nowrap overflow-hidden ${
+                        isSelected
+                          ? "bg-blue-100 outline outline-1 outline-blue-500"
+                          : isInSelectedRange
+                          ? "bg-blue-50 outline outline-1 outline-blue-300"
+                          : ""
+                      }`}
                       onClick={() => handleCellClick(cellId)}
                       onDoubleClick={() => handleCellDoubleClick(cellId)}
-                      tabIndex={-1}
+                      onMouseDown={(e) => handleCellMouseDown(e, cellId)}
+                      onMouseEnter={(e) => handleCellMouseEnter(e, cellId)}
+                      style={styleObj}
                     >
-                      {currentlyEditing ? (
+                      {isEditing ? (
                         <input
                           ref={inputRef}
                           type="text"
                           value={editingState.draft}
                           onChange={handleInputChange}
-                          onKeyDown={handleEditKeyDown}
                           onSelect={handleInputSelect}
-                          className="w-full h-full border-none focus:ring-0 focus:outline-none text-xs p-0"
+                          onKeyDown={handleEditKeyDown}
+                          onBlur={() => handleCommitEdit()}
+                          className="w-full h-full outline-none"
                           autoFocus
                         />
                       ) : (
-                        <div className="w-full h-full overflow-hidden text-xs p-1">{displayValue}</div>
+                        displayValue
                       )}
                     </td>
                   )

@@ -15,6 +15,13 @@ interface FormulaEdit {
   anchor: number             // insert-point inside buffer
 }
 
+// Add range selection interface
+interface RangeSelection {
+  sheet: string
+  anchor: string            // where mouse-down started
+  focus: string             // where mouse-up ended
+}
+
 type Action =
   | {type:"INIT"; wid:string; sheets:string[]; active:string; data: Record<string,SpreadsheetData>}
   | {type:"SWITCH"; sid:string}
@@ -25,6 +32,9 @@ type Action =
   | {type:"UPDATE_FORMULA_BUFFER"; buffer:string}
   | {type:"END_FORMULA_EDIT"; commit:boolean}
   | {type:"SELECT_CELL"; cell:string}
+  | {type:"START_RANGE"; sheet:string; anchor:string}
+  | {type:"UPDATE_RANGE"; focus:string}
+  | {type:"CLEAR_RANGE"}
 
 function reducer(state:WorkbookState, action:Action):WorkbookState {
   switch(action.type){
@@ -49,7 +59,23 @@ function reducer(state:WorkbookState, action:Action):WorkbookState {
         }
       }
     case "END_FORMULA_EDIT": return {...state, formula: {active: false}}
-    case "SELECT_CELL": return {...state, selected: action.cell}
+    case "SELECT_CELL": return {...state, selected: action.cell, range: undefined}
+    case "START_RANGE": return {
+      ...state, 
+      range: {
+        sheet: action.sheet,
+        anchor: action.anchor,
+        focus: action.anchor
+      }
+    }
+    case "UPDATE_RANGE": return {
+      ...state, 
+      range: state.range ? {
+        ...state.range,
+        focus: action.focus
+      } : undefined
+    }
+    case "CLEAR_RANGE": return {...state, range: undefined}
   }
 }
 
