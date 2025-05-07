@@ -10,6 +10,7 @@ from agents.openai_client import client, OpenAIError, APIStatusError
 from agents.openai_rate import chat_completion
 from .tools import TOOL_CATALOG
 from chat.token_utils import trim_history
+from agents.json_utils import safe_json_loads
 
 load_dotenv()
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -137,7 +138,7 @@ class BaseAgent:
             # 1) Did the model pick a function?
             if msg.function_call:
                 name = msg.function_call.name
-                args = json.loads(msg.function_call.arguments)
+                args = safe_json_loads(msg.function_call.arguments)
                 print(f"[{agent_id}] 🛠️ Tool call: {name}")
                 
                 # Track mutating calls
@@ -438,7 +439,7 @@ class BaseAgent:
             if is_function_call and function_name:
                 try:
                     # Parse function arguments
-                    args = json.loads(function_args)
+                    args = safe_json_loads(function_args)
                     
                     # Check mutating call limits
                     if function_name in mutating_tools:

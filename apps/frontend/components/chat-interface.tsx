@@ -259,17 +259,32 @@ export default function ChatInterface({
       ) : (
         <div className="flex flex-col h-full">
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {messages.map((message, index) => (
-              <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                {message.role === "user" ? (
-                  <div className="max-w-[90%] p-2 rounded-lg bg-blue-500 text-white text-xs">{message.content}</div>
-                ) : message.role === "system" ? (
-                  <div className="max-w-[90%] text-gray-600 text-xs italic">{message.content}</div>
-                ) : (
-                  <div className="max-w-[90%] text-gray-700 text-xs">{message.content}</div>
-                )}
-              </div>
-            ))}
+            {messages.map((message, index) => {
+              const parts = message.content.split(/(@[\w!:.]+)/g)
+              return (
+                <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                  {message.role === "user" ? (
+                    <div className="max-w-[90%] p-2 rounded-lg bg-blue-500 text-white text-xs">
+                      {parts.map((part, i) => 
+                        part.match(/^@[\w!:.]+$/) 
+                          ? <span key={i} className="font-semibold underline">{part}</span>
+                          : <span key={i}>{part}</span>
+                      )}
+                    </div>
+                  ) : message.role === "system" ? (
+                    <div className="max-w-[90%] text-gray-600 text-xs italic">{message.content}</div>
+                  ) : (
+                    <div className="max-w-[90%] text-gray-700 text-xs">
+                      {parts.map((part, i) => 
+                        part.match(/^@[\w!:.]+$/) 
+                          ? <span key={i} className="text-blue-600 font-semibold">{part}</span>
+                          : <span key={i}>{part}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
             {isLoading && (
               <div className="flex justify-start">
                 <div className="text-gray-700">
