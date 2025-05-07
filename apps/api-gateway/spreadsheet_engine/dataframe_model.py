@@ -48,6 +48,12 @@ class DataFrameSpreadsheet:
         # Store formulas separately since DataFrame can't distinguish between
         # values and formulas
         self.formulas = {}  # {cell_ref: formula_string}
+        
+        # Cache for formula evaluation results
+        self.formula_cache = {}  # {cell_ref: evaluated_result}
+        
+        # Track which cells are dirty (need recalculation)
+        self.dirty_cells = set()
     
     def _index_to_column(self, index: int) -> str:
         """Convert a 0-based column index to Excel-style column name (A, B, C, ..., AA, AB, ...)"""
@@ -168,12 +174,26 @@ class DataFrameSpreadsheet:
             
             # Check if this is a formula cell
             if local_cell_ref.upper() in self.formulas:
+                # Optimization: Check if formula result is cached and the cell is not dirty
+                cache_key = local_cell_ref.upper()
+                if cache_key in self.formula_cache and cache_key not in self.dirty_cells:
+                    # Use cached result if available and not dirty
+                    return self.formula_cache[cache_key]
+                
                 formula = self.formulas[local_cell_ref.upper()]
                 
                 # Use the formula engine to evaluate
                 try:
                     from .formula_engine import evaluate_formula
-                    return evaluate_formula(formula, self, visited_cells.copy())
+                    result = evaluate_formula(formula, self, visited_cells.copy())
+                    
+                    # Cache the result for future use
+                    self.formula_cache[cache_key] = result
+                    
+                    # Cell is no longer dirty after recalculation
+                    self.dirty_cells.discard(cache_key)
+                    
+                    return result
                 except ImportError:
                     # Fall back to simpler evaluation if formula_engine is not available
                     try:
@@ -181,7 +201,13 @@ class DataFrameSpreadsheet:
                         if formula.strip().upper().startswith('=SUM(') and formula.endswith(')'):
                             range_ref = formula.strip()[5:-1]  # Extract range between SUM( and )
                             values = self.get_range(range_ref)
-                            return sum(v for row in values for v in row if isinstance(v, (int, float)))
+                            result = sum(v for row in values for v in row if isinstance(v, (int, float)))
+                            
+                            # Cache the result
+                            self.formula_cache[cache_key] = result
+                            self.dirty_cells.discard(cache_key)
+                            
+                            return result
                         
                         # Other formulas not supported in fallback mode
                         return "#FORMULA!"
@@ -226,17 +252,36 @@ class DataFrameSpreadsheet:
             # Store a placeholder in the DataFrame 
             # The real value will be computed when get_cell is called
             self.df.at[row_idx, col_name] = "#FORMULA"
+            
+            # Mark this cell as dirty (needs recalculation)
+            self.dirty_cells.add(cell_ref.upper())
+            
+            # Also invalidate cache for any cells that depend on this one
+            self._mark_dependent_cells_dirty(cell_ref.upper())
         else:
             # If it was a formula before but isn't anymore, remove it
             if cell_ref.upper() in self.formulas:
                 del self.formulas[cell_ref.upper()]
                 
-            # Also remove dependencies
-            if cell_ref.upper() in self.deps:
-                del self.deps[cell_ref.upper()]
+                # Remove from cache
+                if cell_ref.upper() in self.formula_cache:
+                    del self.formula_cache[cell_ref.upper()]
+                
+                # Mark dependent cells as dirty
+                self._mark_dependent_cells_dirty(cell_ref.upper())
+                
+                # Also remove dependencies
+                if cell_ref.upper() in self.deps:
+                    del self.deps[cell_ref.upper()]
             
             # Store the literal value
             self.df.at[row_idx, col_name] = value
+            
+            # This cell is no longer dirty
+            self.dirty_cells.discard(cell_ref.upper())
+            
+            # But cells that depend on it are now dirty
+            self._mark_dependent_cells_dirty(cell_ref.upper())
         
         # If there's a workbook, trigger recalculation
         if self.workbook:
@@ -530,3 +575,31 @@ class DataFrameSpreadsheet:
                 # Apply to original model (0-based index)
                 if row_idx - 1 < len(target_sheet.cells) and col_idx < len(target_sheet.cells[0]):
                     target_sheet.cells[row_idx - 1][col_idx] = value 
+    
+    def _mark_dependent_cells_dirty(self, cell_ref: str) -> None:
+        """Mark all cells that depend on this one as dirty for invalidating cache."""
+        # Find all cells that directly or indirectly depend on this cell
+        # (need to search in forward dependency direction)
+        queue = [cell_ref.upper()]
+        visited = set()
+        
+        while queue:
+            current = queue.pop(0)
+            if current in visited:
+                continue
+                
+            visited.add(current)
+            
+            # Find cells that depend on the current cell
+            dependent_cells = set()
+            for target, deps in self.deps.items():
+                if current in deps:
+                    dependent_cells.add(target)
+            
+            # Mark them dirty and add to queue
+            for dep in dependent_cells:
+                self.dirty_cells.add(dep)
+                # Remove from cache since they need recalculation
+                if dep in self.formula_cache:
+                    del self.formula_cache[dep]
+                queue.append(dep) 

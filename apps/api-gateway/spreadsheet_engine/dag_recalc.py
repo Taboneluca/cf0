@@ -126,16 +126,57 @@ class RecalculationEngine:
         Returns:
             List of cell references in the order they should be recalculated
         """
+        # Early exit: If no dirty cells, return empty list immediately
+        if not self.dirty_cells:
+            return []
+            
         # We only need to recalculate dirty formula cells
         dirty_formulas = self.dirty_cells.intersection(self.formula_cells)
+        
+        # Early exit: If no dirty formula cells, nothing to recalculate
+        if not dirty_formulas:
+            return []
         
         # Create a subgraph of the dependency graph that includes only dirty cells
         # and their precedents
         subgraph_deps = defaultdict(set)
+        
+        # Prioritize cells that have the most dependents (high impact cells)
+        impact_scores = {}
         for cell in dirty_formulas:
+            # Count how many cells directly or indirectly depend on this cell
+            dependents = set()
+            queue = deque([cell])
+            visited = set()
+            
+            while queue:
+                current = queue.popleft()
+                if current in visited:
+                    continue
+                visited.add(current)
+                
+                # Add direct dependents
+                direct_deps = self.forward_deps.get(current, set())
+                for dep in direct_deps:
+                    if dep not in visited:
+                        dependents.add(dep)
+                        queue.append(dep)
+            
+            # Store impact score (number of cells affected)
+            impact_scores[cell] = len(dependents)
+            
+            # Build the subgraph
             for precedent in self.reverse_deps.get(cell, set()):
                 if precedent in self.formula_cells:
                     subgraph_deps[cell].add(precedent)
+        
+        # Batch processing: Group cells by impact level
+        high_impact = {cell for cell, score in impact_scores.items() if score > 10}
+        medium_impact = {cell for cell, score in impact_scores.items() if 2 <= score <= 10}
+        low_impact = {cell for cell, score in impact_scores.items() if score < 2}
+        
+        # If we have any high-impact cells, prioritize them
+        prioritized_cells = list(high_impact) + list(medium_impact) + list(low_impact)
         
         # Perform topological sort on the subgraph
         recalc_order = []
@@ -162,8 +203,8 @@ class RecalculationEngine:
             recalc_order.append(cell)
             return True
         
-        # Try to visit each dirty formula cell
-        for cell in dirty_formulas:
+        # Try to visit each dirty formula cell in priority order
+        for cell in prioritized_cells:
             if cell not in visited:
                 if not visit(cell):
                     # Cycle detected, use simpler approach
