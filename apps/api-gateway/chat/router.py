@@ -192,6 +192,13 @@ async def process_message(
                 except Exception as e:
                     results.append({"error": f"Error with sheet {sheet_name}: {e}"})
             
+            # Schedule recalculation to happen asynchronously
+            try:
+                asyncio.create_task(workbook.recalculate())
+                print(f"[{request_id}] 🔄 Scheduled async recalculation")
+            except Exception as e:
+                print(f"[{request_id}] ⚠️ Error scheduling recalculation: {e}")
+            
             return {"results": results}
         
         # Create partial functions for all tools with the sheet parameter
@@ -213,6 +220,12 @@ async def process_message(
             "apply_scalar_to_row": partial(apply_scalar_to_row, sheet=sheet),
             "apply_scalar_to_column": partial(apply_scalar_to_column, sheet=sheet),
             "set_cells": set_cells_with_xref,  # Use wrapper for cross-sheet references
+            # --- NEW single-shot tool -----------------------------------
+            "apply_updates_and_reply": lambda updates=None, reply="", **kw: (
+                (lambda _res: {**_res, "reply": reply})(
+                    set_cells_with_xref(updates=updates)
+                )
+            ),
             # New workbook-level tools
             "list_sheets": partial(list_sheets, wid=wid),
             "get_sheet_summary": lambda sid: get_sheet_summary(sid, wid=wid),
@@ -276,8 +289,8 @@ You can now work with cross-sheet formulas. Examples:
         # Return the reply, updated sheet state, and log of changes
         return {
             "reply": result["reply"], 
-            "sheet": sheet.optimized_to_dict(max_rows=30, max_cols=30),
-            "all_sheets": {name: s.optimized_to_dict(max_rows=30, max_cols=30) for name, s in workbook.all_sheets().items()},
+            "sheet": sheet.optimized_to_dict(max_rows=15, max_cols=10),
+            "all_sheets": {name: s.optimized_to_dict(max_rows=15, max_cols=10) for name, s in workbook.all_sheets().items()},
             "log": collected_updates
         }
     except Exception as e:
@@ -466,6 +479,13 @@ async def process_message_streaming(
                 except Exception as e:
                     results.append({"error": f"Error with sheet {sheet_name}: {e}"})
             
+            # Schedule recalculation to happen asynchronously
+            try:
+                asyncio.create_task(workbook.recalculate())
+                print(f"[{request_id}] 🔄 Scheduled async recalculation")
+            except Exception as e:
+                print(f"[{request_id}] ⚠️ Error scheduling recalculation: {e}")
+            
             return {"results": results}
         
         # Create partial functions for all tools with the sheet parameter
@@ -487,6 +507,12 @@ async def process_message_streaming(
             "apply_scalar_to_row": partial(apply_scalar_to_row, sheet=sheet),
             "apply_scalar_to_column": partial(apply_scalar_to_column, sheet=sheet),
             "set_cells": set_cells_with_xref,  # Use wrapper for cross-sheet references
+            # --- NEW single-shot tool -----------------------------------
+            "apply_updates_and_reply": lambda updates=None, reply="", **kw: (
+                (lambda _res: {**_res, "reply": reply})(
+                    set_cells_with_xref(updates=updates)
+                )
+            ),
             # New workbook-level tools
             "list_sheets": partial(list_sheets, wid=wid),
             "get_sheet_summary": lambda sid: get_sheet_summary(sid, wid=wid),

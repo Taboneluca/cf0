@@ -88,9 +88,12 @@ class BaseAgent:
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
-        mutating_tools = {"set_cell", "set_cells", "add_row", "add_column", "delete_row", 
-                          "delete_column", "sort_range", "find_replace", "apply_scalar_to_row",
-                          "apply_scalar_to_column", "create_new_sheet"}
+        mutating_tools = {
+            "set_cell", "set_cells", "apply_updates_and_reply",
+            "add_row", "add_column", "delete_row", "delete_column",
+            "sort_range", "find_replace", "apply_scalar_to_row",
+            "apply_scalar_to_column", "create_new_sheet"
+        }
         
         print(f"[{agent_id}] 🔄 Starting tool loop with max_iterations={max_iterations}")
         
@@ -142,7 +145,7 @@ class BaseAgent:
                     print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
                     
                     # If this is more than the first mutation and not a set_cells call, abort
-                    if mutating_calls > 1 and name != "set_cells":
+                    if mutating_calls > 1 and name not in {"set_cells", "apply_updates_and_reply"}:
                         print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
                         return {
                             "reply": "Error: You should use a single set_cells call to make multiple updates. Please try again with a single batch operation.",
@@ -169,6 +172,16 @@ class BaseAgent:
                     elif "cell" in result:
                         print(f"[{agent_id}] 📝 Added single cell update to collected updates")
                         collected_updates.append(result)
+
+                    # ---------- EARLY EXIT for single-shot pattern ----------
+                    if "reply" in result:          # tool already returned the final answer
+                        total_time = time.time() - start_time
+                        print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply "
+                              f"in {total_time:.2f}s with {len(collected_updates)} updates")
+                        return {
+                            "reply": result["reply"],
+                            "updates": collected_updates or result.get("updates", [])
+                        }
                 
                 # Add the function's output back into the conversation
                 messages.append({
@@ -332,6 +345,12 @@ class BaseAgent:
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
+        mutating_tools = {
+            "set_cell", "set_cells", "apply_updates_and_reply",
+            "add_row", "add_column", "delete_row", "delete_column",
+            "sort_range", "find_replace", "apply_scalar_to_row",
+            "apply_scalar_to_column", "create_new_sheet"
+        }
         final_text_buffer = ""
         
         print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
@@ -425,7 +444,7 @@ class BaseAgent:
                         print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {function_name}")
                         
                         # If this is more than the first mutation and not a set_cells call, abort
-                        if mutating_calls > 1 and function_name != "set_cells":
+                        if mutating_calls > 1 and function_name not in {"set_cells", "apply_updates_and_reply"}:
                             print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
                             yield "\nError: You should use a single set_cells call to make multiple updates."
                             return
@@ -446,6 +465,14 @@ class BaseAgent:
                             collected_updates.extend(result["updates"])
                         elif "cell" in result:
                             collected_updates.append(result)
+                            
+                        # ---------- EARLY EXIT for single-shot pattern ----------
+                        if "reply" in result:          # tool already returned the final answer
+                            total_time = time.time() - start_time
+                            print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply "
+                                  f"in {total_time:.2f}s with {len(collected_updates)} updates")
+                            yield f"\n{result['reply']}"
+                            return
                     
                     # Add results to messages
                     messages.append({
