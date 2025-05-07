@@ -531,7 +531,6 @@ You can now work with cross-sheet formulas. Examples:
                 # Yield a tool complete notification
                 yield {"type": "tool", "status": "complete", "tool": name, "result": result, "duration": duration}
                 
-                return result
             return wrapper
         
         # Create streaming versions of the tools
