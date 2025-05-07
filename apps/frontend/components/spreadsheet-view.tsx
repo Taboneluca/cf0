@@ -496,6 +496,15 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
           e.preventDefault();
           const { col, row } = getCellCoords(selected || (range?.anchor || "A1"));
           startEdit(active, row, col, "=");
+          
+          // Make sure to focus the input after React updates the UI
+          setTimeout(() => {
+            if (inputRef.current) {
+              inputRef.current.focus();
+              // Place cursor after the "="
+              inputRef.current.setSelectionRange(1, 1);
+            }
+          }, 10);
         }
         break;
         
@@ -715,7 +724,6 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                           onChange={handleInputChange}
                           onSelect={handleInputSelect}
                           onKeyDown={handleEditKeyDown}
-                          onBlur={() => handleCommitEdit()}
                           className="w-full h-full outline-none"
                           autoFocus
                         />

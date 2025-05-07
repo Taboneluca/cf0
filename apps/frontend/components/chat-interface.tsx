@@ -58,7 +58,7 @@ export default function ChatInterface({
 
   // Effect to handle live updating of range selection for @-context
   useEffect(() => {
-    if (!waitingForContext || ctxStart == null || !range) return
+    if (!waitingForContext || ctxStart === null || !range) return
 
     // Build A1 ref (with sheet! prefix if needed)
     const rangeRef =
@@ -68,16 +68,16 @@ export default function ChatInterface({
 
     // Replace old live text
     setInput(prev => {
-      const before = prev.slice(0, ctxStart)        // includes the '@'
-      const after  = prev.slice(ctxStart + lastRangeRef.current.length)
+      const before = prev.slice(0, ctxStart)        // includes the '@' character
+      const after = prev.slice(ctxStart + 1 + lastRangeRef.current.length)  // +1 for the @ character
       lastRangeRef.current = rangeRef
       return `${before}${rangeRef}${after}`
     })
 
-    // Keep cursor right after the live range
+    // Keep cursor right after the entire @range
     setTimeout(() => {
       if (textareaRef.current) {
-        const newPos = ctxStart + rangeRef.length
+        const newPos = ctxStart + 1 + rangeRef.length  // +1 for the @ character
         textareaRef.current.setSelectionRange(newPos, newPos)
         textareaRef.current.focus()
       }
@@ -85,7 +85,7 @@ export default function ChatInterface({
   }, [range, waitingForContext, ctxStart, active])
 
   const finaliseContext = () => {
-    if (!waitingForContext || !range || ctxStart == null) return
+    if (!waitingForContext || !range || ctxStart === null) return
 
     const finalRef = lastRangeRef.current          // already inserted
     const ctxId = `ctx_${contexts.length + 1}`
@@ -237,7 +237,7 @@ export default function ChatInterface({
     if (e.key === '@') {
       const pos = textareaRef.current?.selectionStart ?? input.length
       setWaitingForContext(true)
-      setCtxStart(pos + 1)  // +1 to place after the @ character 
+      setCtxStart(pos)  // Store the position of @ character itself
     }
     
     // Send on Enter (without shift)
