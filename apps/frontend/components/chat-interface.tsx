@@ -40,6 +40,8 @@ export default function ChatInterface({
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [waitingForContext, setWaitingForContext] = useState(false)
+  const [ctxStart, setCtxStart] = useState<number|null>(null)   // insertion index
+  const lastRangeRef = useRef<string>("")                       // for live replace
   const [contexts, setContexts] = useState<ContextRange[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -54,55 +56,46 @@ export default function ChatInterface({
     scrollToBottom()
   }, [messages])
 
-  // Effect to handle range selection for @-context
+  // Effect to handle live updating of range selection for @-context
   useEffect(() => {
-    if (waitingForContext && range) {
-      // Generate a context ID
-      const contextId = `ctx_${contexts.length + 1}`;
-      
-      // Create a display text for the context
-      const displayText = `@${range.anchor}:${range.focus}`;
-      
-      // Generate the actual range reference
-      const rangeRef = range.sheet === active 
-        ? `${range.anchor}:${range.focus}` 
-        : `${range.sheet}!${range.anchor}:${range.focus}`;
-      
-      // Add the context to our list
-      const newContext: ContextRange = {
-        id: contextId,
-        text: displayText,
-        range: rangeRef
-      };
-      
-      setContexts([...contexts, newContext]);
-      
-      // Insert the context reference at cursor position
+    if (!waitingForContext || ctxStart == null || !range) return
+
+    // Build A1 ref (with sheet! prefix if needed)
+    const rangeRef =
+      range.sheet === active
+        ? `${range.anchor}:${range.focus}`
+        : `${range.sheet}!${range.anchor}:${range.focus}`
+
+    // Replace old live text
+    setInput(prev => {
+      const before = prev.slice(0, ctxStart)        // includes the '@'
+      const after  = prev.slice(ctxStart + lastRangeRef.current.length)
+      lastRangeRef.current = rangeRef
+      return `${before}${rangeRef}${after}`
+    })
+
+    // Keep cursor right after the live range
+    setTimeout(() => {
       if (textareaRef.current) {
-        const cursorPos = textareaRef.current.selectionStart;
-        const textBefore = input.substring(0, cursorPos);
-        const textAfter = input.substring(cursorPos);
-        
-        // Insert the context display text
-        setInput(textBefore + displayText + " " + textAfter);
-        
-        // Reset waiting state
-        setWaitingForContext(false);
-        
-        // Focus back on textarea and position cursor after inserted text
-        setTimeout(() => {
-          if (textareaRef.current) {
-            textareaRef.current.focus();
-            const newCursorPos = textBefore.length + displayText.length + 1;
-            textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
-          }
-        }, 0);
+        const newPos = ctxStart + rangeRef.length
+        textareaRef.current.setSelectionRange(newPos, newPos)
+        textareaRef.current.focus()
       }
-      
-      // Clear the range selection
-      dispatch({ type: "CLEAR_RANGE" });
-    }
-  }, [range, waitingForContext, contexts, input, active, dispatch]);
+    }, 0)
+  }, [range, waitingForContext, ctxStart, active])
+
+  const finaliseContext = () => {
+    if (!waitingForContext || !range || ctxStart == null) return
+
+    const finalRef = lastRangeRef.current          // already inserted
+    const ctxId = `ctx_${contexts.length + 1}`
+    setContexts(prev => [...prev, { id: ctxId, text: `@${finalRef}`, range: finalRef }])
+    setWaitingForContext(false)
+    setCtxStart(null)
+    lastRangeRef.current = ""
+    
+    dispatch({ type: "CLEAR_RANGE" })              // remove blue rectangle
+  }
 
   const handleModeChange = (newMode: "ask" | "analyst") => {
     setMode(newMode)
@@ -233,9 +226,18 @@ export default function ChatInterface({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (waitingForContext && e.key === " ") {
+      // Finalise current context
+      e.preventDefault()
+      finaliseContext()
+      return
+    }
+    
     // Check for @ symbol to start context selection
     if (e.key === '@') {
-      setWaitingForContext(true);
+      const pos = textareaRef.current?.selectionStart ?? input.length
+      setWaitingForContext(true)
+      setCtxStart(pos + 1)  // +1 to place after the @ character 
     }
     
     // Send on Enter (without shift)

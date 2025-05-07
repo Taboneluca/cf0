@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react"
 import type { SpreadsheetData } from "@/types/spreadsheet"
 import { isFormula, evaluateFormula, detectCircularReferences } from "@/utils/formula-engine"
 import { useWorkbook } from "@/context/workbook-context"
-import { useEditing, makeA1, makeRangeA1, appendRangeReference } from "@/context/editing-context"
+import { useEditing, makeA1, makeRangeA1 } from "@/context/editing-context"
 
 interface SpreadsheetViewProps {
   data: SpreadsheetData
@@ -587,7 +587,19 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
         }
         break;
 
-      // ... rest of existing cases ...
+      default:
+        // Excel-style: start editing when any printable key is pressed
+        if (
+          !readOnly &&
+          e.key.length === 1 &&              // a single printable char
+          !e.ctrlKey && !e.metaKey && !e.altKey
+        ) {
+          e.preventDefault();
+          const cellToEdit = selected || (range?.focus || "A1");
+          const { col, row } = getCellCoords(cellToEdit);
+          startEdit(active, row, col, e.key); // open editor pre-filled with typed char
+        }
+        break;
     }
   }
 
