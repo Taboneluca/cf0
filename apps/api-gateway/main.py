@@ -22,6 +22,9 @@ from agents.openai_client import client, OpenAIError
 from chat.memory import clear_history
 import json
 from fastapi.responses import StreamingResponse
+from spreadsheet_engine.adapter import get_implementation_info
+from spreadsheet_engine.adapter import SpreadsheetAdapter
+import time
 
 # Load environment variables
 load_dotenv()
@@ -416,6 +419,122 @@ async def delete_workbook(wid: str):
         return {"status": "deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Add this new endpoint after the existing endpoints
+@app.get("/debug/config")
+async def debug_config():
+    """Get information about the current configuration."""
+    return {
+        "spreadsheet_engine": get_implementation_info(),
+        "environment": {
+            "USE_DATAFRAME_MODEL": os.getenv("USE_DATAFRAME_MODEL", "0"),
+            "USE_FORMULA_ENGINE": os.getenv("USE_FORMULA_ENGINE", "0"),
+            "USE_INCREMENTAL_RECALC": os.getenv("USE_INCREMENTAL_RECALC", "1"),
+            "MAX_TOOL_ITERATIONS": os.getenv("MAX_TOOL_ITERATIONS", "10"),
+            "MODEL": os.getenv("OPENAI_MODEL", "gpt-4o")
+        },
+        "versions": {
+            "pandas": __import__("pandas").__version__,
+            "numpy": __import__("numpy").__version__
+        }
+    }
+
+# Add this new benchmark endpoint
+@app.get("/debug/benchmark")
+async def run_benchmark():
+    """Run a performance benchmark to compare implementation speeds."""
+    results = {}
+    
+    # Test sheet creation (large sheet)
+    start_time = time.time()
+    sheet = Spreadsheet(rows=1000, cols=100, name="BenchmarkSheet")
+    results["create_sheet"] = {
+        "time_ms": (time.time() - start_time) * 1000,
+        "dimensions": {"rows": 1000, "cols": 100}
+    }
+    
+    # Test cell setting (many updates)
+    cells_to_set = 1000
+    start_time = time.time()
+    for i in range(min(cells_to_set, 500)):
+        # Set some cells with values
+        cell = f"{sheet._index_to_column(i % 50)}{(i // 50) + 1}"
+        set_cell(cell, i * 2, sheet=sheet)
+    results["set_cells"] = {
+        "time_ms": (time.time() - start_time) * 1000,
+        "cells_set": min(cells_to_set, 500)
+    }
+    
+    # Test formula evaluation (with dependencies)
+    # First add some formulas with cross-dependencies
+    formulas = [
+        ("A10", "=SUM(A1:A5)"),
+        ("B10", "=AVERAGE(B1:B5)"),
+        ("C10", "=MAX(C1:C5)"),
+        ("D10", "=A10+B10+C10"),
+        ("E10", "=D10*2"),
+    ]
+    for cell, formula in formulas:
+        set_cell(cell, formula, sheet=sheet)
+    
+    # Now test formula recalculation
+    start_time = time.time()
+    # Trigger the recalculation by reading from a dependent cell
+    from spreadsheet_engine.operations import get_cell
+    result = get_cell("E10", sheet=sheet)
+    results["formula_eval"] = {
+        "time_ms": (time.time() - start_time) * 1000,
+        "formulas": len(formulas),
+        "result": result
+    }
+    
+    # Test sheet serialization
+    start_time = time.time()
+    sheet_dict = sheet.to_dict()
+    results["serialization"] = {
+        "time_ms": (time.time() - start_time) * 1000,
+        "size_bytes": len(json.dumps(sheet_dict))
+    }
+    
+    # Test optimized serialization
+    start_time = time.time()
+    if hasattr(sheet, "optimized_to_dict"):
+        sheet_dict = sheet.optimized_to_dict(max_rows=50, max_cols=20)
+        results["optimized_serialization"] = {
+            "time_ms": (time.time() - start_time) * 1000,
+            "size_bytes": len(json.dumps(sheet_dict))
+        }
+    
+    # Test batch operations
+    start_time = time.time()
+    from spreadsheet_engine.operations import set_cells
+    updates = {f"{sheet._index_to_column(i)}20": i*10 for i in range(50)}
+    set_cells(updates, sheet=sheet)
+    results["batch_operation"] = {
+        "time_ms": (time.time() - start_time) * 1000,
+        "cells_updated": len(updates)
+    }
+    
+    # Full sheet operations test
+    num_cols = 20
+    col_data = list(range(1, 100))
+    start_time = time.time()
+    for i in range(num_cols):
+        col_name = sheet._index_to_column(i)
+        from spreadsheet_engine.operations import apply_scalar_to_column
+        apply_scalar_to_column(col_name, 2, "multiply", sheet=sheet)
+    results["vector_operations"] = {
+        "time_ms": (time.time() - start_time) * 1000,
+        "columns_processed": num_cols
+    }
+    
+    # Return all benchmark results along with implementation info
+    from spreadsheet_engine.adapter import get_implementation_info
+    return {
+        "implementation": get_implementation_info(),
+        "benchmarks": results,
+        "total_time_ms": sum(result["time_ms"] for result in results.values())
+    }
 
 if __name__ == "__main__":
     import uvicorn
