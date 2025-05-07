@@ -12,7 +12,7 @@ from .tools import TOOL_CATALOG
 from chat.token_utils import trim_history
 
 load_dotenv()
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 MAX_TOKENS = 4096
@@ -113,6 +113,7 @@ class BaseAgent:
                     functions=[_serialize_tool(t) for t in self.tools],
                     function_call="auto",
                     temperature=0.3,  # Reduced from 1.0 to 0.3 for more consistent responses
+                    max_tokens=400    # Limit response size while still allowing sufficient explanation
                 )
                 
                 call_time = time.time() - call_start
@@ -371,6 +372,7 @@ class BaseAgent:
                     functions=[_serialize_tool(t) for t in self.tools],
                     function_call="auto",
                     temperature=0.3,
+                    max_tokens=400,  # Limit response size while still allowing sufficient explanation
                     stream=True  # Enable streaming
                 )
                 

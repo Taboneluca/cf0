@@ -236,14 +236,7 @@ async def process_message(
         collected_updates = []
         
         # Prepare system instructions with cross-sheet formula examples
-        cross_sheet_instructions = """
-You can now work with cross-sheet formulas. Examples:
-1. To reference cells in other sheets, use Sheet2!A1 syntax
-2. To create a formula that adds values from Sheet1 and Sheet2: =Sheet1!A1+Sheet2!B2
-3. To update a cell with a cross-sheet reference: set_cell("Sheet2!A1", "=Sheet1!B3*2")
-4. You can also navigate through different sheets to examine and modify data
-5. When you need to set more than ~5 cells at once, **always use set_cells** with a dictionary so you don't hit the iteration cap.
-"""
+        cross_sheet_instructions = "You can reference cells in other sheets using Sheet2!A1 syntax in formulas."
         
         # Update the tool functions in the agents
         print(f"[{request_id}] 🤖 Creating agent for mode: {mode}")
@@ -289,8 +282,8 @@ You can now work with cross-sheet formulas. Examples:
         # Return the reply, updated sheet state, and log of changes
         return {
             "reply": result["reply"], 
-            "sheet": sheet.optimized_to_dict(max_rows=15, max_cols=10),
-            "all_sheets": {name: s.optimized_to_dict(max_rows=15, max_cols=10) for name, s in workbook.all_sheets().items()},
+            "sheet": sheet.optimized_to_dict(max_rows=100, max_cols=30),
+            "all_sheets": {name: s.optimized_to_dict(max_rows=100, max_cols=30) for name, s in workbook.all_sheets().items()},
             "log": collected_updates
         }
     except Exception as e:
@@ -526,14 +519,7 @@ async def process_message_streaming(
         yield {"type": "start", "mode": mode}
         
         # Prepare system instructions with cross-sheet formula examples
-        cross_sheet_instructions = """
-You can now work with cross-sheet formulas. Examples:
-1. To reference cells in other sheets, use Sheet2!A1 syntax
-2. To create a formula that adds values from Sheet1 and Sheet2: =Sheet1!A1+Sheet2!B2
-3. To update a cell with a cross-sheet reference: set_cell("Sheet2!A1", "=Sheet1!B3*2")
-4. You can also navigate through different sheets to examine and modify data
-5. When you need to set more than ~5 cells at once, **always use set_cells** with a dictionary so you don't hit the iteration cap.
-"""
+        cross_sheet_instructions = "You can reference cells in other sheets using Sheet2!A1 syntax in formulas."
         
         # Create tool wrappers that yield status updates
         def create_streaming_wrapper(fn, name):
@@ -551,8 +537,24 @@ You can now work with cross-sheet formulas. Examples:
                 if isinstance(result, dict):
                     if "updates" in result and isinstance(result["updates"], list):
                         collected_updates.extend(result["updates"])
+                        # Stream the updates immediately to the client for real-time UI updates
+                        if name in {"set_cells", "apply_updates_and_reply"}:
+                            yield {
+                                "type": "delta",
+                                "updates": result["updates"]
+                            }
+                            # Also send a lightweight summary of the current sheet state
+                            yield {
+                                "type": "summary",
+                                "sheet": sheet.optimized_to_dict(max_rows=5, max_cols=5)
+                            }
                     elif "cell" in result:
                         collected_updates.append(result)
+                        # Stream single cell updates as well
+                        yield {
+                            "type": "delta",
+                            "updates": [result]
+                        }
                 
                 # Yield a tool complete notification
                 yield {"type": "tool", "status": "complete", "tool": name, "result": result, "duration": duration}

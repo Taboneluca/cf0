@@ -441,6 +441,30 @@ async def debug_config():
         }
     }
 
+@app.get("/workbook/{wid}/sheet/{sid}/range")
+async def get_sheet_range(wid: str, sid: str, start: int = 0, end: int = 20):
+    """
+    Get a range of rows from a sheet, useful for virtualized UI
+    """
+    try:
+        sheet = get_sheet(wid, sid)
+        # Ensure start and end are within bounds
+        start = max(0, min(start, sheet.n_rows-1))
+        end = max(start+1, min(end, sheet.n_rows))
+        
+        # Extract the rows in the requested range
+        rows = sheet.cells[start:end]
+        
+        return {
+            "start": start,
+            "end": end,
+            "rows": rows,
+            "total_rows": sheet.n_rows,
+            "total_cols": sheet.n_cols
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
