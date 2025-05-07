@@ -189,10 +189,11 @@ async def chat(req: ChatRequest):
     try:
         # Try to use moderation if available, but don't fail if it doesn't work
         try:
-            moderation = client.moderations.create(input=req.message)
-            if moderation.results[0].flagged:
-                print(f"[{request_id}] ⚠️ Message flagged by moderation")
-                raise HTTPException(400, "Message violates policy")
+            if os.getenv("USE_OPENAI_MODERATION", "0").lower() in ("1", "true", "yes"):
+                moderation = client.moderations.create(input=req.message)
+                if moderation.results[0].flagged:
+                    print(f"[{request_id}] ⚠️ Message flagged by moderation")
+                    raise HTTPException(400, "Message violates policy")
         except OpenAIError as moderation_error:
             # Log the error but continue processing the message
             print(f"[{request_id}] ⚠️ Moderation check failed: {moderation_error}")
@@ -290,9 +291,10 @@ async def stream_chat(req: ChatRequest):
     try:
         # Try to use moderation if available
         try:
-            moderation = client.moderations.create(input=req.message)
-            if moderation.results[0].flagged:
-                raise HTTPException(400, "Message violates policy")
+            if os.getenv("USE_OPENAI_MODERATION", "0").lower() in ("1", "true", "yes"):
+                moderation = client.moderations.create(input=req.message)
+                if moderation.results[0].flagged:
+                    raise HTTPException(400, "Message violates policy")
         except OpenAIError as moderation_error:
             # Log the error but continue processing the message
             print(f"Warning: Moderation check failed: {moderation_error}")

@@ -66,6 +66,32 @@ class Workbook:
         """
         Recalculate formula cells in the workbook. 
         Uses fast incremental recalculation if enabled, or full recalc otherwise.
+        
+        Note: This is a synchronous wrapper around the async version for backwards compatibility.
+        """
+        import asyncio
+        try:
+            if asyncio.get_event_loop().is_running():
+                # We're in an async context, create a task 
+                asyncio.create_task(self.recalculate_async())
+            else:
+                # We're not in an async context, run synchronously
+                if USE_INCREMENTAL_RECALC:
+                    self._incremental_recalculate()
+                else:
+                    self._full_recalculate()
+        except Exception as e:
+            print(f"Error in recalculate: {e}")
+            # Fallback to synchronous execution
+            if USE_INCREMENTAL_RECALC:
+                self._incremental_recalculate()
+            else:
+                self._full_recalculate()
+                
+    async def recalculate_async(self) -> None:
+        """
+        Asynchronous version of recalculate.
+        Allows non-blocking recalculation when called with asyncio.create_task.
         """
         if USE_INCREMENTAL_RECALC:
             self._incremental_recalculate()

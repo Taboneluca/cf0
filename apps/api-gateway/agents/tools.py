@@ -204,6 +204,30 @@ TOOL_CATALOG = [
         "read_only": False,
     },
     {
+        "name": "apply_updates_and_reply",
+        "description": "Apply many cell updates **and** provide the final human-readable reply in ONE call.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "updates": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "cell":  {"type": "string"},
+                            "value": {}
+                        },
+                        "required": ["cell", "value"]
+                    }
+                },
+                "reply": { "type": "string" }
+            },
+            "required": ["updates", "reply"]
+        },
+        "func": lambda updates, reply="", **kw: {**ops.set_cells(updates, **kw), "reply": reply},
+        "read_only": False,
+    },
+    {
         "name": "list_sheets",
         "description": "Return all sheet names in the current workbook.",
         "parameters": {
