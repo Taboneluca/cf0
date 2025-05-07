@@ -8,8 +8,7 @@ load_dotenv()
 # Initialize the OpenAI client
 client = OpenAI(
     base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-    api_key=os.getenv("OPENAI_API_KEY"),
-    http2=True  # Enable HTTP/2 for connection reuse and better performance
+    api_key=os.getenv("OPENAI_API_KEY")
 )
 # Export the client and error classes
 __all__ = ["client", "OpenAIError", "APIStatusError"] 
