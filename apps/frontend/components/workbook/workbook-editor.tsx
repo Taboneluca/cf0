@@ -24,6 +24,9 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
   const [wb, dispatch] = useWorkbook()
   const { wid, active, data: workbookData, sheets } = wb
 
+  // Track last auth retry timestamp to avoid excessive retries
+  const [lastAuthRetry, setLastAuthRetry] = useState<number>(0)
+
   // Auto-save functionality
   useEffect(() => {
     const saveTimeout = setTimeout(async () => {
@@ -39,22 +42,40 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
     setIsSaving(true)
 
     try {
-      // Check if user is authenticated - use getUser instead of getSession for better security
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        console.log("User not authenticated - retrying authentication")
-        // Try to refresh the session
-        const { data: refreshData } = await supabase.auth.refreshSession()
-        if (!refreshData.user) {
-          console.log("Authentication refresh failed - skipping Supabase save")
-          // Continue with API saves even if Supabase auth fails
-        } else {
-          // Save to Supabase (as backup storage) only if authenticated
-          await saveToSupabase()
+      // Authentication handling with improved error management and debouncing
+      let isAuthenticated = false;
+      
+      try {
+        // Check if user is authenticated - use getUser instead of getSession for better security
+        const { data: { user } } = await supabase.auth.getUser();
+        isAuthenticated = !!user;
+        
+        if (!isAuthenticated) {
+          // Only attempt refresh if we haven't tried recently
+          const now = Date.now();
+          if (now - lastAuthRetry > 30000) { // 30 seconds between retries
+            console.log("User not authenticated - attempting session refresh");
+            setLastAuthRetry(now);
+            
+            // Try to refresh the session
+            const { data: refreshData } = await supabase.auth.refreshSession();
+            isAuthenticated = !!refreshData.user;
+            
+            if (!isAuthenticated) {
+              console.log("Authentication refresh failed - skipping Supabase save");
+            }
+          } else {
+            // Skip retry if we've tried recently
+            console.log("Skipping auth retry (rate limited) - last attempt within 30s");
+          }
         }
-      } else {
-        // User is authenticated, proceed with Supabase save
-        await saveToSupabase()
+      } catch (authError) {
+        console.error("Authentication error:", authError);
+      }
+      
+      // Only try to save to Supabase if authenticated
+      if (isAuthenticated) {
+        await saveToSupabase();
       }
 
       // Save to backend API regardless of Supabase result

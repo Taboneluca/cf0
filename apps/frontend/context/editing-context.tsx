@@ -149,25 +149,60 @@ export function useEditing() {
   return context;
 }
 
-// Helper function to create A1 references
+// Helper function to create cell references
 export function makeA1(row: number, col: string, sheetName: string, originSheet?: string | null): string {
+  if (!row || !col) {
+    console.warn("Invalid cell parameters:", { row, col });
+    return "";
+  }
+  
+  // Make sure col only contains letters and row is a positive number
+  if (!/^[A-Za-z]+$/.test(col) || row <= 0) {
+    console.warn("Invalid cell coordinate format:", { row, col });
+    return "";
+  }
+  
   const cellRef = `${col}${row}`;
-  // Only add sheet prefix if we're referencing a different sheet than the origin
+  
+  // Add sheet prefix if referencing a different sheet
   return sheetName !== originSheet ? `${sheetName}!${cellRef}` : cellRef;
 }
 
 // Helper function to create range references
 export function makeRangeA1(anchor: string, focus: string, sheetName: string, originSheet?: string | null): string {
-  if (anchor === focus) {
-    return makeA1(
-      parseInt(focus.match(/\d+/)?.[0] || "1"), 
-      focus.match(/[A-Za-z]+/)?.[0] || "A",
-      sheetName,
-      originSheet
-    );
+  if (!anchor || !focus) {
+    console.warn("Invalid range parameters:", { anchor, focus });
+    return "";
   }
 
-  // Add sheet prefix if referencing a different sheet
+  // Extract row and column with safety checks
+  // Use direct indexing instead of regex .match() to avoid potential recursion
+  let anchorCol = "", anchorRow = "";
+  let focusCol = "", focusRow = "";
+  
+  // Extract column (letters) and row (numbers) safely
+  for (let i = 0; i < anchor.length; i++) {
+    if (/[A-Za-z]/.test(anchor[i])) {
+      anchorCol += anchor[i];
+    } else if (/[0-9]/.test(anchor[i])) {
+      anchorRow += anchor[i];
+    }
+  }
+  
+  for (let i = 0; i < focus.length; i++) {
+    if (/[A-Za-z]/.test(focus[i])) {
+      focusCol += focus[i];
+    } else if (/[0-9]/.test(focus[i])) {
+      focusRow += focus[i];
+    }
+  }
+  
+  // If we couldn't parse properly, return empty string
+  if (!anchorCol || !anchorRow || !focusCol || !focusRow) {
+    console.warn("Could not parse cell reference components:", { anchor, focus });
+    return "";
+  }
+
   const rangeRef = `${anchor}:${focus}`;
   return sheetName !== originSheet ? `${sheetName}!${rangeRef}` : rangeRef;
 } 

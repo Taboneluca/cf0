@@ -25,10 +25,58 @@ export async function chatBackend(
     const requestTime = performance.now() - startTime;
     console.log(`⏱️ API request completed in ${requestTime.toFixed(0)}ms with status ${res.status}`);
     
+    // Handle different types of errors with better user feedback
     if (!res.ok) {
-      const errorText = await res.text();
-      console.error(`🔴 API Error Response (${res.status}):`, errorText);
-      throw new Error(`API Error (${res.status}): ${errorText}`);
+      let errorData;
+      let errorMessage = `API request failed with status ${res.status}`;
+      
+      try {
+        // Try to parse response as JSON for structured error info
+        errorData = await res.json();
+        console.error(`🔴 API Error Response (${res.status}):`, errorData);
+        
+        // Handle specific error types with custom messages
+        if (res.status === 422 || res.status === 500) {
+          if (errorData?.detail?.includes("Cannot parse JSON")) {
+            // JSON parsing error - common with LLM response issues
+            return {
+              reply: "Sorry, I encountered an error processing your request. Please try again with simpler instructions.",
+              sheet: null,
+              all_sheets: {},
+              log: [],
+              error: true,
+              errorDetail: errorData.detail
+            };
+          }
+        }
+        
+        // Use structured error message if available
+        errorMessage = errorData?.detail || errorMessage;
+      } catch (parseError) {
+        // If JSON parsing of error fails, try plain text
+        try {
+          const errorText = await res.text();
+          console.error(`🔴 API Error Response (${res.status}):`, errorText);
+          errorMessage = errorText || errorMessage;
+        } catch {
+          // If even text extraction fails, use generic message
+          console.error(`🔴 API Error Response (${res.status}): Could not parse response`);
+        }
+      }
+      
+      // For really bad errors (500s), return a friendly error structure instead of throwing
+      if (res.status >= 500) {
+        return {
+          reply: `Sorry, the server encountered an error. Please try again in a moment.`,
+          sheet: null,
+          all_sheets: {},
+          log: [],
+          error: true,
+          errorDetail: errorMessage
+        };
+      }
+      
+      throw new Error(`API Error (${res.status}): ${errorMessage}`);
     }
     
     const data = await res.json();
@@ -47,7 +95,16 @@ export async function chatBackend(
     // Validate response shape
     if (!data || !data.reply || !data.sheet) {
       console.error("🔴 Invalid API response format:", data);
-      throw new Error("Invalid API response format: missing required fields");
+      
+      // Return error response instead of throwing
+      return {
+        reply: "Sorry, I received an incomplete response. Please try again.",
+        sheet: null,
+        all_sheets: {},
+        log: [],
+        error: true,
+        errorDetail: "Invalid API response format: missing required fields"
+      };
     }
     
     return data as { 
@@ -58,7 +115,16 @@ export async function chatBackend(
     };
   } catch (err) {
     console.error("🔴 chatBackend error:", err);
-    throw err;
+    
+    // Return graceful error instead of throwing
+    return {
+      reply: "Sorry, I encountered an error connecting to the server. Please try again.",
+      sheet: null,
+      all_sheets: {},
+      log: [],
+      error: true,
+      errorDetail: err instanceof Error ? err.message : String(err)
+    };
   }
 }
 

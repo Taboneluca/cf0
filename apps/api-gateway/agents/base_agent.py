@@ -138,8 +138,17 @@ class BaseAgent:
             # 1) Did the model pick a function?
             if msg.function_call:
                 name = msg.function_call.name
-                args = safe_json_loads(msg.function_call.arguments)
-                print(f"[{agent_id}] 🛠️ Tool call: {name}")
+                try:
+                    args = safe_json_loads(msg.function_call.arguments)
+                    print(f"[{agent_id}] 🛠️ Tool call: {name}")
+                except ValueError as e:
+                    print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
+                    return {
+                        "reply": f"Sorry, I encountered an error while processing your request. Please try again with simpler instructions.",
+                        "error": "PARSE_ERROR",
+                        "detail": str(e),
+                        "updates": collected_updates
+                    }
                 
                 # Track mutating calls
                 if name in mutating_tools:
@@ -439,7 +448,12 @@ class BaseAgent:
             if is_function_call and function_name:
                 try:
                     # Parse function arguments
-                    args = safe_json_loads(function_args)
+                    try:
+                        args = safe_json_loads(function_args)
+                    except ValueError as e:
+                        print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
+                        yield f"\nSorry, I encountered an error processing your request. Please try again with simpler instructions."
+                        return
                     
                     # Check mutating call limits
                     if function_name in mutating_tools:

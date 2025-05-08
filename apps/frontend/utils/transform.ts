@@ -4,6 +4,18 @@ import type { SpreadsheetData } from "@/types/spreadsheet"
 const DEFAULT_ROWS = 100;
 const DEFAULT_COLS = 30;
 
+// Debounce function for logging
+let lastLogTime = 0;
+const LOG_THROTTLE_MS = 400; // Throttle logs to at most once every 400ms
+
+function throttledLog(message: string, data: any) {
+  const now = Date.now();
+  if (now - lastLogTime > LOG_THROTTLE_MS) {
+    console.log(message, data);
+    lastLogTime = now;
+  }
+}
+
 export function backendSheetToUI(sheet: {
   headers: string[]
   rows: number
@@ -20,8 +32,8 @@ export function backendSheetToUI(sheet: {
     };
   }
 
-  // Log details about the sheet for debugging
-  console.log("📊 Processing sheet data:", {
+  // Log details about the sheet for debugging - throttled to reduce spam
+  throttledLog("📊 Processing sheet data:", {
     hasHeaders: Array.isArray(sheet.headers),
     headerCount: Array.isArray(sheet.headers) ? sheet.headers.length : 0,
     hasRows: typeof sheet.rows === 'number',
