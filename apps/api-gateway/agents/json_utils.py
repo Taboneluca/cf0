@@ -42,6 +42,22 @@ def safe_json_loads(s: str) -> Dict[str, Any]:
     if not s:
         return {}
     
+    # Find and keep only the first valid JSON object
+    # This handles cases like "Here's your JSON: { ... }" or multiple concatenated objects
+    first_brace = s.find('{')
+    first_bracket = s.find('[')
+    
+    if first_brace >= 0 and (first_bracket < 0 or first_brace < first_bracket):
+        # If we have a JSON object and it's before any array
+        if first_brace > 0:
+            logging.info(f"Trimming {first_brace} characters of leading text before JSON object")
+            s = s[first_brace:]
+    elif first_bracket >= 0:
+        # If we have a JSON array
+        if first_bracket > 0:
+            logging.info(f"Trimming {first_bracket} characters of leading text before JSON array")
+            s = s[first_bracket:]
+    
     # Check if JSON is balanced and trim if necessary
     s = _trim_to_last_complete_json(s)
     

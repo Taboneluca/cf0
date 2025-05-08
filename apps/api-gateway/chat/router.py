@@ -80,6 +80,12 @@ async def process_message(
             f"Call get_range or sheet_summary tools if you need more detail on the sheet."
         )
         
+        # Add instruction on creating new sheets
+        system_context += (
+            "\n\nYou can create additional sheets with the create_new_sheet tool. "
+            "If you need a balance sheet, call create_new_sheet(name='Sheet2') first."
+        )
+        
         # Add any context ranges if provided
         contexts = workbook_metadata.get('contexts', [])
         if contexts:
@@ -390,6 +396,12 @@ async def process_message_streaming(
             f"For example, =Sheet2!A1+Sheet3!B2 adds values from two different sheets.\n\n"
             f"Current sheet summary: {json.dumps(sheet_info)}\n"
             f"Call get_range or sheet_summary tools if you need more detail on the sheet."
+        )
+        
+        # Add instruction on creating new sheets
+        system_context += (
+            "\n\nYou can create additional sheets with the create_new_sheet tool. "
+            "If you need a balance sheet, call create_new_sheet(name='Sheet2') first."
         )
         
         # Add any context ranges if provided
