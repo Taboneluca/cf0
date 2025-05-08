@@ -8,10 +8,22 @@ from spreadsheet_engine.model import Spreadsheet
 
 # Initialize Supabase client
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://dbvpltqumpfkdpsyqbvz.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
-# Create a client instance when the module is loaded
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Try all allowed key names – first one wins
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_KEY") or
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY") or
+    os.getenv("SUPABASE_ANON_KEY") or
+    ""  # Fallback empty string if none found
+)
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("⚠️  Supabase persistence disabled – SUPABASE_URL / *_KEY env vars missing")
+    supabase: Optional[Client] = None
+else:
+    # Create a client instance when the module is loaded
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("✅ Supabase client initialised")
 
 # Background queue for pending writes (to avoid blocking API responses)
 _write_queue = asyncio.Queue()

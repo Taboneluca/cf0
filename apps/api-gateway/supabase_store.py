@@ -11,8 +11,20 @@ if TYPE_CHECKING:
 
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_KEY")
-sb = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
+
+# Try all allowed key names – first one wins
+supabase_key = (
+    os.getenv("SUPABASE_KEY") or
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY") or
+    os.getenv("SUPABASE_ANON_KEY")
+)
+
+if not supabase_url or not supabase_key:
+    print("⚠️  Supabase persistence disabled – SUPABASE_URL / *_KEY env vars missing")
+    sb: Optional[Client] = None
+else:
+    sb: Client = create_client(supabase_url, supabase_key)
+    print("✅ Supabase client initialised")
 
 # Queue for background persistence operations
 save_queue = asyncio.Queue()
