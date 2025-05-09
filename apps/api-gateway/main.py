@@ -18,7 +18,7 @@ from spreadsheet_engine import (
 )
 from workbook_store import get_sheet, get_workbook, workbooks, initialize as initialize_workbook_store
 from chat.router import process_message
-from agents.openai_client import client, OpenAIError
+from llm import PROVIDERS  # Import the provider registry
 from chat.memory import clear_history
 import json
 from fastapi.responses import StreamingResponse
@@ -64,6 +64,7 @@ class ChatRequest(BaseModel):
     wid: str
     sid: str
     contexts: Optional[List[str]] = []
+    model: Optional[str] = None  # Provider:model_id format, e.g. "openai:gpt-4o-mini"
 
 class ChatResponse(BaseModel):
     reply: str
@@ -191,11 +192,16 @@ async def chat(req: ChatRequest):
         # Try to use moderation if available, but don't fail if it doesn't work
         try:
             if os.getenv("USE_OPENAI_MODERATION", "0").lower() in ("1", "true", "yes"):
-                moderation = client.moderations.create(input=req.message)
-                if moderation.results[0].flagged:
-                    print(f"[{request_id}] ⚠️ Message flagged by moderation")
-                    raise HTTPException(400, "Message violates policy")
-        except OpenAIError as moderation_error:
+                # Create an OpenAI client just for moderation
+                from openai import OpenAI
+                openai_key = os.getenv("OPENAI_API_KEY")
+                if openai_key:
+                    moderation_client = OpenAI(api_key=openai_key)
+                    moderation = moderation_client.moderations.create(input=req.message)
+                    if moderation.results[0].flagged:
+                        print(f"[{request_id}] ⚠️ Message flagged by moderation")
+                        raise HTTPException(400, "Message violates policy")
+        except Exception as moderation_error:
             # Log the error but continue processing the message
             print(f"[{request_id}] ⚠️ Moderation check failed: {moderation_error}")
         
@@ -243,7 +249,8 @@ async def chat(req: ChatRequest):
                         "active": req.sid,
                         "all_sheets_data": all_sheets_data,
                         "contexts": req.contexts
-                    }
+                    },
+                    model=req.model
                 )
                 process_time = time.time() - process_start
                 print(f"[{request_id}] ⏱️ Message processed in {process_time:.2f}s")
@@ -294,10 +301,15 @@ async def stream_chat(req: ChatRequest):
         # Try to use moderation if available
         try:
             if os.getenv("USE_OPENAI_MODERATION", "0").lower() in ("1", "true", "yes"):
-                moderation = client.moderations.create(input=req.message)
-                if moderation.results[0].flagged:
-                    raise HTTPException(400, "Message violates policy")
-        except OpenAIError as moderation_error:
+                # Create an OpenAI client just for moderation
+                from openai import OpenAI
+                openai_key = os.getenv("OPENAI_API_KEY")
+                if openai_key:
+                    moderation_client = OpenAI(api_key=openai_key)
+                    moderation = moderation_client.moderations.create(input=req.message)
+                    if moderation.results[0].flagged:
+                        raise HTTPException(400, "Message violates policy")
+        except Exception as moderation_error:
             # Log the error but continue processing the message
             print(f"Warning: Moderation check failed: {moderation_error}")
         
@@ -326,7 +338,8 @@ async def stream_chat(req: ChatRequest):
                     "sheets": wb.list_sheets(),
                     "active": req.sid,
                     "all_sheets_data": all_sheets_data
-                }
+                },
+                model=req.model
             ):
                 # Send each chunk as a "chunk" event
                 yield f"event: chunk\ndata: {json.dumps(chunk)}\n\n"

@@ -1,5 +1,6 @@
 from .base_agent import BaseAgent
 from .tools import READ_ONLY_TOOLS
+from llm.base import LLMClient
 
 ASK_SYSTEM = """
 You are an expert data-analysis assistant working on a spreadsheet.
@@ -18,4 +19,14 @@ Key guidelines:
 - If the user mentions another sheet (or you suspect the data lives elsewhere) first call list_sheets and/or get_sheet_summary before answering
 """
 
-AskAgent = BaseAgent(ASK_SYSTEM, READ_ONLY_TOOLS)
+def build(llm: LLMClient) -> BaseAgent:
+    """
+    Creates an AskAgent with the given LLM provider.
+    
+    Args:
+        llm: The LLMClient implementation to use
+        
+    Returns:
+        A BaseAgent instance configured for read-only operations
+    """
+    return BaseAgent(llm, ASK_SYSTEM, READ_ONLY_TOOLS)

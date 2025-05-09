@@ -1,4 +1,4 @@
-from .ask_agent import AskAgent
-from .analyst_agent import AnalystAgent
+from .ask_agent import build as build_ask_agent
+from .analyst_agent import build as build_analyst_agent
 
-__all__ = ["AskAgent", "AnalystAgent"]
+__all__ = ["build_ask_agent", "build_analyst_agent"]
