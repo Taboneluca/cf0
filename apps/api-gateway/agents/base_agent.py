@@ -6,14 +6,12 @@ import json
 import time
 import traceback
 from dotenv import load_dotenv
-from agents.openai_client import client, OpenAIError, APIStatusError
-from agents.openai_rate import chat_completion
 from .tools import TOOL_CATALOG
 from chat.token_utils import trim_history
 from agents.json_utils import safe_json_loads
+from llm.base import LLMClient
 
 load_dotenv()
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 MAX_TOKENS = 4096
@@ -27,7 +25,8 @@ def _serialize_tool(tool: dict) -> dict:
     }
 
 class BaseAgent:
-    def __init__(self, system_prompt: str, tools: list[dict]):
+    def __init__(self, llm: LLMClient, system_prompt: str, tools: list[dict]):
+        self.llm = llm
         self.system_prompt = system_prompt
         self.tools = tools
 
@@ -55,7 +54,7 @@ class BaseAgent:
             new_tools.append(new_tool)
             
         # Create and return a new agent
-        return BaseAgent(self.system_prompt, new_tools)
+        return BaseAgent(self.llm, self.system_prompt, new_tools)
 
     async def run(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
@@ -78,9 +77,9 @@ class BaseAgent:
         # Add the current user message
         messages.append({"role": "user", "content": user_message})
         
-        # Trim history to fit within token limits
+        # Trim history to fit within token limits - use model name from the LLM client
         orig_message_count = len(messages)
-        messages = trim_history(messages, system_message, MAX_TOKENS, MODEL)
+        messages = trim_history(messages, system_message, MAX_TOKENS, self.llm.model)
         if len(messages) < orig_message_count:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
@@ -106,20 +105,20 @@ class BaseAgent:
             # Try to call the model with retries for transient errors
             try:
                 call_start = time.time()
-                print(f"[{agent_id}] 🔌 Calling LLM model: {MODEL}")
+                print(f"[{agent_id}] 🔌 Calling LLM model: {self.llm.model}")
                 
-                response = chat_completion(
-                    model=MODEL,
+                # Use the LLM interface instead of direct OpenAI call
+                response = await self.llm.chat(
                     messages=messages,
-                    functions=[_serialize_tool(t) for t in self.tools],
-                    function_call="auto",
+                    stream=False,
+                    functions=[_serialize_tool(t) for t in self.tools] if self.llm.supports_function_call else None,
                     temperature=0.3,  # Reduced from 1.0 to 0.3 for more consistent responses
                     max_tokens=400    # Limit response size while still allowing sufficient explanation
                 )
                 
                 call_time = time.time() - call_start
                 print(f"[{agent_id}] ⏱️ LLM call completed in {call_time:.2f}s")
-            except (OpenAIError, APIStatusError) as e:
+            except Exception as e:
                 print(f"[{agent_id}] ❌ Error calling LLM: {str(e)}")
                 return {
                     "reply": f"Sorry, I encountered an error: {str(e)}",
@@ -347,7 +346,7 @@ class BaseAgent:
         
         # Trim history to fit within token limits
         orig_message_count = len(messages)
-        messages = trim_history(messages, system_message, MAX_TOKENS, MODEL)
+        messages = trim_history(messages, system_message, MAX_TOKENS, self.llm.model)
         if len(messages) < orig_message_count:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
@@ -373,14 +372,13 @@ class BaseAgent:
             print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations}")
             
             # Call the LLM model with streaming enabled
-            print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {MODEL}")
+            print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {self.llm.model}")
             
             try:
-                response_stream = client.chat.completions.create(
-                    model=MODEL,
+                response_stream = await self.llm.chat(
                     messages=messages,
-                    functions=[_serialize_tool(t) for t in self.tools],
-                    function_call="auto",
+                    stream=True,
+                    functions=[_serialize_tool(t) for t in self.tools] if self.llm.supports_function_call else None,
                     temperature=0.3,
                     max_tokens=400,  # Limit response size while still allowing sufficient explanation
                     stream=True  # Enable streaming

@@ -1,5 +1,6 @@
 from .base_agent import BaseAgent
 from .tools import ALL_TOOLS
+from llm.base import LLMClient
 
 ANALYST_SYSTEM = """
 You are an advanced spreadsheet analyst.
@@ -30,4 +31,14 @@ CRITICAL: You MUST use tool calls to actually make changes to the sheet.
 - Any updates you list in the final JSON updates array MUST have already been applied using tool calls
 """
 
-AnalystAgent = BaseAgent(ANALYST_SYSTEM, ALL_TOOLS)
+def build(llm: LLMClient) -> BaseAgent:
+    """
+    Creates an AnalystAgent with the given LLM provider.
+    
+    Args:
+        llm: The LLMClient implementation to use
+        
+    Returns:
+        A BaseAgent instance configured for full spreadsheet operations
+    """
+    return BaseAgent(llm, ANALYST_SYSTEM, ALL_TOOLS)

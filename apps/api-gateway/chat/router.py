@@ -1,12 +1,15 @@
 import asyncio
 import time
 import traceback
+import os
 from typing import Dict, Any, Optional, AsyncGenerator
 from functools import partial
 import json  # for serializing sheet state
 
-from agents.ask_agent import AskAgent
-from agents.analyst_agent import AnalystAgent
+# Import the provider registry and factory functions
+from llm import PROVIDERS, SUPPORTED_MODELS
+from agents.ask_agent import build as build_ask_agent
+from agents.analyst_agent import build as build_analyst_agent
 from spreadsheet_engine.model import Spreadsheet
 from spreadsheet_engine.summary import sheet_summary
 from workbook_store import get_sheet, get_workbook
@@ -18,7 +21,8 @@ async def process_message(
     wid: str, 
     sid: str, 
     sheet=None, 
-    workbook_metadata: Optional[Dict[str, Any]] = None
+    workbook_metadata: Optional[Dict[str, Any]] = None,
+    model: Optional[str] = None  # Add model parameter
 ) -> Dict[str, Any]:
     """
     Process a message by routing it to the appropriate agent.
@@ -30,13 +34,14 @@ async def process_message(
         sid: Sheet ID in the workbook
         sheet: The spreadsheet to use (if None, uses get_sheet(wid, sid))
         workbook_metadata: Additional metadata about the workbook and its sheets
+        model: Optional model string in format "provider:model_id"
         
     Returns:
         Dict with reply, sheet state, and log of updates
     """
     start_time = time.time()
     request_id = f"pm-{int(start_time*1000)}"
-    print(f"[{request_id}] 🔄 process_message: mode={mode}, wid={wid}, sid={sid}")
+    print(f"[{request_id}] 🔄 process_message: mode={mode}, wid={wid}, sid={sid}, model={model}")
     
     try:
         # Use conversation history keyed by workbook ID only, not the sheet ID
@@ -198,55 +203,57 @@ async def process_message(
                 return {"error": "Missing updates parameter"}
             
             # Use whichever parameter is provided
-            data = updates if updates is not None else cells_dict
+            updates_list = updates or [{"cell": k, "value": v} for k, v in cells_dict.items()]
             
-            if isinstance(data, dict):
-                # Convert dict format to list format for uniformity
-                items = []
-                for cell, value in data.items():
-                    items.append({"cell": cell, "value": value})
-                data = items
+            # Group updates by target sheet
+            sheet_updates = defaultdict(list)
             
-            # Group by sheet
-            sheet_cells = defaultdict(dict)
+            for update in updates_list:
+                cell_ref = update.get("cell")
+                if not cell_ref:
+                    results.append({"error": "Missing cell reference in update"})
+                    continue
+                
+                # Handle cross-sheet references (e.g., Sheet2!A1)
+                target_sheet = sheet
+                if "!" in cell_ref:
+                    sheet_name, cell_ref = cell_ref.split("!", 1)
+                    try:
+                        target_sheet = workbook.sheet(sheet_name)
+                        # Update with new cell_ref without sheet prefix
+                        update_copy = update.copy()
+                        update_copy["cell"] = cell_ref
+                        sheet_updates[sheet_name].append(update_copy)
+                    except Exception as e:
+                        results.append({"error": f"Error with cross-sheet reference: {e}", "cell": cell_ref})
+                else:
+                    # Regular cell reference
+                    sheet_updates[sid].append(update)
             
-            for item in data:
-                if isinstance(item, dict):
-                    cell = item.get("cell")
-                    value = item.get("value")
-                    
-                    if cell is None or value is None:
-                        continue
-                    
-                    if "!" in cell:
-                        sheet_name, cell_ref = cell.split("!", 1)
-                        sheet_cells[sheet_name][cell_ref] = value
-                    else:
-                        sheet_cells[sid][cell] = value
+            # Apply updates to each target sheet
+            for sheet_name, sheet_updates_list in sheet_updates.items():
+                target_sheet = workbook.sheet(sheet_name)
+                for update in sheet_updates_list:
+                    try:
+                        cell = update["cell"]
+                        value = update.get("value") or update.get("new_value") or update.get("new")
+                        result = set_cell(cell, value, sheet=target_sheet)
+                        if sheet_name != sid:
+                            # Add sheet name back to cell reference in result
+                            if "cell" in result:
+                                result["cell"] = f"{sheet_name}!{result['cell']}"
+                        results.append(result)
+                    except Exception as e:
+                        results.append({"error": str(e), "cell": update.get("cell")})
             
-            # Apply changes by sheet
-            for sheet_name, cells in sheet_cells.items():
-                try:
-                    target_sheet = workbook.sheet(sheet_name)
-                    result = set_cells(cells, sheet=target_sheet)
-                    results.append(result)
-                except Exception as e:
-                    results.append({"error": f"Error with sheet {sheet_name}: {e}"})
-            
-            # Schedule recalculation to happen asynchronously
-            try:
-                asyncio.create_task(workbook.recalculate())
-                print(f"[{request_id}] 🔄 Scheduled async recalculation")
-            except Exception as e:
-                print(f"[{request_id}] ⚠️ Error scheduling recalculation: {e}")
-            
-            return {"results": results}
+            return {"updates": results}
         
-        # Create partial functions for all tools with the sheet parameter
+        # Define all tools for the agent
         tools = {
             "get_cell": _wrap_get_cell(get_cell, sheet),
             "get_range": _wrap_get_range(get_range, sheet),
             "summarize_sheet": partial(summarize_sheet, sheet=sheet),
+            "sheet_summary": partial(summarize_sheet, sheet=sheet),
             "calculate": _wrap_calculate(calculate, sheet),
             "set_cell": set_cell_with_xref,  # Use wrapper for cross-sheet references
             "add_row": partial(add_row, sheet=sheet),
@@ -276,20 +283,36 @@ async def process_message(
         # Track updates made to the sheet
         collected_updates = []
         
+        # Initialize provider and model
+        # Default to openai:gpt-4o-mini if not specified
+        model_string = model or os.getenv("DEFAULT_MODEL", "openai:gpt-4o-mini")
+        provider_key, model_id = model_string.split(":", 1)
+        
+        print(f"[{request_id}] 🤖 Using LLM provider: {provider_key}, model: {model_id}")
+        
+        # Get the provider class and instantiate
+        LLMCls = PROVIDERS[provider_key]
+        api_key = os.getenv(f"{provider_key.upper()}_API_KEY")
+        if not api_key:
+            print(f"[{request_id}] ⚠️ API key not found for provider {provider_key}")
+            raise ValueError(f"API key not configured for provider {provider_key}")
+            
+        llm_client = LLMCls(api_key=api_key, model=model_id)
+        
         # Update the tool functions in the agents
         print(f"[{request_id}] 🤖 Creating agent for mode: {mode}")
         agent_start = time.time()
         
         if mode == "ask":
-            # Clone the agent with updated tool functions
-            agent = AskAgent.clone_with_tools(tools)
+            # Build the agent with the appropriate LLM
+            agent = build_ask_agent(llm_client).clone_with_tools(tools)
             # Add cross-sheet instructions
             agent.add_system_message(system_context)
             print(f"[{request_id}] 🚀 Running AskAgent with message length: {len(message)}")
             result = await agent.run(message, history)
         elif mode == "analyst":
-            # Clone the agent with updated tool functions
-            agent = AnalystAgent.clone_with_tools(tools)
+            # Build the agent with the appropriate LLM
+            agent = build_analyst_agent(llm_client).clone_with_tools(tools)
             # Add cross-sheet instructions
             agent.add_system_message(system_context)
             print(f"[{request_id}] 🚀 Running AnalystAgent with message length: {len(message)}")
@@ -336,7 +359,8 @@ async def process_message_streaming(
     wid: str, 
     sid: str, 
     sheet=None, 
-    workbook_metadata: Optional[Dict[str, Any]] = None
+    workbook_metadata: Optional[Dict[str, Any]] = None,
+    model: Optional[str] = None  # Add model parameter
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Streaming version of process_message that yields incremental updates.
@@ -348,13 +372,14 @@ async def process_message_streaming(
         sid: Sheet ID in the workbook
         sheet: The spreadsheet to use (if None, uses get_sheet(wid, sid))
         workbook_metadata: Additional metadata about the workbook and its sheets
+        model: Optional model string in format "provider:model_id"
         
     Yields:
         Dict with incremental reply chunks and status updates
     """
     start_time = time.time()
     request_id = f"stream-{int(start_time*1000)}"
-    print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}")
+    print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}, model={model}")
     
     try:
         # Use conversation history keyed by workbook ID only, not the sheet ID
@@ -597,20 +622,28 @@ async def process_message_streaming(
         # Yield a startup notification
         yield {"type": "start", "mode": mode}
         
-        # Create tool wrappers that yield status updates
-        streaming_tools = {}
+        # Create streaming versions of the tools
+        def create_streaming_wrapper(tool_fn, name):
+            """Create a wrapper that yields status updates when tools are called"""
+            def wrapper(*args, **kwargs):
+                yield {"type": "tool_start", "name": name, "args": kwargs}
+                result = tool_fn(*args, **kwargs)
+                yield {"type": "tool_end", "name": name, "result": result}
+                return result
+            return wrapper
         
         # Create streaming versions of the tools
+        streaming_tools = {}
         for name, tool_fn in tools.items():
-            streaming_tools[name] = create_streaming_wrapper(tool_fn, name)
+            streaming_tools[name] = tool_fn  # For now, we don't actually stream tool updates
         
         # Handle the streaming agent run
         print(f"[{request_id}] 🤖 Creating streaming agent for mode: {mode}")
         agent_start = time.time()
         
         if mode == "ask":
-            # Create an Ask agent with streaming tools
-            agent = AskAgent.clone_with_tools(streaming_tools)
+            # Build the agent with the appropriate LLM
+            agent = build_ask_agent(llm_client).clone_with_tools(streaming_tools)
             agent.add_system_message(system_context)
             
             # Use the streaming run method
@@ -622,8 +655,8 @@ async def process_message_streaming(
             final_result = await agent.run(message, history)
             
         elif mode == "analyst":
-            # Create an Analyst agent with streaming tools
-            agent = AnalystAgent.clone_with_tools(streaming_tools)
+            # Build the agent with the appropriate LLM
+            agent = build_analyst_agent(llm_client).clone_with_tools(streaming_tools)
             agent.add_system_message(system_context)
             
             # Use the streaming run method
