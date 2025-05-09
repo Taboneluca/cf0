@@ -380,8 +380,7 @@ class BaseAgent:
                     stream=True,
                     functions=[_serialize_tool(t) for t in self.tools] if self.llm.supports_function_call else None,
                     temperature=0.3,
-                    max_tokens=400,  # Limit response size while still allowing sufficient explanation
-                    stream=True  # Enable streaming
+                    max_tokens=400  # Limit response size while still allowing sufficient explanation
                 )
                 
                 # Process the streaming response
