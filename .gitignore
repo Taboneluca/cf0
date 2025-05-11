@@ -61,4 +61,7 @@ ENV/
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+
+# local template compiler
+/scripts/compile_templates.py 

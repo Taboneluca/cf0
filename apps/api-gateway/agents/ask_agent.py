@@ -29,4 +29,9 @@ def build(llm: LLMClient) -> BaseAgent:
     Returns:
         A BaseAgent instance configured for read-only operations
     """
-    return BaseAgent(llm, ASK_SYSTEM, READ_ONLY_TOOLS)
+    return BaseAgent(
+        llm,
+        ASK_SYSTEM,              # fallback
+        READ_ONLY_TOOLS,
+        agent_mode="ask",        # <<< NEW
+    )

@@ -6,7 +6,8 @@ export async function chatBackend(
   message: string,
   wid: string,
   sid: string,
-  contexts: string[] = []
+  contexts: string[] = [],
+  model?: string
 ) {
   console.log(`📝 Chat request: mode=${mode}, wid=${wid}, sid=${sid}, contexts=${contexts.length}`);
   
@@ -19,7 +20,7 @@ export async function chatBackend(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, message, wid, sid, contexts }),
+        body: JSON.stringify({ mode, message, wid, sid, contexts, model }),
       }
     );
     const requestTime = performance.now() - startTime;
