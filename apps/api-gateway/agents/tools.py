@@ -2,6 +2,7 @@ from spreadsheet_engine import operations as ops
 from spreadsheet_engine.summary import sheet_summary
 from spreadsheet_engine.templates.dcf import build_dcf
 from spreadsheet_engine.templates.fsm import build_fsm
+from spreadsheet_engine.templates import loader as template_loader
 
 TOOL_CATALOG = [
     {
@@ -261,6 +262,49 @@ TOOL_CATALOG = [
         },
         "func": sheet_summary,
         "read_only": True,
+    },
+    {
+        "name": "describe_template",
+        "description": "Return sheet names, dimensions and key header rows of a named template such as 'cf0.ai.dcf' or 'cf0.ai.FSM'. Use this before inserting anything so you can plan how to adapt it.",
+        "parameters": {
+            "type": "object",
+            "properties": { 
+                "template": { "type": "string" } 
+            },
+            "required": ["template"]
+        },
+        "func": template_loader.describe_template,
+        "read_only": True
+    },
+    {
+        "name": "preview_template_cells",
+        "description": "Return a slice of cells from a template without touching the workbook. Useful for reading labels or formulas you might reuse.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "template": { "type": "string" },
+                "sheet": { "type": "string" },
+                "range": { "type": "string", "description": "A1 style, e.g. A1:C10" }
+            },
+            "required": ["template", "sheet", "range"]
+        },
+        "func": template_loader.preview_cells,
+        "read_only": True
+    },
+    {
+        "name": "insert_template_sheets",
+        "description": "Copy one or more sheets from a stored template into the workbook. You can rename sheets or add a prefix.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "template": { "type": "string" },
+                "sheets": { "type": "array", "items": { "type": "string" } },
+                "prefix": { "type": "string", "description": "Optional prefix for new sheet names" }
+            },
+            "required": ["template", "sheets"]
+        },
+        "func": template_loader.insert_template_sheets,
+        "read_only": False
     },
     {
         "name": "insert_dcf_model",
