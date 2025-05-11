@@ -330,9 +330,9 @@ async def process_message(
         
         # Build the appropriate agent
         if mode == "analyst":
-            agent = build_analyst_agent(llm_client=llm_client, user_id=wid)
+            agent = build_analyst_agent(llm=llm_client)
         elif mode == "ask":
-            agent = build_ask_agent(llm_client=llm_client, user_id=wid)
+            agent = build_ask_agent(llm=llm_client)
         else:
             raise ValueError(f"Invalid mode: {mode}")
             
@@ -676,9 +676,9 @@ async def process_message_streaming(
         
         # Build the appropriate agent
         if mode == "analyst":
-            agent = build_analyst_agent(llm_client=llm_client, user_id=wid)
+            agent = build_analyst_agent(llm=llm_client)
         elif mode == "ask":
-            agent = build_ask_agent(llm_client=llm_client, user_id=wid)
+            agent = build_ask_agent(llm=llm_client)
         else:
             print(f"[{request_id}] ❌ Invalid mode: {mode}")
             yield {"type": "error", "error": f"Invalid mode: {mode}"}

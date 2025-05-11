@@ -654,8 +654,8 @@ async def chat_step(ws: WebSocket):
         tool_functions["get_sheet_summary"] = partial(get_sheet_summary, workbook=workbook)
         
         # Create the agent with the appropriate tool functions
-        agent = build_analyst_agent(llm_client=llm_client, user_id="user") \
-                if req.mode == "analyst" else build_ask_agent(llm_client=llm_client, user_id="user")
+        agent = build_analyst_agent(llm=llm_client) \
+                if req.mode == "analyst" else build_ask_agent(llm=llm_client)
         
         # Inject tool functions specific to this session
         agent = agent.clone_with_tools(tool_functions)
