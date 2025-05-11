@@ -18,7 +18,75 @@ def _load(name: str) -> dict:
     except Exception as e:
         raise ValueError(f"Failed to load template {name}: {e}")
 
-def insert_template(wb: Workbook, tpl_name: str, prefix: str | None = None):
+def describe_template(template: str):
+    """
+    Return sheet names, dimensions and key header rows of a template.
+    
+    Args:
+        template: Template name (without .json extension)
+    
+    Returns:
+        Dictionary with metadata for each sheet
+    """
+    tpl = _load(template)
+    return {
+        s: {
+            "rows": meta["n_rows"],
+            "cols": meta["n_cols"],
+            "first_row": meta["cells"][0] if meta["cells"] else []
+        } for s, meta in tpl.items()
+    }
+
+def preview_cells(template: str, sheet: str, range: str):
+    """
+    Preview cells from a template without inserting anything.
+    
+    Args:
+        template: Template name (without .json extension)
+        sheet: Sheet name within the template
+        range: A1-style range (e.g., A1:C10)
+        
+    Returns:
+        2D array of cell values in the requested range
+    """
+    from spreadsheet_engine.utils import a1_to_range  # helper already used elsewhere
+    tpl = _load(template)
+    if sheet not in tpl:
+        return {"error": f"Sheet '{sheet}' not found in template '{template}'"}
+    
+    cells = tpl[sheet]["cells"]
+    try:
+        r1, c1, r2, c2 = a1_to_range(range)
+        return [row[c1:c2+1] for row in cells[r1:r2+1]]
+    except Exception as e:
+        return {"error": f"Error parsing range: {str(e)}"}
+
+def insert_template_sheets(wb: Workbook, template: str, sheets: list[str], prefix: str | None = None):
+    """
+    Copy specific sheets from a template into the workbook.
+    
+    Args:
+        wb: Target workbook to insert sheets into
+        template: Template name (without .json extension)
+        sheets: List of sheet names to insert
+        prefix: Optional prefix for sheet names to avoid collisions
+        
+    Returns:
+        Dictionary with status and sheet list
+    """
+    tpl = _load(template)
+    missing = [s for s in sheets if s not in tpl]
+    if missing:
+        return {"error": f"Sheets not found in template: {missing}"}
+    
+    inserted_sheets = []
+    for s in sheets:
+        result = insert_template(wb, template, prefix=prefix, only_sheet=s)
+        inserted_sheets.extend(result["sheets"])
+    
+    return {"status": "inserted", "sheets": inserted_sheets}
+
+def insert_template(wb: Workbook, tpl_name: str, prefix: str | None = None, only_sheet: str | None = None):
     """
     Copy a pre-compiled template into the workbook.
     
@@ -26,6 +94,7 @@ def insert_template(wb: Workbook, tpl_name: str, prefix: str | None = None):
         wb: Target workbook to insert sheets into
         tpl_name: Template name (without .json extension)
         prefix: Optional prefix for sheet names to avoid collisions
+        only_sheet: If provided, only insert this specific sheet
     
     Returns:
         Dictionary with status and sheet list
@@ -33,8 +102,16 @@ def insert_template(wb: Workbook, tpl_name: str, prefix: str | None = None):
     tpl = _load(tpl_name)
     inserted_sheets = []
     
-    for sheet_title, meta in tpl.items():
-        new_title = f"{prefix}_{sheet_title}" if prefix else sheet_title
+    # Filter to specific sheet if requested
+    if only_sheet:
+        if only_sheet not in tpl:
+            raise ValueError(f"Sheet '{only_sheet}' not found in template '{tpl_name}'")
+        sheet_items = [(only_sheet, tpl[only_sheet])]
+    else:
+        sheet_items = tpl.items()
+    
+    for sheet_title, meta in sheet_items:
+        new_title = f"{prefix}{sheet_title}" if prefix else sheet_title
         
         # Check for existing sheet
         if new_title in wb.list_sheets():
