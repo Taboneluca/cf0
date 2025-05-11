@@ -41,4 +41,9 @@ def build(llm: LLMClient) -> BaseAgent:
     Returns:
         A BaseAgent instance configured for full spreadsheet operations
     """
-    return BaseAgent(llm, ANALYST_SYSTEM, ALL_TOOLS)
+    return BaseAgent(
+        llm,
+        ANALYST_SYSTEM,          # fallback
+        ALL_TOOLS,
+        agent_mode="analyst",    # <<< NEW
+    )

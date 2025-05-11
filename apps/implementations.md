@@ -114,7 +114,7 @@ Keep these paths in mind as we reference files.
     ```
     *Remove* `openai_client.py` import lines (they move to providers).
 
-**Done-When** : BaseAgent unit tests pass with a mocked `DummyLLM` implementing the interface.
+**Done-When** : BaseAgent unit tests pass with a complete LLM implementing the interface.
 
 ---
 

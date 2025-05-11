@@ -1,5 +1,7 @@
 from spreadsheet_engine import operations as ops
 from spreadsheet_engine.summary import sheet_summary
+from spreadsheet_engine.templates.dcf import build_dcf
+from spreadsheet_engine.templates.fsm import build_fsm
 
 TOOL_CATALOG = [
     {
@@ -259,6 +261,32 @@ TOOL_CATALOG = [
         },
         "func": sheet_summary,
         "read_only": True,
+    },
+    {
+        "name": "insert_dcf_model",
+        "description": "Insert a pre-built DCF model template with all formulas.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string", "description": "Prefix for sheet names, e.g. 'DCF' creates 'DCF_Sheet1', 'DCF_Sheet2'"}
+            },
+            "required": ["sheet_name"]
+        },
+        "func": build_dcf,
+        "read_only": False,
+    },
+    {
+        "name": "insert_fsm_model",
+        "description": "Insert a Financial Statement Model (FSM) template.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string", "description": "Prefix for sheet names, e.g. 'FSM' creates 'FSM_Sheet1', 'FSM_Sheet2'"}
+            },
+            "required": ["sheet_name"]
+        },
+        "func": build_fsm,
+        "read_only": False,
     }
 ]
 

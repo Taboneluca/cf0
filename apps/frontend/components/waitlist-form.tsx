@@ -17,33 +17,17 @@ export function WaitlistForm() {
     setError(null)
 
     try {
-      // Check if email already exists in waitlist
-      const { data: existingEntries, error: selectError } = await supabase
-        .from("waitlist")
-        .select("id, status")
-        .eq("email", email)
-        .maybeSingle()
-
-      if (selectError && selectError.code !== 'PGRST116') {
-        throw selectError
+      // Send to API endpoint instead of direct supabase call
+      const response = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(errorData)
       }
-
-      if (existingEntries) {
-        if (existingEntries.status === "pending") {
-          setError("This email is already on our waitlist.")
-        } else if (existingEntries.status === "approved" || existingEntries.status === "invited") {
-          setError("This email has already been approved. Please check your inbox for the invite.")
-        } else if (existingEntries.status === "converted") {
-          setError("This email is already registered. Please sign in.")
-        }
-        setIsSubmitting(false)
-        return
-      }
-
-      // Add email to waitlist
-      const { error: insertError } = await supabase.from("waitlist").insert([{ email }])
-
-      if (insertError) throw insertError
 
       setIsSuccess(true)
     } catch (err) {

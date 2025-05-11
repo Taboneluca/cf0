@@ -10,6 +10,7 @@ import type { Message } from "@/types/spreadsheet"
 import { chatBackend } from "@/utils/backend"
 import { backendSheetToUI, backendSheetToUIMap } from "@/utils/transform"
 import { useWorkbook } from "@/context/workbook-context"
+import ModelSelect, { MODELS } from "@/components/ui/ModelSelect"
 
 interface ChatInterfaceProps {
   messages: Message[]
@@ -45,6 +46,7 @@ export default function ChatInterface({
   const [contexts, setContexts] = useState<ContextRange[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [model, setModel] = useState<string>(MODELS[0].value)
   const [wb, dispatch] = useWorkbook()
   const { wid, active, range } = wb
 
@@ -133,7 +135,7 @@ export default function ChatInterface({
       const contextRanges = contexts.map(ctx => ctx.range);
       
       // Send the chat request with workbook/sheet ID and contexts
-      const response = await chatBackend(mode, input, wid, active, contextRanges)
+      const response = await chatBackend(mode, input, wid, active, contextRanges, model)
       
       // Reset contexts after sending
       setContexts([]);
@@ -316,6 +318,11 @@ export default function ChatInterface({
                   </button>
                 )}
               </div>
+            </div>
+            
+            {/* Model selector */}
+            <div className="mb-2">
+              <ModelSelect value={model} onChange={setModel} disabled={isLoading} />
             </div>
             
             {/* Context tags */}
