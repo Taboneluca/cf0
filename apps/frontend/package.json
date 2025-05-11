@@ -41,6 +41,7 @@
     "@sentry/nextjs": "^9.15.0",
     "@supabase/auth-helpers-nextjs": "latest",
     "@supabase/supabase-js": "latest",
+    "@tanstack/react-table": "^8.10.0",
     "ai": "latest",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.1",

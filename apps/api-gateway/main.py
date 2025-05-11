@@ -16,7 +16,7 @@ from spreadsheet_engine import (
     DEFAULT_ROWS,
     DEFAULT_COLS
 )
-from workbook_store import get_sheet, get_workbook, workbooks, initialize as initialize_workbook_store, delete_sheet
+from workbook_store import get_sheet, get_workbook, workbooks, initialize as initialize_workbook_store
 from chat.router import process_message, process_message_streaming
 from chat.schemas import ChatRequest, ChatResponse
 from llm import PROVIDERS  # Import the provider registry
