@@ -4,9 +4,14 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 
 /** Canonical list, keep in sync with backend llm.PROVIDERS map */
 export const MODELS = [
+  { label: "GPT-4o", value: "openai:gpt-4o" },
   { label: "GPT-4o mini", value: "openai:gpt-4o-mini" },
-  { label: "Claude 3 Haiku", value: "anthropic:claude-3-haiku" },
-  { label: "LLAMA 3 (Groq)", value: "groq:llama3-70b" },
+  { label: "GPT-o3", value: "openai:gpt-o3" },
+  { label: "GPT-o4 mini", value: "openai:gpt-o4-mini" },
+  { label: "Claude 3.5 Sonnet", value: "anthropic:claude-3.5-sonnet-202403" },
+  { label: "Claude 3 Sonnet", value: "anthropic:claude-3-sonnet-20240229" },
+  { label: "LLAMA 3.3 70B", value: "groq:llama-3.3-70b-versatile" },
+  { label: "LLAMA 3.1 8B", value: "groq:llama-3.1-8b-instant" },
 ]
 
 interface ModelSelectProps {
