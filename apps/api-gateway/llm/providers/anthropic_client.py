@@ -1,5 +1,6 @@
 from anthropic import AsyncAnthropic
 from ..base import LLMClient
+from types import SimpleNamespace
 
 class AnthropicClient(LLMClient):
     name = "anthropic"
@@ -21,13 +22,19 @@ class AnthropicClient(LLMClient):
             else:
                 claude_messages.append(msg)
                 
-        return await self.client.messages.create(
+        msg = await self.client.messages.create(
             model=self.model,
             messages=claude_messages,
             system=system_message,
             stream=stream,
             **self.kw, 
             **params,
+        )
+        
+        # Wrap into an OpenAI-look-alike object to make it compatible with base_agent.py
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=msg)],
+            usage=None  # Claude does not yet return token counts
         )
 
     @property
