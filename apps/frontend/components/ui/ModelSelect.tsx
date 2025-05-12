@@ -8,8 +8,8 @@ export const MODELS = [
   { label: "GPT-4o mini", value: "openai:gpt-4o-mini" },
   { label: "GPT-o3", value: "openai:gpt-o3" },
   { label: "GPT-o4 mini", value: "openai:gpt-o4-mini" },
-  { label: "Claude 3.5 Sonnet", value: "anthropic:claude-3.5-sonnet-202403" },
-  { label: "Claude 3 Sonnet", value: "anthropic:claude-3-sonnet-20240229" },
+  { label: "Claude 3.5 Sonnet", value: "anthropic:claude-3-5-sonnet-latest" },
+  { label: "Claude 3.7 Sonnet", value: "anthropic:claude-3-7-sonnet-latest" },
   { label: "LLAMA 3.3 70B", value: "groq:llama-3.3-70b-versatile" },
   { label: "LLAMA 3.1 8B", value: "groq:llama-3.1-8b-instant" },
 ]
