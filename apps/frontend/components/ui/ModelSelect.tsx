@@ -1,6 +1,8 @@
 "use client"
 
+import { useEffect, useState } from 'react'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
+import useSupabaseSession from "@/hooks/useSupabaseSession"
 
 /** Canonical list, keep in sync with backend llm.PROVIDERS map */
 export const MODELS = [
@@ -21,8 +23,20 @@ interface ModelSelectProps {
 }
 
 export default function ModelSelect({ value, onChange, disabled }: ModelSelectProps) {
+  // Use client-side state to prevent hydration errors
+  const [clientValue, setClientValue] = useState<string | null>(null)
+  const { session } = useSupabaseSession()
+  
+  // Only set the client value once mounted and we have the session (client-side)
+  useEffect(() => {
+    setClientValue(value)
+  }, [value, session])
+  
+  // Don't render anything during SSR to prevent hydration mismatch
+  if (clientValue === null) return null
+
   return (
-    <Select value={value} onValueChange={onChange} disabled={disabled}>
+    <Select value={clientValue} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger className="h-8 w-[11rem] border-gray-300 text-xs">
         <SelectValue placeholder="Select model" />
       </SelectTrigger>

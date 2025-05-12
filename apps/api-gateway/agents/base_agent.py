@@ -154,8 +154,8 @@ class BaseAgent:
                 # Sanitize legacy fields so Groq/OpenAI v2 accept the history
                 for m in messages:
                     m.pop("executed_tools", None)   # Groq legacy
-                    # Only convert for OpenAI, leave Groq/Anthropic untouched
-                    if self.llm.name == "openai" and "function_call" in m and "tool_calls" not in m:
+                    # Convert for both OpenAI and Groq, leave Anthropic untouched
+                    if self.llm.name in {"openai", "groq"} and "function_call" in m and "tool_calls" not in m:
                         m["tool_calls"] = [{
                             "id": "auto-" + str(time.time_ns()),
                             "type": "function",
@@ -491,8 +491,8 @@ class BaseAgent:
                 # Sanitize legacy fields so Groq/OpenAI v2 accept the history
                 for m in messages:
                     m.pop("executed_tools", None)   # Groq legacy
-                    # Only convert for OpenAI, leave Groq/Anthropic untouched
-                    if self.llm.name == "openai" and "function_call" in m and "tool_calls" not in m:
+                    # Convert for both OpenAI and Groq, leave Anthropic untouched
+                    if self.llm.name in {"openai", "groq"} and "function_call" in m and "tool_calls" not in m:
                         m["tool_calls"] = [{
                             "id": "auto-" + str(time.time_ns()),
                             "type": "function",
