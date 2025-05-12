@@ -30,7 +30,7 @@ class ChatStep(BaseModel):
     role: str                       # "assistant" | "tool"
     content: str | None = None      # natural-language text
     toolCall: dict | None = None    # {name, args}
-    toolResult: dict | None = None  # dict returned by Python fn
+    toolResult: Any | None = None   # dict or list or any value returned by Python fn
     usage: dict | None = None       # token counts etc.
 
 class BaseAgent:
