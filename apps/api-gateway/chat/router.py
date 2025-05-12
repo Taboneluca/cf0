@@ -309,6 +309,8 @@ async def process_message(
             if model:
                 provider_name, model_name = model.split(':', 1)
                 print(f"[{request_id}] 🔄 Using explicit model: {provider_name}:{model_name}")
+                if f"{provider_name}:{model_name}" not in SUPPORTED_MODELS:
+                    raise ValueError(f"Model {provider_name}:{model_name} not in allow-list")
             else:
                 # Default to OpenAI GPT-4o-mini
                 provider_name = "openai"
@@ -654,6 +656,8 @@ async def process_message_streaming(
             if model:
                 provider_name, model_name = model.split(':', 1)
                 print(f"[{request_id}] 🔄 Using explicit model: {provider_name}:{model_name}")
+                if f"{provider_name}:{model_name}" not in SUPPORTED_MODELS:
+                    raise ValueError(f"Model {provider_name}:{model_name} not in allow-list")
             else:
                 # Default to OpenAI GPT-4o-mini
                 provider_name = "openai"

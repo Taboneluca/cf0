@@ -246,7 +246,25 @@ def get_workbook(wid: str) -> Workbook:
                 import asyncio
                 
                 # Try to load the workbook from the database
-                sheet_data = asyncio.run(load_workbook(wid))
+                # Check if we're already in an async context
+                if asyncio.get_event_loop().is_running():
+                    # We are in an async context, use create_task
+                    try:
+                        # Use a background task and wait briefly
+                        sheet_data_future = asyncio.create_task(load_workbook(wid))
+                        # Wait for a short time to see if data becomes available
+                        try:
+                            sheet_data = asyncio.wait_for(sheet_data_future, 0.5)
+                        except asyncio.TimeoutError:
+                            # Timeout waiting for data, proceed with empty workbook
+                            print(f"Timeout waiting for workbook {wid} data from DB, creating empty workbook")
+                            sheet_data = {}
+                    except Exception as e:
+                        print(f"Error loading workbook in async context: {e}")
+                        sheet_data = {}
+                else:
+                    # Not in async context, safe to use asyncio.run
+                    sheet_data = asyncio.run(load_workbook(wid))
                 
                 if sheet_data:
                     # Workbook exists in the database, create it

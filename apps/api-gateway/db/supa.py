@@ -17,6 +17,9 @@ SUPABASE_KEY = (
     ""  # Fallback empty string if none found
 )
 
+# Default user ID for workbooks without a user
+DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "00000000-0000-0000-0000-000000000000")
+
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("⚠️  Supabase persistence disabled – SUPABASE_URL / *_KEY env vars missing")
     supabase: Optional[Client] = None
@@ -88,6 +91,7 @@ async def _do_save_workbook(workbook_data: Dict[str, Any], sheets: List[Spreadsh
         # First, ensure the workbook exists
         workbook_response = supabase.table("workbooks").upsert({
             "id": wid,
+            "user_id": workbook_data.get("user_id", DEFAULT_USER_ID)  # Use default if not provided
         }).execute()
         
         # Get the workbook UUID
@@ -140,7 +144,10 @@ async def _do_save_sheet(wid: str, sheet: Spreadsheet) -> None:
             workbook_id = workbook_response.data[0]["id"]
         else:
             # Create the workbook if it doesn't exist
-            create_response = supabase.table("workbooks").insert({"id": wid}).execute()
+            create_response = supabase.table("workbooks").insert({
+                "id": wid, 
+                "user_id": DEFAULT_USER_ID
+            }).execute()
             if create_response.data:
                 workbook_id = create_response.data[0]["id"]
         
