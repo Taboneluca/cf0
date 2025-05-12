@@ -10,7 +10,8 @@ import type { Message } from "@/types/spreadsheet"
 import { chatBackend } from "@/utils/backend"
 import { backendSheetToUI, backendSheetToUIMap } from "@/utils/transform"
 import { useWorkbook } from "@/context/workbook-context"
-import ModelSelect, { MODELS } from "@/components/ui/ModelSelect"
+import { useModel } from "@/context/ModelContext"
+import ModelSelect from "@/components/ui/ModelSelect"
 
 interface ChatInterfaceProps {
   messages: Message[]
@@ -46,7 +47,7 @@ export default function ChatInterface({
   const [contexts, setContexts] = useState<ContextRange[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const [model, setModel] = useState<string>(MODELS[0].value)
+  const { model, setModel } = useModel()
   const [wb, dispatch] = useWorkbook()
   const { wid, active, range } = wb
 

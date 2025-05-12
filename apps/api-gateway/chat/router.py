@@ -6,8 +6,8 @@ from typing import Dict, Any, Optional, AsyncGenerator
 from functools import partial
 import json  # for serializing sheet state
 
-# Import the provider registry and factory functions
-from llm import PROVIDERS, SUPPORTED_MODELS
+# Import the factory function instead of the provider registry
+from llm.factory import get_client, get_default_client
 from agents.ask_agent import build as build_ask_agent
 from agents.analyst_agent import build as build_analyst_agent
 from spreadsheet_engine.model import Spreadsheet
@@ -304,30 +304,15 @@ async def process_message(
         # Pick the appropriate agent based on mode
         print(f"[{request_id}] 🤖 Initializing {mode} agent")
         
-        # Set up LLM client - parse model string
+        # Set up LLM client using factory
         try:
             if model:
-                provider_name, model_name = model.split(':', 1)
-                print(f"[{request_id}] 🔄 Using explicit model: {provider_name}:{model_name}")
-                if f"{provider_name}:{model_name}" not in SUPPORTED_MODELS:
-                    raise ValueError(f"Model {provider_name}:{model_name} not in allow-list")
+                print(f"[{request_id}] 🔄 Using explicit model: {model}")
+                llm_client = get_client(model)
             else:
-                # Default to OpenAI GPT-4o-mini
-                provider_name = "openai"
-                model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-                print(f"[{request_id}] 🔄 Using default model: {provider_name}:{model_name}")
-            
-            # Get provider class
-            provider_class = PROVIDERS.get(provider_name)
-            if not provider_class:
-                raise ValueError(f"Provider '{provider_name}' not found. Available: {list(PROVIDERS.keys())}")
-            
-            # Create LLM client
-            api_key = os.environ.get(f"{provider_name.upper()}_API_KEY")
-            if not api_key:
-                raise ValueError(f"No API key found for {provider_name}")
-                
-            llm_client = provider_class(api_key=api_key, model=model_name)
+                # Use default model from environment
+                llm_client = get_default_client()
+                print(f"[{request_id}] 🔄 Using default model: {llm_client.model}")
         except Exception as e:
             print(f"[{request_id}] ❌ Error initializing LLM client: {e}")
             raise ValueError(f"Error initializing LLM client: {e}")
@@ -651,33 +636,19 @@ async def process_message_streaming(
         }.items():
             tool_functions[name] = create_streaming_wrapper(fn, name)
         
-        # Set up LLM client - parse model string
+        # Set up LLM client using factory
         try:
             if model:
-                provider_name, model_name = model.split(':', 1)
-                print(f"[{request_id}] 🔄 Using explicit model: {provider_name}:{model_name}")
-                if f"{provider_name}:{model_name}" not in SUPPORTED_MODELS:
-                    raise ValueError(f"Model {provider_name}:{model_name} not in allow-list")
+                print(f"[{request_id}] 🔄 Using explicit model: {model}")
+                llm_client = get_client(model)
             else:
-                # Default to OpenAI GPT-4o-mini
-                provider_name = "openai"
-                model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-                print(f"[{request_id}] 🔄 Using default model: {provider_name}:{model_name}")
-            
-            # Get provider class
-            provider_class = PROVIDERS.get(provider_name)
-            if not provider_class:
-                raise ValueError(f"Provider '{provider_name}' not found. Available: {list(PROVIDERS.keys())}")
-            
-            # Create LLM client
-            api_key = os.environ.get(f"{provider_name.upper()}_API_KEY")
-            if not api_key:
-                raise ValueError(f"No API key found for {provider_name}")
-                
-            llm_client = provider_class(api_key=api_key, model=model_name)
+                # Use default model from environment
+                llm_client = get_default_client()
+                print(f"[{request_id}] 🔄 Using default model: {llm_client.model}")
         except Exception as e:
             print(f"[{request_id}] ❌ Error initializing LLM client: {e}")
-            raise ValueError(f"Error initializing LLM client: {e}")
+            yield {"error": f"Error initializing LLM client: {e}"}
+            return
         
         # Build the appropriate agent
         if mode == "analyst":

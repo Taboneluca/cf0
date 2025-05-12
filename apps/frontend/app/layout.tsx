@@ -1,5 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { ModelProvider } from '@/context/ModelContext'
+import { Toaster } from 'react-hot-toast'
 
 export const metadata: Metadata = {
   title: 'Intelligent Spreadsheet',
@@ -15,7 +17,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {children}
+        <ModelProvider>
+          {children}
+          <Toaster position="bottom-right" />
+        </ModelProvider>
       </body>
     </html>
   )

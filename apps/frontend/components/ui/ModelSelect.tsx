@@ -4,16 +4,19 @@ import { useEffect, useState } from 'react'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import useSupabaseSession from "@/hooks/useSupabaseSession"
 
-/** Canonical list, keep in sync with backend llm.PROVIDERS map */
-export const MODELS = [
-  { label: "GPT-4o", value: "openai:gpt-4o" },
-  { label: "GPT-4o mini", value: "openai:gpt-4o-mini" },
-  { label: "GPT-o3", value: "openai:gpt-o3" },
-  { label: "GPT-o4 mini", value: "openai:gpt-o4-mini" },
-  { label: "Claude 3.5 Sonnet", value: "anthropic:claude-3-5-sonnet-latest" },
-  { label: "Claude 3.7 Sonnet", value: "anthropic:claude-3-7-sonnet-latest" },
-  { label: "LLAMA 3.3 70B", value: "groq:llama-3.3-70b-versatile" },
-  { label: "LLAMA 3.1 8B", value: "groq:llama-3.1-8b-instant" },
+// Types for models from API
+interface Model {
+  label: string
+  value: string
+  provider: string
+  tool_calls: boolean
+}
+
+// Default models in case API fails
+const DEFAULT_MODELS: Model[] = [
+  { label: "GPT-4o", value: "openai:gpt-4o", provider: "openai", tool_calls: true },
+  { label: "Claude 3.7 Sonnet", value: "anthropic:claude-3-7-sonnet-latest", provider: "anthropic", tool_calls: true },
+  { label: "LLAMA 3.3 70B", value: "groq:llama-3.3-70b-versatile", provider: "groq", tool_calls: true },
 ]
 
 interface ModelSelectProps {
@@ -25,7 +28,40 @@ interface ModelSelectProps {
 export default function ModelSelect({ value, onChange, disabled }: ModelSelectProps) {
   // Use client-side state to prevent hydration errors
   const [clientValue, setClientValue] = useState<string | null>(null)
+  const [models, setModels] = useState<Model[]>(DEFAULT_MODELS)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const { session } = useSupabaseSession()
+  
+  // Fetch models from API
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        setLoading(true)
+        const response = await fetch("https://api.cf0.ai/models")
+        
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`)
+        }
+        
+        const data: Model[] = await response.json()
+        if (Array.isArray(data) && data.length > 0) {
+          setModels(data)
+          // If current value is not in new models list, select first one
+          if (data.findIndex(m => m.value === value) === -1) {
+            onChange(data[0].value)
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch models:", err)
+        setError(err instanceof Error ? err.message : "Unknown error")
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    fetchModels()
+  }, [])
   
   // Only set the client value once mounted and we have the session (client-side)
   useEffect(() => {
@@ -36,12 +72,12 @@ export default function ModelSelect({ value, onChange, disabled }: ModelSelectPr
   if (clientValue === null) return null
 
   return (
-    <Select value={clientValue} onValueChange={onChange} disabled={disabled}>
+    <Select value={clientValue} onValueChange={onChange} disabled={disabled || loading}>
       <SelectTrigger className="h-8 w-[11rem] border-gray-300 text-xs">
-        <SelectValue placeholder="Select model" />
+        <SelectValue placeholder={loading ? "Loading models..." : "Select model"} />
       </SelectTrigger>
       <SelectContent>
-        {MODELS.map(m => (
+        {models.map(m => (
           <SelectItem key={m.value} value={m.value} className="text-xs">
             {m.label}
           </SelectItem>

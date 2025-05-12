@@ -20,6 +20,7 @@ from workbook_store import get_sheet, get_workbook, workbooks, initialize as ini
 from chat.router import process_message, process_message_streaming
 from chat.schemas import ChatRequest, ChatResponse
 from llm import PROVIDERS  # Import the provider registry
+from llm.catalog import get_models, get_model_info  # Import the new model catalog functions
 from chat.memory import clear_history, get_history
 from agents.base_agent import ChatStep
 from agents.ask_agent import build as build_ask_agent  
@@ -106,6 +107,15 @@ async def health_check():
         "status": "healthy",
         "version": os.environ.get("APP_VERSION", "development")
     }
+
+# Get available models endpoint
+@app.get("/models")
+async def available_models():
+    """
+    Return a list of all available language models with their capabilities.
+    This is used by the frontend to populate the model selector.
+    """
+    return get_models()
 
 # Get the workbook sheet data
 @app.get("/workbook/{wid}/sheet/{sid}")
