@@ -151,6 +151,17 @@ class BaseAgent:
                 call_start = time.time()
                 print(f"[{agent_id}] 🔌 Calling LLM model: {self.llm.model}")
                 
+                # Sanitize legacy fields so Groq/OpenAI v2 accept the history
+                for m in messages:
+                    m.pop("executed_tools", None)   # Groq legacy
+                    # if you see 'function_call' + no 'tool_calls', map it
+                    if "function_call" in m and "tool_calls" not in m:
+                        m["tool_calls"] = [{
+                            "id": "auto-" + str(time.time_ns()),
+                            "type": "function",
+                            "function": m.pop("function_call")
+                        }]
+                
                 # Use the LLM interface instead of direct OpenAI call
                 response = await self.llm.chat(
                     messages=messages,
@@ -477,6 +488,17 @@ class BaseAgent:
             print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {self.llm.model}")
             
             try:
+                # Sanitize legacy fields so Groq/OpenAI v2 accept the history
+                for m in messages:
+                    m.pop("executed_tools", None)   # Groq legacy
+                    # if you see 'function_call' + no 'tool_calls', map it
+                    if "function_call" in m and "tool_calls" not in m:
+                        m["tool_calls"] = [{
+                            "id": "auto-" + str(time.time_ns()),
+                            "type": "function",
+                            "function": m.pop("function_call")
+                        }]
+                
                 response_stream = await self.llm.chat(
                     messages=messages,
                     stream=True,

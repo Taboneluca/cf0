@@ -275,6 +275,19 @@ def find_replace(find_text: str, replace_text: str, sheet=None) -> Dict[str, Any
 def create_new_sheet(rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, name: str = "Sheet1", sheet=None) -> Dict[str, Any]:
     """Create a new spreadsheet, replacing the current one"""
     print(f"Creating new sheet with name: {name}, rows: {rows}, cols: {cols}")
+    
+    # Check if we have a workbook reference
+    if sheet and sheet.workbook:
+        # Check if sheet with this name already exists
+        workbook = sheet.workbook
+        if name in workbook.list_sheets():
+            # Return error message instead of raising exception
+            return {
+                "error": f"Sheet {name} already exists in workbook",
+                "status": "error"
+            }
+    
+    # Continue with creating the sheet
     new_sheet = Spreadsheet(rows=rows, cols=cols, name=name)
     
     if sheet:

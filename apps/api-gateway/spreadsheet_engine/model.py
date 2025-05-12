@@ -298,9 +298,20 @@ class Spreadsheet:
         
         row, col = self._parse_cell_ref(cell_ref)
         
-        if row < 0 or row >= self.n_rows or col < 0 or col >= self.n_cols:
-            raise ValueError(f"Cell reference out of bounds: {cell_ref}")
+        # Auto-grow rows / cols if needed instead of raising an error
+        if row >= self.n_rows:
+            for _ in range(row + 1 - self.n_rows):
+                self.cells.append([None] * self.n_cols)
+            self.n_rows = row + 1
         
+        if col >= self.n_cols:
+            for r in self.cells:
+                r.extend([None] * (col + 1 - self.n_cols))
+            # fabricate column headers
+            for i in range(self.n_cols, col + 1):
+                self.headers.append(self._index_to_column(i))
+            self.n_cols = col + 1
+            
         # Register dependencies if this is a formula
         if isinstance(value, str) and value.startswith('='):
             self._register_dependencies(cell_ref.upper(), value)

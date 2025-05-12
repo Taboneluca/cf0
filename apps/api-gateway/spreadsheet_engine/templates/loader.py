@@ -101,11 +101,12 @@ def insert_template(wb: Workbook, tpl_name: str, prefix: str | None = None, only
     """
     tpl = _load(tpl_name)
     inserted_sheets = []
+    skipped_sheets = []
     
     # Filter to specific sheet if requested
     if only_sheet:
         if only_sheet not in tpl:
-            raise ValueError(f"Sheet '{only_sheet}' not found in template '{tpl_name}'")
+            return {"error": f"Sheet '{only_sheet}' not found in template '{tpl_name}'", "status": "error"}
         sheet_items = [(only_sheet, tpl[only_sheet])]
     else:
         sheet_items = tpl.items()
@@ -113,29 +114,42 @@ def insert_template(wb: Workbook, tpl_name: str, prefix: str | None = None, only
     for sheet_title, meta in sheet_items:
         new_title = f"{prefix}{sheet_title}" if prefix else sheet_title
         
-        # Check for existing sheet
+        # Check for existing sheet - instead of raising exception, track as skipped
         if new_title in wb.list_sheets():
-            raise ValueError(f"Sheet {new_title} already exists in workbook")
+            skipped_sheets.append(new_title)
+            continue
             
         # Create new sheet and populate cells
-        sheet = wb.new_sheet(new_title)
-        inserted_sheets.append(new_title)
-        
-        # Transfer all cells from template
-        for r, row in enumerate(meta["cells"]):
-            for c, val in enumerate(row):
-                if val is None:
-                    continue
+        try:
+            sheet = wb.new_sheet(new_title)
+            inserted_sheets.append(new_title)
+            
+            # Transfer all cells from template
+            for r, row in enumerate(meta["cells"]):
+                for c, val in enumerate(row):
+                    if val is None:
+                        continue
+                        
+                    # Get cell reference (A1, B2, etc)
+                    col = sheet._index_to_column(c)
+                    cell_ref = f"{col}{r+1}"
                     
-                # Get cell reference (A1, B2, etc)
-                col = sheet._index_to_column(c)
-                cell_ref = f"{col}{r+1}"
-                
-                # Set cell value (formulas will be recognized by the '=' prefix)
-                sheet.set_cell(cell_ref, val)
+                    # Set cell value (formulas will be recognized by the '=' prefix)
+                    sheet.set_cell(cell_ref, val)
+        except Exception as e:
+            return {"error": f"Error creating sheet {new_title}: {str(e)}", "status": "error"}
     
     # Make sure cross-sheet formulas are updated
     wb.recalculate()
+    
+    # If we skipped any sheets due to duplicates, include in response
+    if skipped_sheets:
+        return {
+            "status": "partial", 
+            "sheets": inserted_sheets,
+            "skipped": skipped_sheets,
+            "message": f"Some sheets already existed and were skipped: {', '.join(skipped_sheets)}"
+        }
     
     return {
         "status": "inserted", 
