@@ -10,9 +10,12 @@ PROVIDERS = {
 
 # List of supported models
 SUPPORTED_MODELS = [
-    "openai:gpt-4o-mini",
-    "anthropic:claude-3-sonnet-20240229",  # 3.7 Sonnet
-    "anthropic:claude-3.5-sonnet-202403",  # 3.5 Sonnet
-    "groq:deepseek-r1-distil-llama-70b",   # DeepSeek R1 Distil Llama 70B
+    "openai:gpt-4o",                       # 4o (full context)
+    "openai:gpt-4o-mini",                  # 4o-mini
+    "openai:gpt-o3",                       # o3
+    "openai:gpt-o4-mini",                  # o4-mini
+    "anthropic:claude-3.5-sonnet-202403",  # 3.5 sonnet
+    "anthropic:claude-3-sonnet-20240229",  # 3.7 sonnet
     "groq:llama-3.3-70b-versatile",        # Llama-3.3-70b-versatile
+    "groq:llama-3.1-8b-instant",           # Llama-3.1-8b-instant
 ] 
