@@ -285,7 +285,7 @@ async def process_message(
             "get_column_by_header": partial(get_column_by_header, sheet=sheet),
             "apply_scalar_to_row": partial(apply_scalar_to_row, sheet=sheet),
             "apply_scalar_to_column": partial(apply_scalar_to_column, sheet=sheet),
-            "create_new_sheet": partial(create_new_sheet, workbook=workbook),
+            "create_new_sheet": create_new_sheet,
             "list_sheets": partial(list_sheets, workbook=workbook),
             "get_sheet_summary": partial(get_sheet_summary, workbook=workbook)
         }
@@ -293,7 +293,9 @@ async def process_message(
         # Template-specific tools
         template_functions = {
             "insert_fsm_template": partial(fsm.insert_template, workbook=workbook),
-            "insert_dcf_template": partial(dcf.insert_template, workbook=workbook)
+            "insert_dcf_template": partial(dcf.insert_template, workbook=workbook),
+            "insert_dcf_model": partial(dcf.build_dcf, wb=workbook),
+            "insert_fsm_model": partial(fsm.build_fsm, wb=workbook)
         }
         
         # Add the template tools to the tool functions
@@ -358,11 +360,8 @@ async def process_message(
         result["log"] = []  # empty for now, could include token counts or other metadata
         
         # Save conversation history - message pairs only
-        new_history = [
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": result["reply"]}
-        ]
-        add_to_history(history_key, new_history)
+        add_to_history(history_key, "user", message)
+        add_to_history(history_key, "assistant", result["reply"])
         
         # Done!
         print(f"[{request_id}] ✅ Completed in {run_time:.2f}s with {len(result.get('updates', []))} updates")
@@ -635,7 +634,7 @@ async def process_message_streaming(
             "get_column_by_header": partial(get_column_by_header, sheet=sheet),
             "apply_scalar_to_row": partial(apply_scalar_to_row, sheet=sheet),
             "apply_scalar_to_column": partial(apply_scalar_to_column, sheet=sheet),
-            "create_new_sheet": partial(create_new_sheet, workbook=workbook),
+            "create_new_sheet": create_new_sheet,
             "list_sheets": partial(list_sheets, workbook=workbook),
             "get_sheet_summary": partial(get_sheet_summary, workbook=workbook)
         }.items():
@@ -644,7 +643,9 @@ async def process_message_streaming(
         # Template-specific tools
         for name, fn in {
             "insert_fsm_template": partial(fsm.insert_template, workbook=workbook),
-            "insert_dcf_template": partial(dcf.insert_template, workbook=workbook)
+            "insert_dcf_template": partial(dcf.insert_template, workbook=workbook),
+            "insert_dcf_model": partial(dcf.build_dcf, wb=workbook),
+            "insert_fsm_model": partial(fsm.build_fsm, wb=workbook)
         }.items():
             tool_functions[name] = create_streaming_wrapper(fn, name)
         
@@ -702,11 +703,8 @@ async def process_message_streaming(
         combined_reply = "".join(reply_chunks)
         
         # Save conversation history
-        new_history = [
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": combined_reply}
-        ]
-        add_to_history(history_key, new_history)
+        add_to_history(history_key, "user", message)
+        add_to_history(history_key, "assistant", combined_reply)
         
         run_time = time.time() - start_run
         print(f"[{request_id}] ✅ Completed streaming in {run_time:.2f}s with response length: {len(combined_reply)}")
