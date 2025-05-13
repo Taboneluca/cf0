@@ -335,10 +335,16 @@ class BaseAgent:
                         )
                         return
                 
-                # Add the function's output back into the conversation
+                # -------- NEW: add the required tool-result message --------
+                call_id = None
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    call_id = getattr(msg.tool_calls[0], "id", None)
+                if call_id is None:                     # fallback
+                    call_id = f"call_{int(time.time()*1000)}"
+
                 messages.append({
-                    "role": "assistant",  # use assistant role since Groq rejects 'function'
-                    "name": name,
+                    "role": "tool",
+                    "tool_call_id": call_id,
                     "content": json.dumps(result)
                 })
                 
@@ -696,10 +702,18 @@ class BaseAgent:
                             yield f"\n{result['reply']}"
                             return
                     
-                    # Add results to messages
+                    # -------- NEW: add the required tool-result message --------
+                    call_id = f"call_{int(time.time()*1000)}"
+                    if is_function_call and function_name:
+                        # Try to extract the tool call ID from function_call/delta
+                        for tc_data in current_tool_calls.values() if 'current_tool_calls' in locals() else []:
+                            if tc_data.get("name") == function_name:
+                                call_id = tc_data.get("id", call_id)
+                                break
+
                     messages.append({
-                        "role": "assistant", 
-                        "name": function_name,
+                        "role": "tool",
+                        "tool_call_id": call_id,
                         "content": json.dumps(result)
                     })
                     
