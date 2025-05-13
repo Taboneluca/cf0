@@ -13,7 +13,7 @@ from llm.base import LLMClient
 from pydantic import BaseModel
 from db.prompts import get_active_prompt
 from types import SimpleNamespace
-from llm.chat_types import AIResponse
+from llm.chat_types import AIResponse, Message
 
 load_dotenv()
 MAX_RETRIES = 3
@@ -27,6 +27,19 @@ def _serialize_tool(tool: dict) -> dict:
         "description": tool["description"],
         "parameters": tool["parameters"],
     }
+
+def _dicts_to_messages(msgs: list[dict | Message]) -> list[Message]:
+    """Ensure every element is a Message dataclass."""
+    converted = []
+    for m in msgs:
+        if isinstance(m, Message):
+            converted.append(m)
+        else:
+            # Message.from_dict already understands both
+            # {role, content, tool_calls:[{function:{name,arguments}}]} and
+            # flat {role, content, tool_calls:[{name,args}]}
+            converted.append(Message.from_dict(m))
+    return converted
 
 def _airesponse_to_message(resp: AIResponse):
     """
@@ -216,7 +229,7 @@ class BaseAgent:
                 
                 # Use the LLM interface instead of direct OpenAI call
                 response = await self.llm.chat(
-                    messages=messages,
+                    messages=_dicts_to_messages(messages),
                     stream=False,
                     functions=[_serialize_tool(t) for t in self.tools] if self.llm.supports_function_call else None,
                     temperature=0.3,  # Reduced from 1.0 to 0.3 for more consistent responses
@@ -556,7 +569,7 @@ class BaseAgent:
                         }]
                 
                 response_stream = await self.llm.chat(
-                    messages=messages,
+                    messages=_dicts_to_messages(messages),
                     stream=True,
                     functions=[_serialize_tool(t) for t in self.tools] if self.llm.supports_function_call else None,
                     temperature=0.3,
