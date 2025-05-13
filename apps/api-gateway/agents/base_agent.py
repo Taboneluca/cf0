@@ -12,6 +12,8 @@ from agents.json_utils import safe_json_loads
 from llm.base import LLMClient
 from pydantic import BaseModel
 from db.prompts import get_active_prompt
+from types import SimpleNamespace
+from llm.chat_types import AIResponse
 
 load_dotenv()
 MAX_RETRIES = 3
@@ -25,6 +27,56 @@ def _serialize_tool(tool: dict) -> dict:
         "description": tool["description"],
         "parameters": tool["parameters"],
     }
+
+def _airesponse_to_message(resp: AIResponse):
+    """
+    Convert unified AIResponse into an object that looks like the
+    OpenAI-style `message` expected by the legacy agent loop
+    (i.e. has .content, .tool_calls, .function_call, model_dump()).
+    """
+    import json, uuid
+    class _PseudoMsg:
+        def __init__(self, r: AIResponse):
+            self.role = "assistant"
+            self.content = r.content
+            self.tool_calls = []
+            self.function_call = None
+            if r.tool_calls:
+                for i, tc in enumerate(r.tool_calls):
+                    fn = SimpleNamespace(
+                        name=tc.name,
+                        arguments=json.dumps(tc.args)
+                    )
+                    call = SimpleNamespace(
+                        id=tc.id or f"call_{i}",
+                        type="function",
+                        function=fn,
+                    )
+                    self.tool_calls.append(call)
+                # expose first call for convenience
+                first = r.tool_calls[0]
+                self.function_call = SimpleNamespace(
+                    name=first.name,
+                    arguments=json.dumps(first.args)
+                )
+        # the agent later calls .model_dump()
+        def model_dump(self):
+            data = {"role": self.role}
+            if self.content is not None:
+                data["content"] = self.content
+            if self.tool_calls:
+                data["tool_calls"] = [
+                    {
+                        "id": c.id,
+                        "type": "function",
+                        "function": {
+                            "name": c.function.name,
+                            "arguments": c.function.arguments,
+                        },
+                    } for c in self.tool_calls
+                ]
+            return data
+    return _PseudoMsg(resp)
 
 class ChatStep(BaseModel):
     role: str                       # "assistant" | "tool"
@@ -181,11 +233,15 @@ class BaseAgent:
                 )
                 return
             
-            # Process the response
-            msg = response.choices[0].message
+            # Process the response (works for both raw OpenAI/Groq objects
+            # and our unified AIResponse dataclass)
+            if hasattr(response, "choices"):
+                msg = response.choices[0].message
+            else:
+                msg = _airesponse_to_message(response)
             
             # Add the model's response to the conversation, remapping 'function' role to 'assistant' for Groq
-            msg_dict = msg.model_dump()
+            msg_dict = msg.model_dump() if hasattr(msg, "model_dump") else msg.__dict__
             if msg_dict.get("role") == "function":
                 msg_dict["role"] = "assistant"
             messages.append(msg_dict)
@@ -515,32 +571,47 @@ class BaseAgent:
                 
                 # Collect the response chunks
                 async for chunk in response_stream:
-                    # Skip empty chunks
-                    if not chunk.choices:
-                        continue
+                    # Check if this is an AIResponse or OpenAI format
+                    if hasattr(chunk, "choices") and chunk.choices:
+                        delta = chunk.choices[0].delta
                         
-                    delta = chunk.choices[0].delta
-                    
-                    # Check if this is the start of a function call
-                    if delta.function_call and not is_function_call:
-                        is_function_call = True
-                        function_name = delta.function_call.name
-                        print(f"[{agent_id}] 🔧 Starting function call: {function_name}")
-                    
-                    # Accumulate function arguments
-                    if is_function_call and delta.function_call and delta.function_call.arguments:
-                        function_args += delta.function_call.arguments
-                    
-                    # Accumulate content for text response
-                    if delta.content:
-                        current_content += delta.content
-                        if in_tool_calling_phase:
-                            # We've transitioned from tool calling to final answer
-                            in_tool_calling_phase = False
-                            print(f"[{agent_id}] 💬 Transitioning to final answer")
+                        # Check if this is the start of a function call
+                        if hasattr(delta, "function_call") and delta.function_call and not is_function_call:
+                            is_function_call = True
+                            function_name = delta.function_call.name
+                            print(f"[{agent_id}] 🔧 Starting function call: {function_name}")
                         
-                        # Only yield content chunks, not function calls
-                        yield delta.content
+                        # Accumulate function arguments
+                        if is_function_call and hasattr(delta, "function_call") and delta.function_call and hasattr(delta.function_call, "arguments") and delta.function_call.arguments:
+                            function_args += delta.function_call.arguments
+                        
+                        # Accumulate content for text response
+                        if hasattr(delta, "content") and delta.content:
+                            current_content += delta.content
+                            if in_tool_calling_phase:
+                                # We've transitioned from tool calling to final answer
+                                in_tool_calling_phase = False
+                                print(f"[{agent_id}] 💬 Transitioning to final answer")
+                            
+                            # Only yield content chunks, not function calls
+                            yield delta.content
+                    else:
+                        # Handle AIResponse format
+                        if chunk.content:
+                            content_chunk = chunk.content
+                            if isinstance(content_chunk, str) and not current_content and not in_tool_calling_phase:
+                                in_tool_calling_phase = False
+                                print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
+                            
+                            current_content += content_chunk
+                            yield content_chunk
+                        
+                        if chunk.tool_calls and not is_function_call and chunk.tool_calls:
+                            is_function_call = True
+                            first_tool = chunk.tool_calls[0]
+                            function_name = first_tool.name
+                            function_args = json.dumps(first_tool.args)
+                            print(f"[{agent_id}] 🔧 Starting function call (AIResponse): {function_name}")
                 
                 # Construct the complete message from gathered chunks
                 if is_function_call:

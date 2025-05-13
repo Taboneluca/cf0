@@ -14,9 +14,9 @@ interface Model {
 
 // Default models in case API fails
 const DEFAULT_MODELS: Model[] = [
-  { label: "GPT-4o", value: "openai:gpt-4o", provider: "openai", tool_calls: true },
-  { label: "Claude 3.7 Sonnet", value: "anthropic:claude-3-7-sonnet-latest", provider: "anthropic", tool_calls: true },
-  { label: "LLAMA 3.3 70B", value: "groq:llama-3.3-70b-versatile", provider: "groq", tool_calls: true },
+  { label: "4o", value: "openai:gpt-4o", provider: "openai", tool_calls: true },
+  { label: "3.7 Sonnet", value: "anthropic:claude-3-7-sonnet", provider: "anthropic", tool_calls: true },
+  { label: "Llama 3.3 70B", value: "groq:llama-3-3-70b", provider: "groq", tool_calls: true },
 ]
 
 interface ModelSelectProps {
