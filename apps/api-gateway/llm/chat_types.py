@@ -15,10 +15,14 @@ class Message:
     content: Optional[str] = None
     tool_calls: List[ToolCall] = field(default_factory=list)
     name: Optional[str] = None  # For function responses
+    tool_call_id: Optional[str] = None  # id this tool-result answers
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to a dictionary for serialization"""
         result = {"role": self.role}
+        # For role=="tool" OpenAI/Groq require the id we are answering
+        if self.role == "tool" and self.tool_call_id:
+            result["tool_call_id"] = self.tool_call_id
         if self.content is not None:
             result["content"] = self.content
         if self.tool_calls:
@@ -62,7 +66,8 @@ class Message:
             role=data["role"],
             content=data.get("content"),
             tool_calls=tool_calls,
-            name=data.get("name")
+            name=data.get("name"),
+            tool_call_id=data.get("tool_call_id")
         )
 
 @dataclass

@@ -15,6 +15,15 @@ class OpenAIClient(LLMClient):
         """Convert standard messages to OpenAI format"""
         result = []
         for msg in messages:
+            # ----- tool-result messages -----
+            if msg.role == "tool":
+                result.append({
+                    "role": "tool",
+                    "tool_call_id": msg.tool_call_id,
+                    "content": msg.content or ""
+                })
+                continue
+
             openai_msg = {"role": msg.role}
             
             if msg.content is not None:
