@@ -3,15 +3,15 @@ from typing import Dict, List, Any
 
 # Central model catalog - can be expanded without changing code
 CATALOG: Dict[str, Dict[str, Any]] = {
-    # key                      provider     model id on provider          supports_tools  
-    "openai:gpt-4o":          {"provider": "openai",    "id": "gpt-4o",                "tool_calls": True},
-    "openai:gpt-4o-mini":     {"provider": "openai",    "id": "gpt-4o-mini",           "tool_calls": True},
-    "openai:gpt-o3":          {"provider": "openai",    "id": "gpt-3.5-turbo",         "tool_calls": True},  # name alias
-    "openai:gpt-o4-mini":     {"provider": "openai",    "id": "gpt-4-turbo",           "tool_calls": True},  # name alias
-    "anthropic:claude-3-5-sonnet": {"provider": "anthropic", "id": "claude-3-5-sonnet-20240620", "tool_calls": True},
-    "anthropic:claude-3-7-sonnet": {"provider": "anthropic", "id": "claude-3-7-sonnet-20240620", "tool_calls": True},
-    "groq:llama-3-3-70b":     {"provider": "groq",      "id": "llama-3.1-70b-versatile", "tool_calls": True},
-    "groq:llama-3-1-8b":      {"provider": "groq",      "id": "llama-3.1-8b-instant",    "tool_calls": True},
+    # key                      provider     model id on provider          supports_tools  display_name
+    "openai:gpt-4o":          {"provider": "openai",    "id": "gpt-4o",                "tool_calls": True, "label": "4o"},
+    "openai:gpt-4o-mini":     {"provider": "openai",    "id": "gpt-4o-mini",           "tool_calls": True, "label": "4o-mini"},
+    "openai:gpt-o3":          {"provider": "openai",    "id": "gpt-3.5-turbo",         "tool_calls": True, "label": "o3"},  # name alias
+    "openai:gpt-o4-mini":     {"provider": "openai",    "id": "gpt-4-turbo",           "tool_calls": True, "label": "o4-mini"},  # name alias
+    "anthropic:claude-3-5-sonnet": {"provider": "anthropic", "id": "claude-3-5-sonnet-20240620", "tool_calls": True, "label": "3.5 Sonnet"},
+    "anthropic:claude-3-7-sonnet": {"provider": "anthropic", "id": "claude-3-7-sonnet-20240620", "tool_calls": True, "label": "3.7 Sonnet"},
+    "groq:llama-3-3-70b":     {"provider": "groq",      "id": "llama-3.1-70b-versatile", "tool_calls": True, "label": "Llama 3.3 70B"},
+    "groq:llama-3-1-8b":      {"provider": "groq",      "id": "llama-3.1-8b-instant",    "tool_calls": True, "label": "Llama 3.1 8B"},
 }
 
 # Load additional models from environment variables (format: MODEL_KEY_1=provider:id:tool_calls)
@@ -24,7 +24,8 @@ def _load_env_models():
                 CATALOG[model_key] = {
                     "provider": provider,
                     "id": model_id,
-                    "tool_calls": tool_calls.lower() == "true"
+                    "tool_calls": tool_calls.lower() == "true",
+                    "label": model_id.replace("-", " ").title()  # Default label
                 }
             except Exception as e:
                 print(f"Error loading model from env var {k}: {e}")
@@ -37,7 +38,7 @@ def get_models() -> List[Dict[str, Any]]:
     return [
         {
             "value": key,
-            "label": key.split(":", 1)[1].replace("-", " ").title(),  # Format for UI
+            "label": info.get("label", key.split(":", 1)[1].replace("-", " ").title()),  # Use defined label or fallback
             "provider": info["provider"],
             "tool_calls": info["tool_calls"]
         }

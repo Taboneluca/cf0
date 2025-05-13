@@ -82,3 +82,11 @@ class LLMClient(ABC):
     def supports_tool_calls(self) -> bool:
         """Whether this model supports tool calling"""
         return True 
+        
+    @property
+    def supports_function_call(self) -> bool:
+        """
+        Legacy alias used by BaseAgent. Kept here so every concrete client
+        (OpenAI, Groq, Anthropic, …) automatically reports identical support.
+        """
+        return self.supports_tool_calls 
