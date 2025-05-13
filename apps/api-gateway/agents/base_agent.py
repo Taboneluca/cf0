@@ -231,7 +231,7 @@ class BaseAgent:
                 response = await self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=False,
-                    functions=[_serialize_tool(t) for t in self.tools] if self.llm.supports_function_call else None,
+                    tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
                     temperature=0.3,  # Reduced from 1.0 to 0.3 for more consistent responses
                     max_tokens=400    # Limit response size while still allowing sufficient explanation
                 )
@@ -571,7 +571,7 @@ class BaseAgent:
                 response_stream = await self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=True,
-                    functions=[_serialize_tool(t) for t in self.tools] if self.llm.supports_function_call else None,
+                    tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
                     temperature=0.3,
                     max_tokens=400  # Limit response size while still allowing sufficient explanation
                 )

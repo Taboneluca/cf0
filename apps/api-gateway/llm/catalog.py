@@ -10,7 +10,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
     "openai:gpt-o4-mini":     {"provider": "openai",    "id": "gpt-4-turbo",           "tool_calls": True, "label": "gpt-o4-mini"},  # name alias
     "anthropic:claude-3-5-sonnet": {"provider": "anthropic", "id": "claude-3-5-sonnet-20240620", "tool_calls": True, "label": "claude-3.5-Sonnet"},
     "anthropic:claude-3-7-sonnet": {"provider": "anthropic", "id": "claude-3-7-sonnet-20240620", "tool_calls": True, "label": "claude-3.7-Sonnet"},
-    "groq:llama-3-3-70b":     {"provider": "groq",      "id": "llama-3.1-70b-versatile", "tool_calls": True, "label": "Llama-3.3-70B"},
+    "groq:llama-3-3-70b":     {"provider": "groq",      "id": "llama3-70b-8192", "tool_calls": True, "label": "Llama-3.3-70B"},
     "groq:llama-3-1-8b":      {"provider": "groq",      "id": "llama-3.1-8b-instant",    "tool_calls": True, "label": "Llama-3.1-8B"},
 }
 
