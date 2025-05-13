@@ -273,7 +273,7 @@ class BaseAgent:
                             "name": name,
                             "arguments": args
                         },
-                        usage=response.usage.model_dump() if hasattr(response, 'usage') else None
+                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
                     )
                     
                 except ValueError as e:
@@ -281,7 +281,7 @@ class BaseAgent:
                     yield ChatStep(
                         role="assistant",
                         content=f"Sorry, I encountered an error while processing your request. Please try again with simpler instructions.",
-                        usage=response.usage.model_dump() if hasattr(response, 'usage') else None
+                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
                     )
                     return
                 
@@ -331,7 +331,7 @@ class BaseAgent:
                         yield ChatStep(
                             role="assistant",
                             content=result["reply"],
-                            usage=response.usage.model_dump() if hasattr(response, 'usage') else None
+                            usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
                         )
                         return
                 
@@ -391,7 +391,7 @@ class BaseAgent:
                                     yield ChatStep(
                                         role="assistant",
                                         content=extracted_json["reply"],
-                                        usage=response.usage.model_dump() if hasattr(response, 'usage') else None
+                                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
                                     )
                                     return
                         except json.JSONDecodeError as e:
@@ -436,7 +436,7 @@ class BaseAgent:
                             yield ChatStep(
                                 role="assistant",
                                 content=json_result["reply"],
-                                usage=response.usage.model_dump() if hasattr(response, 'usage') else None
+                                usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
                             )
                             return
                     except json.JSONDecodeError:
@@ -452,7 +452,7 @@ class BaseAgent:
                 yield ChatStep(
                     role="assistant",
                     content=reply,
-                    usage=response.usage.model_dump() if hasattr(response, 'usage') else None
+                    usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
                 )
                 return
         

@@ -79,6 +79,21 @@ class OpenAIClient(LLMClient):
 
     async def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
         """Send a chat completion request to OpenAI"""
+        def _wrap_tools(tools):
+            if not tools:
+                return None
+            wrapped = []
+            for t in tools:
+                wrapped.append({
+                    "type": "function",
+                    "function": {
+                        "name":        t["name"],
+                        "description": t.get("description", ""),
+                        "parameters":  t.get("parameters", {})
+                    }
+                })
+            return wrapped
+            
         if stream:
             return await self.stream_chat(messages, tools, **params)
             
@@ -88,7 +103,7 @@ class OpenAIClient(LLMClient):
             model=self.model,
             messages=openai_messages,
             stream=False,
-            tools=tools,
+            tools=_wrap_tools(tools),
             **self.kw, 
             **params,
         )
@@ -97,13 +112,28 @@ class OpenAIClient(LLMClient):
     
     async def stream_chat(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
         """Stream a chat completion from OpenAI"""
+        def _wrap_tools(tools):
+            if not tools:
+                return None
+            wrapped = []
+            for t in tools:
+                wrapped.append({
+                    "type": "function",
+                    "function": {
+                        "name":        t["name"],
+                        "description": t.get("description", ""),
+                        "parameters":  t.get("parameters", {})
+                    }
+                })
+            return wrapped
+            
         openai_messages = self.to_provider_messages(messages)
         
         response_stream = await self.client.chat.completions.create(
             model=self.model,
             messages=openai_messages,
             stream=True,
-            tools=tools,
+            tools=_wrap_tools(tools),
             **self.kw,
             **params,
         )
