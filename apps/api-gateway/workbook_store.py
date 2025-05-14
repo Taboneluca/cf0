@@ -56,7 +56,8 @@ class Workbook:
         return self.sheets[name]
 
     def list_sheets(self) -> list[str]:
-        return list(self.sheets.keys())
+        # Filter out hidden sheets (those starting with underscore)
+        return [name for name in self.sheets.keys() if not name.startswith("_")]
         
     def all_sheets(self) -> Dict[str, Spreadsheet]:
         """Get all sheets in the workbook"""
