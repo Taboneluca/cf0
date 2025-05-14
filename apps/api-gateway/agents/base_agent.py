@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 import os
 import asyncio
 import json
+import re
 import time
 import traceback
 from dotenv import load_dotenv
@@ -266,8 +267,33 @@ class BaseAgent:
                     # Guard against empty-dict / None
                     raw = msg.function_call.arguments
                     if raw in ("{}", "null", "", None):
-                        raise ValueError("Empty arguments – ask model again")
-                    args = safe_json_loads(raw)
+                        print(f"[{agent_id}] ❌ Empty arguments for function call: {name}")
+                        # Ask model to retry instead of returning error to user
+                        messages.append(
+                            {"role": "assistant",
+                             "content": f"Function call `{name}` had empty arguments. "
+                                        "Please resend the call with valid JSON arguments."})
+                        continue        # go to next iteration instead of aborting
+                    
+                    try:
+                        # First try normal parsing
+                        args = safe_json_loads(raw)
+                    except ValueError as e:
+                        print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
+                        
+                        try:
+                            # lenient fallback: remove line-continuations and trailing commas
+                            cleaned = re.sub(r'\\\s*\n', '', raw)           # 1) unwrap "\\↵"
+                            cleaned = re.sub(r',\s*}', '}', cleaned)        # 2) strip ", }"
+                            args = safe_json_loads(cleaned)
+                        except ValueError:
+                            # If still fails, ask model to retry
+                            messages.append(
+                                {"role": "assistant",
+                                 "content": f"Function call `{name}` had invalid JSON arguments. "
+                                            "Please resend the call with valid JSON arguments."})
+                            continue        # go to next iteration instead of aborting
+                    
                     print(f"[{agent_id}] 🛠️ Tool call: {name}")
                     
                     # Yield a ChatStep for the function call
@@ -364,8 +390,7 @@ class BaseAgent:
                 
                 # Check for Groq Llama models function-call text format
                 if isinstance(msg.content, str) and msg.content.lstrip().startswith("<function="):
-                    import re
-                    function_match = re.search(r'<function=([a-zA-Z0-9_]+)>(.*)', msg.content.strip())
+                    function_match = re.search(r'<function=([a-zA-Z0-9_]+)[>,](.*)', msg.content.strip())
                     if function_match:
                         function_name = function_match.group(1)
                         payload_str = function_match.group(2)
@@ -526,6 +551,11 @@ class BaseAgent:
         # If we get here, we've exceeded the maximum iterations
         total_time = time.time() - start_time
         print(f"[{agent_id}] ⚠️ Reached maximum iterations ({max_iterations}) after {total_time:.2f}s")
+        
+        # Add a system message to reset context for the next prompt
+        messages.append({"role": "system",
+                         "content": "Previous request exhausted tool iterations. "
+                                    "Start a new plan from scratch."})
         
         yield ChatStep(
             role="assistant",
@@ -796,4 +826,11 @@ class BaseAgent:
         # If we get here, we've exceeded the maximum iterations
         total_time = time.time() - start_time
         print(f"[{agent_id}] ⚠️ Reached maximum iterations ({max_iterations}) after {total_time:.2f}s")
+        
+        # Add a system message to reset context for the next prompt
+        messages.append({"role": "system",
+                         "content": "Previous request exhausted tool iterations. "
+                                    "Start a new plan from scratch."})
+        
         yield "\n[max-tool-iterations exceeded] I've reached the maximum number of operations allowed. Please simplify your request or break it into smaller steps."
+        return
