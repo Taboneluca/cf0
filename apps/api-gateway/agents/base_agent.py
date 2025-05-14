@@ -371,7 +371,6 @@ class BaseAgent:
                         payload_str = function_match.group(2)
                         
                         try:
-                            import json, re
                             # Grab text between first "{" and the last "}"
                             candidate = re.search(r'\{.*\}', payload_str, re.S)
                             payload_json = candidate.group(0) if candidate else "{}"

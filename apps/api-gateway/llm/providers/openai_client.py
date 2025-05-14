@@ -6,6 +6,10 @@ from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
+def _prune_none(d: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of d without keys whose value is None."""
+    return {k: v for k, v in d.items() if v is not None}
+
 class OpenAIClient(LLMClient):
     name = "openai"
 
@@ -120,11 +124,12 @@ class OpenAIClient(LLMClient):
             if "max_tokens" in self.kw:
                 self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
 
-            # 2. Temperature hard-limit (only `1` is allowed)
-            if params.get("temperature") not in (None, 1):
-                params.pop("temperature", None)
-            if self.kw.get("temperature") not in (None, 1):
-                self.kw.pop("temperature", None)
+            # force temperature=1 for o-series models
+            params.setdefault("temperature", 1)
+
+        # remove "temperature=None" and any other None values
+        params = _prune_none(params)
+        self.kw = _prune_none(self.kw)
         
         # Simple retry logic for rate limits
         max_retries = 3
@@ -176,11 +181,12 @@ class OpenAIClient(LLMClient):
             if "max_tokens" in self.kw:
                 self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
 
-            # 2. Temperature hard-limit (only `1` is allowed)
-            if params.get("temperature") not in (None, 1):
-                params.pop("temperature", None)
-            if self.kw.get("temperature") not in (None, 1):
-                self.kw.pop("temperature", None)
+            # force temperature=1 for o-series models
+            params.setdefault("temperature", 1)
+
+        # remove "temperature=None" and any other None values
+        params = _prune_none(params)
+        self.kw = _prune_none(self.kw)
         
         # Simple retry logic for rate limits
         max_retries = 3
