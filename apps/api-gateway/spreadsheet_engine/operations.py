@@ -272,36 +272,25 @@ def find_replace(find_text: str, replace_text: str, sheet=None) -> Dict[str, Any
         "count": len(replacements)
     }
 
-def create_new_sheet(rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, name: str = "Sheet1", sheet=None) -> Dict[str, Any]:
-    """Create a new spreadsheet, replacing the current one"""
-    print(f"Creating new sheet with name: {name}, rows: {rows}, cols: {cols}")
-    
-    # Check if we have a workbook reference
-    if sheet and sheet.workbook:
-        # Check if sheet with this name already exists
-        workbook = sheet.workbook
-        if name in workbook.list_sheets():
-            # Return error message instead of raising exception
-            return {
-                "error": f"Sheet {name} already exists in workbook",
-                "status": "error"
-            }
-    
-    # Continue with creating the sheet
+def create_new_sheet(rows: int = DEFAULT_ROWS,
+                     cols: int = DEFAULT_COLS,
+                     name: str = "Sheet1",
+                     sheet=None) -> Dict[str, Any]:
+    """Create and attach a new sheet to the current workbook."""
+    if sheet is None or sheet.workbook is None:
+        return {"error": "Workbook context unavailable", "status": "error"}
+
+    wb = sheet.workbook
+    if name in wb.list_sheets():
+        return {"error": f"Sheet {name} already exists", "status": "error"}
+
+    # build & register
     new_sheet = Spreadsheet(rows=rows, cols=cols, name=name)
-    
-    if sheet:
-        # If a session sheet was provided, update it
-        for sid, s in sheets.items():
-            if s == sheet:
-                print(f"Updating session sheet for session {sid}")
-                sheets[sid] = new_sheet
-                break
-    else:
-        # Update the global sheet
-        print("Updating global sheet")
-    
+    new_sheet.workbook = wb
+    wb.sheets[name] = new_sheet
+    wb.active = name
     return {
+        "status": "ok",
         "action": "new_sheet",
         "name": name,
         "rows": rows,

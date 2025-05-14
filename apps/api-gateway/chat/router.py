@@ -24,7 +24,7 @@ from spreadsheet_engine.operations import (
     apply_scalar_to_row, apply_scalar_to_column, set_cells,
     list_sheets, get_sheet_summary
 )
-from spreadsheet_engine.templates import dcf, fsm
+from spreadsheet_engine.templates import dcf, fsm, loader as template_loader
 
 async def process_message(
     mode: str, 
@@ -285,9 +285,11 @@ async def process_message(
             "get_column_by_header": partial(get_column_by_header, sheet=sheet),
             "apply_scalar_to_row": partial(apply_scalar_to_row, sheet=sheet),
             "apply_scalar_to_column": partial(apply_scalar_to_column, sheet=sheet),
-            "create_new_sheet": create_new_sheet,
-            "list_sheets": partial(list_sheets, workbook=workbook),
-            "get_sheet_summary": partial(get_sheet_summary, workbook=workbook)
+            "create_new_sheet": partial(create_new_sheet, sheet=sheet),
+            "list_sheets": partial(list_sheets, wid=wid),
+            "get_sheet_summary": partial(get_sheet_summary, wid=wid),
+            "insert_template_sheets": partial(template_loader.insert_template_sheets,
+                                              wb=workbook)
         }
         
         # Template-specific tools
@@ -621,9 +623,11 @@ async def process_message_streaming(
             "get_column_by_header": partial(get_column_by_header, sheet=sheet),
             "apply_scalar_to_row": partial(apply_scalar_to_row, sheet=sheet),
             "apply_scalar_to_column": partial(apply_scalar_to_column, sheet=sheet),
-            "create_new_sheet": create_new_sheet,
-            "list_sheets": partial(list_sheets, workbook=workbook),
-            "get_sheet_summary": partial(get_sheet_summary, workbook=workbook)
+            "create_new_sheet": partial(create_new_sheet, sheet=sheet),
+            "list_sheets": partial(list_sheets, wid=wid),
+            "get_sheet_summary": partial(get_sheet_summary, wid=wid),
+            "insert_template_sheets": partial(template_loader.insert_template_sheets,
+                                              wb=workbook)
         }.items():
             tool_functions[name] = create_streaming_wrapper(fn, name)
         
