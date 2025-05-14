@@ -1,5 +1,7 @@
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 import json
+import os
+import asyncio
 from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
 from typing import List, Dict, Any, Optional, AsyncGenerator
@@ -9,7 +11,9 @@ class OpenAIClient(LLMClient):
 
     def __init__(self, api_key: str, model: str, **kw):
         super().__init__(api_key, model, **kw)
-        self.client = AsyncOpenAI(api_key=api_key)
+        # Add organization support
+        org_id = os.environ.get("OPENAI_ORG")
+        self.client = AsyncOpenAI(api_key=api_key, organization=org_id)
         
     def to_provider_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """Convert standard messages to OpenAI format"""
@@ -87,7 +91,7 @@ class OpenAIClient(LLMClient):
         )
 
     async def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
-        """Send a chat completion request to OpenAI"""
+        """Send a chat completion request to OpenAI with simple retry"""
         def _wrap_tools(tools):
             if not tools:
                 return None
@@ -108,19 +112,31 @@ class OpenAIClient(LLMClient):
             
         openai_messages = self.to_provider_messages(messages)
         
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=openai_messages,
-            stream=False,
-            tools=_wrap_tools(tools),
-            **self.kw, 
-            **params,
-        )
-        
-        return self.from_provider_response(response)
+        # Simple retry logic for rate limits
+        max_retries = 3
+        retry_count = 0
+        while True:
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=openai_messages,
+                    stream=False,
+                    tools=_wrap_tools(tools),
+                    **self.kw, 
+                    **params,
+                )
+                return self.from_provider_response(response)
+            except RateLimitError as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise  # Re-raise if we've reached max retries
+                # Exponential backoff: 1s, 2s, 4s, etc.
+                wait_time = 2 ** (retry_count - 1)
+                print(f"Rate limit exceeded, retrying in {wait_time}s (attempt {retry_count}/{max_retries})...")
+                await asyncio.sleep(wait_time)
     
     async def stream_chat(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
-        """Stream a chat completion from OpenAI"""
+        """Stream a chat completion from OpenAI with simple retry"""
         def _wrap_tools(tools):
             if not tools:
                 return None
@@ -138,68 +154,82 @@ class OpenAIClient(LLMClient):
             
         openai_messages = self.to_provider_messages(messages)
         
-        response_stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=openai_messages,
-            stream=True,
-            tools=_wrap_tools(tools),
-            **self.kw,
-            **params,
-        )
-        
-        current_content = ""
-        current_tool_calls = {}  # id -> tool call
-        
-        async for chunk in response_stream:
-            delta = chunk.choices[0].delta
-            
-            # Handle new content
-            if delta.content:
-                current_content += delta.content
-            
-            # Handle tool calls
-            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    tc_id = tc_delta.id
+        # Simple retry logic for rate limits
+        max_retries = 3
+        retry_count = 0
+        while True:
+            try:
+                response_stream = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=openai_messages,
+                    stream=True,
+                    tools=_wrap_tools(tools),
+                    **self.kw,
+                    **params,
+                )
+                
+                current_content = ""
+                current_tool_calls = {}  # id -> tool call
+                
+                async for chunk in response_stream:
+                    delta = chunk.choices[0].delta
                     
-                    # Initialize tool call if new
-                    if tc_id not in current_tool_calls:
-                        current_tool_calls[tc_id] = {
-                            "id": tc_id,
-                            "name": "",
-                            "arguments": ""
-                        }
+                    # Handle new content
+                    if delta.content:
+                        current_content += delta.content
                     
-                    # Update tool call with new data
-                    if hasattr(tc_delta, "function"):
-                        if hasattr(tc_delta.function, "name") and tc_delta.function.name:
-                            current_tool_calls[tc_id]["name"] = tc_delta.function.name
+                    # Handle tool calls
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            tc_id = tc_delta.id
                             
-                        if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
-                            current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
-            
-            # Convert current state to AIResponse
-            tool_calls = []
-            for tc_data in current_tool_calls.values():
-                # Only add if we have a name
-                if tc_data["name"]:
-                    # Try to parse arguments as JSON
-                    args = tc_data["arguments"]
-                    try:
-                        args = json.loads(args)
-                    except:
-                        pass  # Keep as string if not valid JSON
-                        
-                    tool_calls.append(ToolCall(
-                        name=tc_data["name"],
-                        args=args,
-                        id=tc_data["id"]
-                    ))
-            
-            yield AIResponse(
-                content=current_content,
-                tool_calls=tool_calls
-            )
+                            # Initialize tool call if new
+                            if tc_id not in current_tool_calls:
+                                current_tool_calls[tc_id] = {
+                                    "id": tc_id,
+                                    "name": "",
+                                    "arguments": ""
+                                }
+                            
+                            # Update tool call with new data
+                            if hasattr(tc_delta, "function"):
+                                if hasattr(tc_delta.function, "name") and tc_delta.function.name:
+                                    current_tool_calls[tc_id]["name"] = tc_delta.function.name
+                                    
+                                if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
+                                    current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
+                    
+                    # Convert current state to AIResponse
+                    tool_calls = []
+                    for tc_data in current_tool_calls.values():
+                        # Only add if we have a name
+                        if tc_data["name"]:
+                            # Try to parse arguments as JSON
+                            args = tc_data["arguments"]
+                            try:
+                                args = json.loads(args)
+                            except:
+                                pass  # Keep as string if not valid JSON
+                                
+                            tool_calls.append(ToolCall(
+                                name=tc_data["name"],
+                                args=args,
+                                id=tc_data["id"]
+                            ))
+                    
+                    yield AIResponse(
+                        content=current_content,
+                        tool_calls=tool_calls
+                    )
+                break  # Success, exit retry loop
+            except RateLimitError as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise  # Re-raise if we've reached max retries
+                # Exponential backoff: 1s, 2s, 4s, etc.
+                wait_time = 2 ** (retry_count - 1)
+                print(f"Rate limit exceeded, retrying in {wait_time}s (attempt {retry_count}/{max_retries})...")
+                await asyncio.sleep(wait_time)
             
     @property
     def supports_tool_calls(self) -> bool:

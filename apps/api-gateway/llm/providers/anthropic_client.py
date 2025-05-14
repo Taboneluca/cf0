@@ -20,6 +20,19 @@ class AnthropicClient(LLMClient):
             if msg.role == "system":
                 system_message = msg.content
                 continue
+            
+            # Handle tool messages from OpenAI/Groq format and convert to Anthropic format
+            if msg.role == "tool":
+                # Convert tool result to Anthropic format
+                result.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": msg.tool_call_id,
+                        "content": msg.content or ""
+                    }]
+                })
+                continue
                 
             anthropic_msg = {"role": msg.role}
             
