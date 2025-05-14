@@ -112,13 +112,19 @@ class OpenAIClient(LLMClient):
             
         openai_messages = self.to_provider_messages(messages)
         
-        # Handle o4-mini parameter differences
-        if self.model.startswith("o4-"):
-            # For o4-mini models, use max_completion_tokens instead of max_tokens
+        # -- o-series compatibility layer ---------------------------------
+        if self.model.startswith(("o3", "o4-", "o5-", "o")):        # future-proof
+            # 1. Param rename
             if "max_tokens" in params:
                 params["max_completion_tokens"] = params.pop("max_tokens")
-            elif "max_tokens" in self.kw:
+            if "max_tokens" in self.kw:
                 self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
+
+            # 2. Temperature hard-limit (only `1` is allowed)
+            if params.get("temperature") not in (None, 1):
+                params.pop("temperature", None)
+            if self.kw.get("temperature") not in (None, 1):
+                self.kw.pop("temperature", None)
         
         # Simple retry logic for rate limits
         max_retries = 3
@@ -162,13 +168,19 @@ class OpenAIClient(LLMClient):
             
         openai_messages = self.to_provider_messages(messages)
         
-        # Handle o4-mini parameter differences
-        if self.model.startswith("o4-"):
-            # For o4-mini models, use max_completion_tokens instead of max_tokens
+        # -- o-series compatibility layer ---------------------------------
+        if self.model.startswith(("o3", "o4-", "o5-", "o")):        # future-proof
+            # 1. Param rename
             if "max_tokens" in params:
                 params["max_completion_tokens"] = params.pop("max_tokens")
-            elif "max_tokens" in self.kw:
+            if "max_tokens" in self.kw:
                 self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
+
+            # 2. Temperature hard-limit (only `1` is allowed)
+            if params.get("temperature") not in (None, 1):
+                params.pop("temperature", None)
+            if self.kw.get("temperature") not in (None, 1):
+                self.kw.pop("temperature", None)
         
         # Simple retry logic for rate limits
         max_retries = 3

@@ -232,7 +232,7 @@ class BaseAgent:
                     messages=_dicts_to_messages(messages),
                     stream=False,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
-                    temperature=0.3,  # Reduced from 1.0 to 0.3 for more consistent responses
+                    temperature=None,  # let the per-model filter decide
                     max_tokens=400    # Limit response size while still allowing sufficient explanation
                 )
                 
@@ -263,7 +263,11 @@ class BaseAgent:
             if msg.function_call:
                 name = msg.function_call.name
                 try:
-                    args = safe_json_loads(msg.function_call.arguments)
+                    # Guard against empty-dict / None
+                    raw = msg.function_call.arguments
+                    if raw in ("{}", "null", "", None):
+                        raise ValueError("Empty arguments – ask model again")
+                    args = safe_json_loads(raw)
                     print(f"[{agent_id}] 🛠️ Tool call: {name}")
                     
                     # Yield a ChatStep for the function call
@@ -367,7 +371,11 @@ class BaseAgent:
                         payload_str = function_match.group(2)
                         
                         try:
-                            payload = json.loads(payload_str)
+                            import json, re
+                            # Grab text between first "{" and the last "}"
+                            candidate = re.search(r'\{.*\}', payload_str, re.S)
+                            payload_json = candidate.group(0) if candidate else "{}"
+                            payload = json.loads(payload_json)
                             print(f"[{agent_id}] 🧰 Detected Groq function call to {function_name}")
                             
                             # Find the function
@@ -632,7 +640,7 @@ class BaseAgent:
                     messages=_dicts_to_messages(messages),
                     stream=True,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
-                    temperature=0.3,
+                    temperature=None,  # let the per-model filter decide
                     max_tokens=400  # Limit response size while still allowing sufficient explanation
                 )
                 
