@@ -108,7 +108,7 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
   const saveToSupabase = async () => {
     try {
       const { error } = await supabase
-        .from("workbooks")
+        .from("spreadsheet_workbooks")
         .update({
           data: workbookData,
           sheets: sheets,  // Save the sheets array to persist empty sheets

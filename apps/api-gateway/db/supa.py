@@ -93,7 +93,7 @@ async def _do_save_workbook(workbook_data: Dict[str, Any], sheets: List[Spreadsh
         if workbook_data.get("user_id"):
             data["user_id"] = workbook_data.get("user_id")
         
-        workbook_response = supabase.table("workbooks").upsert(data).execute()
+        workbook_response = supabase.table("spreadsheet_workbooks").upsert(data).execute()
         
         # Get the workbook UUID
         workbook_id = None
@@ -101,7 +101,7 @@ async def _do_save_workbook(workbook_data: Dict[str, Any], sheets: List[Spreadsh
             workbook_id = workbook_response.data[0]["id"]
         else:
             # Fetch the workbook ID if upsert didn't return it
-            get_response = supabase.table("workbooks").select("id").eq("id", wid).execute()
+            get_response = supabase.table("spreadsheet_workbooks").select("id").eq("id", wid).execute()
             if get_response.data:
                 workbook_id = get_response.data[0]["id"]
         
@@ -120,7 +120,7 @@ async def _do_save_workbook(workbook_data: Dict[str, Any], sheets: List[Spreadsh
                 "cells": json.dumps(sheet.cells)
             }
             
-            supabase.table("sheets").upsert(
+            supabase.table("spreadsheet_sheets").upsert(
                 sheet_data,
                 on_conflict=["workbook_wid", "name"]
             ).execute()
@@ -138,14 +138,14 @@ async def _do_save_sheet(wid: str, sheet: Spreadsheet) -> None:
     """
     try:
         # First, get the workbook ID
-        workbook_response = supabase.table("workbooks").select("id").eq("id", wid).execute()
+        workbook_response = supabase.table("spreadsheet_workbooks").select("id").eq("id", wid).execute()
         
         workbook_id = None
         if workbook_response.data:
             workbook_id = workbook_response.data[0]["id"]
         else:
             # Create the workbook if it doesn't exist
-            create_response = supabase.table("workbooks").insert({
+            create_response = supabase.table("spreadsheet_workbooks").insert({
                 "id": wid
             }).execute()
             if create_response.data:
@@ -165,7 +165,7 @@ async def _do_save_sheet(wid: str, sheet: Spreadsheet) -> None:
             "cells": json.dumps(sheet.cells)
         }
         
-        supabase.table("sheets").upsert(
+        supabase.table("spreadsheet_sheets").upsert(
             sheet_data,
             on_conflict=["workbook_wid", "name"]
         ).execute()
@@ -223,7 +223,7 @@ async def load_workbook(wid: str) -> Dict[str, Dict]:
     """
     try:
         # Check if the workbook exists
-        response = supabase.table("sheets").select("*").eq("workbook_wid", wid).execute()
+        response = supabase.table("spreadsheet_sheets").select("*").eq("workbook_wid", wid).execute()
         
         if not response.data:
             print(f"⚠️ No sheets found for workbook {wid}")
