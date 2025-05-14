@@ -358,6 +358,60 @@ class BaseAgent:
             elif msg.content:
                 print(f"[{agent_id}] 💬 Model returned direct response, length: {len(msg.content)}")
                 
+                # Check for Groq Llama models function-call text format
+                if isinstance(msg.content, str) and msg.content.lstrip().startswith("<function="):
+                    import re
+                    function_match = re.search(r'<function=([a-zA-Z0-9_]+)>(.*)', msg.content.strip())
+                    if function_match:
+                        function_name = function_match.group(1)
+                        payload_str = function_match.group(2)
+                        
+                        try:
+                            payload = json.loads(payload_str)
+                            print(f"[{agent_id}] 🧰 Detected Groq function call to {function_name}")
+                            
+                            # Find the function
+                            fn = next((t["func"] for t in self.tools if t["name"] == function_name), None)
+                            if fn:
+                                # Extract args if any
+                                args = {}
+                                if isinstance(payload, dict):
+                                    # Handle apply_updates_and_reply or other function formats
+                                    if function_name == "apply_updates_and_reply":
+                                        args = payload
+                                    elif "args" in payload:
+                                        args = payload["args"]
+                                    elif "arguments" in payload:
+                                        args = payload["arguments"]
+                                    else:
+                                        args = payload
+                                
+                                # Execute the function and get result
+                                fn_start = time.time()
+                                result = fn(**args)
+                                fn_time = time.time() - fn_start
+                                print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
+                                
+                                # Fake a "tool" step
+                                yield ChatStep(role="tool", toolResult=result)
+                                
+                                # Early exit if reply is included
+                                if isinstance(result, dict) and "reply" in result:
+                                    total_time = time.time() - start_time
+                                    print(f"[{agent_id}] ✅ Agent run completed in {total_time:.2f}s")
+                                    yield ChatStep(
+                                        role="assistant",
+                                        content=result["reply"],
+                                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                    )
+                                    return
+                                
+                                # Continue the loop to get a final answer
+                                continue
+                        except (json.JSONDecodeError, Exception) as e:
+                            print(f"[{agent_id}] ⚠️ Error processing function call string: {e}")
+                            # Fall through to treat as regular text
+                
                 # Look for updates embedded in JSON
                 if isinstance(msg.content, str):
                     # Try to extract JSON wrapped in ```json ... ``` or other code blocks

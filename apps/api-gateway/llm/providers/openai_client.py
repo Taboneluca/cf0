@@ -112,6 +112,14 @@ class OpenAIClient(LLMClient):
             
         openai_messages = self.to_provider_messages(messages)
         
+        # Handle o4-mini parameter differences
+        if self.model.startswith("o4-"):
+            # For o4-mini models, use max_completion_tokens instead of max_tokens
+            if "max_tokens" in params:
+                params["max_completion_tokens"] = params.pop("max_tokens")
+            elif "max_tokens" in self.kw:
+                self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
+        
         # Simple retry logic for rate limits
         max_retries = 3
         retry_count = 0
@@ -153,6 +161,14 @@ class OpenAIClient(LLMClient):
             return wrapped
             
         openai_messages = self.to_provider_messages(messages)
+        
+        # Handle o4-mini parameter differences
+        if self.model.startswith("o4-"):
+            # For o4-mini models, use max_completion_tokens instead of max_tokens
+            if "max_tokens" in params:
+                params["max_completion_tokens"] = params.pop("max_tokens")
+            elif "max_tokens" in self.kw:
+                self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
         
         # Simple retry logic for rate limits
         max_retries = 3

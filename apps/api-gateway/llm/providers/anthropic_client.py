@@ -50,11 +50,14 @@ class AnthropicClient(LLMClient):
                     })
                     
                 for tc in msg.tool_calls:
+                    # Make sure input is always a dictionary (Claude requires this)
+                    input_obj = tc.args if isinstance(tc.args, dict) else {"value": tc.args}
+                    
                     anthropic_msg["content"].append({
                         "type": "tool_use",
                         "id": tc.id or f"call_{len(anthropic_msg['content'])}",
                         "name": tc.name,
-                        "input": tc.args
+                        "input": input_obj
                     })
                     
             result.append(anthropic_msg)
