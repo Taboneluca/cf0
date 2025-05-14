@@ -4,6 +4,10 @@ from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
+def _prune_none(d: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of d without keys whose value is None."""
+    return {k: v for k, v in d.items() if v is not None}
+
 class GroqClient(LLMClient):
     name = "groq"
 
@@ -107,6 +111,10 @@ class GroqClient(LLMClient):
             
         groq_messages = self.to_provider_messages(messages)
         
+        # Remove None values from parameters
+        params = _prune_none(params)
+        self.kw = _prune_none(self.kw)
+        
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=groq_messages,
@@ -136,6 +144,10 @@ class GroqClient(LLMClient):
             return wrapped
             
         groq_messages = self.to_provider_messages(messages)
+        
+        # Remove None values from parameters
+        params = _prune_none(params)
+        self.kw = _prune_none(self.kw)
         
         response_stream = await self.client.chat.completions.create(
             model=self.model,
