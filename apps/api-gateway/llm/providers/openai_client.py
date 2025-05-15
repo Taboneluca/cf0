@@ -10,6 +10,21 @@ def _prune_none(d: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of d without keys whose value is None."""
     return {k: v for k, v in d.items() if v is not None}
 
+def _adapt_o_series_params(params: dict, model: str = None) -> dict:
+    """Adapt parameters for o-series models"""
+    result = params.copy()
+    
+    # Only apply adaptations to o-series models
+    if model and any(model.startswith(prefix) for prefix in ("o3", "o4-", "o5-", "o")):
+        # 1. Param rename for o-series models
+        if "max_tokens" in result:
+            result["max_completion_tokens"] = result.pop("max_tokens")
+            
+        # 2. Force temperature=1 for o-series models
+        result.setdefault("temperature", 1)
+    
+    return result
+
 class OpenAIClient(LLMClient):
     name = "openai"
 
@@ -116,18 +131,11 @@ class OpenAIClient(LLMClient):
             
         openai_messages = self.to_provider_messages(messages)
         
-        # -- o-series compatibility layer ---------------------------------
-        if self.model.startswith(("o3", "o4-", "o5-", "o")):        # future-proof
-            # 1. Param rename
-            if "max_tokens" in params:
-                params["max_completion_tokens"] = params.pop("max_tokens")
-            if "max_tokens" in self.kw:
-                self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
-
-            # force temperature=1 for o-series models
-            params.setdefault("temperature", 1)
-
-        # remove "temperature=None" and any other None values
+        # Apply o-series adaptations to both params and self.kw
+        params = _adapt_o_series_params(params, self.model)
+        self.kw = _adapt_o_series_params(self.kw, self.model)
+        
+        # Remove "temperature=None" and any other None values
         params = _prune_none(params)
         self.kw = _prune_none(self.kw)
         
@@ -173,18 +181,11 @@ class OpenAIClient(LLMClient):
             
         openai_messages = self.to_provider_messages(messages)
         
-        # -- o-series compatibility layer ---------------------------------
-        if self.model.startswith(("o3", "o4-", "o5-", "o")):        # future-proof
-            # 1. Param rename
-            if "max_tokens" in params:
-                params["max_completion_tokens"] = params.pop("max_tokens")
-            if "max_tokens" in self.kw:
-                self.kw["max_completion_tokens"] = self.kw.pop("max_tokens")
-
-            # force temperature=1 for o-series models
-            params.setdefault("temperature", 1)
-
-        # remove "temperature=None" and any other None values
+        # Apply o-series adaptations to both params and self.kw
+        params = _adapt_o_series_params(params, self.model)
+        self.kw = _adapt_o_series_params(self.kw, self.model)
+        
+        # Remove "temperature=None" and any other None values
         params = _prune_none(params)
         self.kw = _prune_none(self.kw)
         

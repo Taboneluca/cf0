@@ -20,6 +20,25 @@ load_dotenv()
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 MAX_TOKENS = 4096
+# Token limits for various models
+MODEL_LIMITS = {
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 32_768,
+    "o4-mini": 32_768,
+    "o4-preview": 128_000,
+    "gpt-4-turbo": 128_000,
+    "llama-3-70b": 8_192,
+    "llama-3-8b": 8_192,
+    "llama-3.1-70b": 8_192,
+    "llama-3.1-8b": 8_192, 
+    "llama-3.1-405b": 128_000,
+    "claude-3-opus": 200_000,
+    "claude-3-sonnet": 200_000,
+    "claude-3-haiku": 200_000,
+    "claude-3.5-sonnet": 200_000,
+    "claude-3.7-sonnet": 200_000
+}
+DEFAULT_MODEL_LIMIT = 16_384  # Default for most other models
 
 def _serialize_tool(tool: dict) -> dict:
     """Convert tool dict into function schema for OpenAI v1+ function-calling API."""
@@ -229,12 +248,22 @@ class BaseAgent:
                         }]
                 
                 # Use the LLM interface instead of direct OpenAI call
+                # Calculate appropriate token reservation for the model
+                model_name = self.llm.model.lower()
+                model_limit = MODEL_LIMITS.get(model_name, DEFAULT_MODEL_LIMIT)
+                
+                # Reserve at least 400 tokens, or more for larger models
+                # For o-series models, ensure we have more output room
+                reserve_tokens = 400
+                if any(prefix in model_name for prefix in ["gpt-4o", "o4-", "claude-3", "llama-3.1-405b"]):
+                    reserve_tokens = min(2048, model_limit // 16)  # More tokens for advanced models
+                
                 response = await self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=False,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
                     temperature=None,  # let the per-model filter decide
-                    max_tokens=400    # Limit response size while still allowing sufficient explanation
+                    max_tokens=reserve_tokens
                 )
                 
                 call_time = time.time() - call_start
@@ -268,11 +297,15 @@ class BaseAgent:
                     raw = msg.function_call.arguments
                     if raw in ("{}", "null", "", None):
                         print(f"[{agent_id}] ❌ Empty arguments for function call: {name}")
-                        # Ask model to retry instead of returning error to user
-                        messages.append(
+                        tool_id = (msg.tool_calls[0].id if hasattr(msg, "tool_calls") and msg.tool_calls else None)
+                        # 1) tell Claude why it failed, 2) satisfy the protocol
+                        messages.extend([
+                            {"role": "tool", "tool_call_id": tool_id,
+                            "content": json.dumps({"error": "empty-args"})},
                             {"role": "assistant",
-                             "content": f"Function call `{name}` had empty arguments. "
-                                        "Please resend the call with valid JSON arguments."})
+                            "content": f"Function call `{name}` had empty arguments. "
+                                    "Please resend the call with valid JSON arguments."}
+                        ])
                         continue        # go to next iteration instead of aborting
                     
                     try:
@@ -447,7 +480,6 @@ class BaseAgent:
                 # Look for updates embedded in JSON
                 if isinstance(msg.content, str):
                     # Try to extract JSON wrapped in ```json ... ``` or other code blocks
-                    import re
                     json_matches = re.findall(r'```(?:json)?\s*([\s\S]*?)\s*```', msg.content)
                     
                     for json_str in json_matches:
