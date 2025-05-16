@@ -26,6 +26,7 @@ type Action =
   | {type:"INIT"; wid:string; sheets:string[]; active:string; data: Record<string,SpreadsheetData>}
   | {type:"SWITCH"; sid:string}
   | {type:"UPDATE_SHEET"; sid:string; data:SpreadsheetData}
+  | {type:"UPDATE_SHEET"; payload: {id:string; data:SpreadsheetData}}
   | {type:"ADD_SHEET"; sid:string; data:SpreadsheetData}
   | {type:"MERGE_SHEETS_DATA"; data: Record<string,SpreadsheetData>}
   | {type:"START_FORMULA_EDIT"; data: FormulaEdit}
@@ -42,7 +43,14 @@ function reducer(state:WorkbookState, action:Action):WorkbookState {
                          active:action.active, data:action.data,
                          formula: {active: false}}
     case "SWITCH": return {...state, active:action.sid}
-    case "UPDATE_SHEET": return {...state, data:{...state.data,[action.sid]:{...action.data}}}
+    case "UPDATE_SHEET": {
+      // Handle both forms of the UPDATE_SHEET action
+      if ('payload' in action) {
+        return {...state, data:{...state.data, [action.payload.id]: {...action.payload.data}}}
+      } else {
+        return {...state, data:{...state.data, [action.sid]: {...action.data}}}
+      }
+    }
     case "ADD_SHEET": return {...state,
                               sheets:[...state.sheets,action.sid],
                               active:action.sid,
