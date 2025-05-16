@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase/client"
 
@@ -17,12 +17,34 @@ export function CreateWorkbookButton({ userId }: CreateWorkbookButtonProps) {
   const [isPublic, setIsPublic] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
+  
+  // Verify user session is active
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession()
+      console.log("Workbook component session check:", {
+        userId: userId,
+        hasSession: !!data.session,
+        sessionUser: data.session?.user?.id
+      })
+    }
+    
+    checkSession()
+  }, [userId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
 
     try {
+      // First verify auth status before attempting insert
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) {
+        throw new Error("Not authenticated. Please sign in again.")
+      }
+      
+      console.log("Creating workbook with auth user:", sessionData.session.user.id)
+        
       // Generate a random UUID for the new workbook
       const newWorkbookId = crypto.randomUUID();
       
@@ -37,7 +59,7 @@ export function CreateWorkbookButton({ userId }: CreateWorkbookButtonProps) {
         .from("workbooks")
         .insert({
           id: newWorkbookId,
-          user_id: userId,
+          user_id: sessionData.session.user.id, // Use session user ID
           title,
           description,
           is_public: isPublic,
