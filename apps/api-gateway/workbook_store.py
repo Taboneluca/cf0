@@ -256,6 +256,8 @@ def get_workbook(wid: str) -> Workbook:
                         # Wait for a short time to see if data becomes available
                         try:
                             sheet_data = asyncio.wait_for(sheet_data_future, 0.5)
+                            # Add await here to fix the coroutine object error
+                            sheet_data = await sheet_data
                         except asyncio.TimeoutError:
                             # Timeout waiting for data, proceed with empty workbook
                             print(f"Timeout waiting for workbook {wid} data from DB, creating empty workbook")

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from db.prompts import get_active_prompt
 from types import SimpleNamespace
 from llm.chat_types import AIResponse, Message
+from llm.catalog import normalise  # Import the new normalise function
 
 load_dotenv()
 MAX_RETRIES = 3
@@ -36,9 +37,35 @@ MODEL_LIMITS = {
     "claude-3-sonnet": 200_000,
     "claude-3-haiku": 200_000,
     "claude-3.5-sonnet": 200_000,
-    "claude-3.7-sonnet": 200_000
+    "claude-3.7-sonnet": 200_000,
+    "llama-3.3-70b-versatile": 32_768,
+    "claude-3-7-sonnet-20250219": 200_000,
+    "claude-3-5-sonnet-20240620": 200_000,
 }
 DEFAULT_MODEL_LIMIT = 16_384  # Default for most other models
+
+def get_max_tokens(model: str) -> int:
+    """Get the max token limit for a given model, with fallback"""
+    try:
+        # Normalize to standardized model name
+        model_id = normalise(model)
+        # Try to find in MODEL_LIMITS
+        if model_id in MODEL_LIMITS:
+            return MODEL_LIMITS[model_id]
+        # For OpenAI models with specific pattern
+        if "gpt-" in model_id:
+            return MODEL_LIMITS.get("gpt-4o", DEFAULT_MODEL_LIMIT)
+        # For Claude models
+        if "claude" in model_id:
+            return MODEL_LIMITS.get("claude-3-sonnet", DEFAULT_MODEL_LIMIT)
+        # For Llama models
+        if "llama" in model_id:
+            return MODEL_LIMITS.get("llama-3-70b", DEFAULT_MODEL_LIMIT)
+        # Fallback to default
+        return DEFAULT_MODEL_LIMIT
+    except Exception as e:
+        print(f"Error getting max tokens for model {model}: {str(e)}")
+        return DEFAULT_MODEL_LIMIT  # Safe fallback
 
 def _serialize_tool(tool: dict) -> dict:
     """Convert tool dict into function schema for OpenAI v1+ function-calling API."""
@@ -264,7 +291,7 @@ class BaseAgent:
                 # Use the LLM interface instead of direct OpenAI call
                 # Calculate appropriate token reservation for the model
                 model_name = self.llm.model.lower()
-                model_limit = MODEL_LIMITS.get(model_name, DEFAULT_MODEL_LIMIT)
+                model_limit = get_max_tokens(model_name)
                 
                 # Reserve at least 400 tokens, or more for larger models
                 # For o-series models, ensure we have more output room

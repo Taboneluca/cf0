@@ -14,6 +14,17 @@ CATALOG: Dict[str, Dict[str, Any]] = {
     "groq:llama-3-8b":        {"provider": "groq",      "id": "llama3-8b-8192",    "tool_calls": True, "max_tokens": 8192, "label": "Llama-3-8B"},
 }
 
+# Map from provider-qualified model names to internal model IDs
+ALIAS_MAP = {
+    "groq:llama-3-3-70b":          "llama-3.3-70b-versatile",
+    "anthropic:claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
+    "anthropic:claude-3-5-sonnet": "claude-3-5-sonnet-20240620",
+}
+
+def normalise(model: str) -> str:
+    """Convert provider-qualified model names to internal IDs for token counting"""
+    return ALIAS_MAP.get(model, model)
+
 # Load additional models from environment variables (format: MODEL_KEY_1=provider:id:tool_calls:max_tokens)
 def _load_env_models():
     for k, v in os.environ.items():

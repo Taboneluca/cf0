@@ -265,16 +265,16 @@ TOOL_CATALOG = [
     },
     {
         "name": "describe_template",
-        "description": "Return sheet names, dimensions and key header rows of a named template such as 'cf0.ai.dcf' or 'cf0.ai.FSM'. Use this before inserting anything so you can plan how to adapt it.",
+        "description": "Return metadata of a **built-in spreadsheet template** "
+                       "(fsm, dcf, etc). Call ONLY when the user explicitly asks "
+                       "for a template; never call for generic finance questions.",
         "parameters": {
             "type": "object",
-            "properties": { 
-                "template": { "type": "string" } 
-            },
-            "required": ["template"]
+            "properties": {"template": {"type": "string"}},
+            "required": ["template"],
         },
         "func": template_loader.describe_template,
-        "read_only": True
+        "read_only": True,
     },
     {
         "name": "preview_template_cells",
