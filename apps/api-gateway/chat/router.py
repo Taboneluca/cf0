@@ -26,6 +26,11 @@ from spreadsheet_engine.operations import (
 )
 from spreadsheet_engine.templates import dcf, fsm, loader as template_loader
 
+# -------------------------------------------------------------------
+# Pending-changes cache  (wid,sid) ➜ Spreadsheet snapshot
+# -------------------------------------------------------------------
+PENDING_STORE: dict[tuple[str,str], Spreadsheet] = {}
+
 async def process_message(
     mode: str, 
     message: str, 
@@ -36,7 +41,7 @@ async def process_message(
     model: Optional[str] = None  # Add model parameter
 ) -> Dict[str, Any]:
     """
-    Process a message by routing it to the appropriate agent.
+    Process a message by routing it to the appropriate agent via the orchestrator.
     
     Args:
         mode: The agent mode ("ask" or "analyst")
@@ -303,9 +308,6 @@ async def process_message(
         # Add the template tools to the tool functions
         tool_functions.update(template_functions)
         
-        # Pick the appropriate agent based on mode
-        print(f"[{request_id}] 🤖 Initializing {mode} agent")
-        
         # Set up LLM client using factory
         try:
             if model:
@@ -319,34 +321,27 @@ async def process_message(
             print(f"[{request_id}] ❌ Error initializing LLM client: {e}")
             raise ValueError(f"Error initializing LLM client: {e}")
         
-        # Build the appropriate agent
-        if mode == "analyst":
-            agent = build_analyst_agent(llm=llm_client)
-        elif mode == "ask":
-            agent = build_ask_agent(llm=llm_client)
-        else:
-            raise ValueError(f"Invalid mode: {mode}")
-            
+        # Initialize the orchestrator with the LLM client and tools
+        from agents.orchestrator import Orchestrator
+        orchestrator = Orchestrator(
+            llm=llm_client,
+            sheet=sheet,
+            tool_functions=tool_functions
+        )
+        
         # Create sheet context summary
         summary = sheet_summary(sheet)
         ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
         
-        # Inject tool functions specific to this session
-        agent = agent.clone_with_tools(tool_functions)
-        
-        # Add sheet context
-        agent_extra = dict(sheet_context=ctx)
-        agent.add_system_message(ctx)  # For back-compat in existing BaseAgent
-        
-        # Run the agent on the message
-        print(f"[{request_id}] 🧠 Running agent")
+        # Run the orchestrator with the given mode
+        print(f"[{request_id}] 🧠 Running orchestrator with mode={mode}")
         start_run = time.time()
-        result = await agent.run(message, history)
+        result = await orchestrator.run(mode, message, history)
         run_time = time.time() - start_run
         
         # Process the result - will differ based on agent type but should have "reply" at minimum
         if not result or "reply" not in result:
-            print(f"[{request_id}] ⚠️ Empty or invalid result from agent")
+            print(f"[{request_id}] ⚠️ Empty or invalid result from orchestrator")
             result = {"reply": "I'm sorry, I couldn't process your request properly.", "updates": []}
         
         # Add current sheet state to result
@@ -380,7 +375,7 @@ async def process_message_streaming(
     model: Optional[str] = None  # Add model parameter
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
-    Process a message with streaming response.
+    Process a message with streaming response using the orchestrator.
     
     Args:
         mode: The agent mode ("ask" or "analyst")
@@ -413,6 +408,14 @@ async def process_message_streaming(
         if not workbook:
             print(f"[{request_id}] ❌ Failed to get workbook {wid}")
             raise ValueError(f"Workbook {wid} not found")
+            
+        # --------------------------------------------------
+        # Cache a snapshot so we can revert later if needed
+        # --------------------------------------------------
+        key = (wid, sid)
+        if key not in PENDING_STORE:  # don't overwrite if another stream already open
+            print(f"[{request_id}] 📸 Creating sheet snapshot for possible rollback")
+            PENDING_STORE[key] = sheet.clone()
         
         # Create workbook metadata if not provided
         if workbook_metadata is None:
@@ -602,9 +605,9 @@ async def process_message_streaming(
             
             return result
         
-        # Create a streaming wrapper that returns the result as a regular object
+        # Create a streaming wrapper for tool functions
         def create_streaming_wrapper(tool_fn, name):
-            """Create a wrapper that doesn't modify output but logs the call"""
+            """Create a wrapper that logs the call"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
                 result = tool_fn(*args, **kwargs)
@@ -662,55 +665,77 @@ async def process_message_streaming(
             yield {"error": f"Error initializing LLM client: {e}"}
             return
         
-        # Build the appropriate agent
-        if mode == "analyst":
-            agent = build_analyst_agent(llm=llm_client)
-        elif mode == "ask":
-            agent = build_ask_agent(llm=llm_client)
-        else:
-            print(f"[{request_id}] ❌ Invalid mode: {mode}")
-            yield {"type": "error", "error": f"Invalid mode: {mode}"}
-            return
+        # Initialize the orchestrator with the LLM client and tools
+        try:
+            # Create sheet context summary
+            summary = sheet_summary(sheet)
+            ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
             
-        # Create sheet context summary
-        summary = sheet_summary(sheet)
-        ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
-        
-        # Inject tool functions specific to this session
-        agent = agent.clone_with_tools(tool_functions)
-        
-        # Add sheet context
-        agent_extra = dict(sheet_context=ctx)
-        agent.add_system_message(ctx)  # For back-compat in existing BaseAgent
-        
-        # Use the streaming run interface
-        print(f"[{request_id}] 🧠 Running agent in streaming mode")
-        start_run = time.time()
-        
-        reply_chunks = []
-        async for chunk in agent.stream_run(message, history):
-            # Yield each text chunk
-            if chunk:
-                reply_chunks.append(chunk)
-                yield {"type": "chunk", "text": chunk}
-        
-        # Combine the chunks
-        combined_reply = "".join(reply_chunks)
-        
-        # Save conversation history
-        add_to_history(history_key, "user", message)
-        add_to_history(history_key, "assistant", combined_reply)
-        
-        run_time = time.time() - start_run
-        print(f"[{request_id}] ✅ Completed streaming in {run_time:.2f}s with response length: {len(combined_reply)}")
-        
-        # Yield a final complete event
-        yield {"type": "done", "duration": run_time}
-        
+            # Import and initialize orchestrator
+            from agents.orchestrator import Orchestrator
+            orchestrator = Orchestrator(
+                llm=llm_client,
+                sheet=sheet,
+                tool_functions=tool_functions
+            )
+
+            # Notify client that the assistant has started processing
+            yield { 'type': 'start' }
+            
+            # List to collect updates that may happen during streaming
+            collected_updates = []
+            
+            # Start streaming
+            print(f"[{request_id}] 🔄 Starting streaming with orchestrator, mode={mode}")
+            content_buffer = ""
+            
+            # Stream the orchestrator's response
+            async for chunk in orchestrator.stream_run(mode, message, history):
+                
+                if chunk.role == "assistant" and chunk.content:
+                    # Format the text chunk and stream it
+                    content_buffer += chunk.content
+                    yield {"type": "chunk", "text": chunk.content}
+                
+                elif chunk.role == "tool" and chunk.toolResult:
+                    # For tool results, we stream an indicator and trigger UI update
+                    tool_result = chunk.toolResult
+                    tool_name = chunk.toolCall["name"] if chunk.toolCall else "unknown-tool"
+                    
+                    # Skip read-only operations
+                    if tool_name != "get_cell" and tool_name != "get_range":
+                        # If it's an update type tool, add it to collected updates
+                        if isinstance(tool_result, dict):
+                            if "updates" in tool_result:
+                                collected_updates.extend(tool_result["updates"])
+                            elif "cell" in tool_result:  # Single cell operation
+                                collected_updates.append(tool_result)
+                            
+                            # Stream the update info to client for live updates
+                            yield {"type": "update", "payload": tool_result}
+            
+            # Save conversation history (optimistic, we have a complete response)
+            if content_buffer:
+                add_to_history(history_key, "user", message)
+                add_to_history(history_key, "assistant", content_buffer)
+            
+            # --------------------------------------------------
+            # Send pending updates collected during streaming
+            # --------------------------------------------------
+            if collected_updates:
+                print(f"[{request_id}] 📌 Emitting {len(collected_updates)} pending updates")
+                yield {"type": "pending", "updates": collected_updates}
+            
+            # End with the final sheet state
+            sheet_output = sheet.to_dict()
+            yield {"type": "complete", "sheet": sheet_output}
+            
+        except Exception as e:
+            print(f"[{request_id}] ❌ Error in streaming: {str(e)}")
+            traceback.print_exc()
+            yield {"type": "chunk", "text": f"\n\nError: {str(e)}"}
+            
     except Exception as e:
-        print(f"[{request_id}] ❌ Error in process_message_streaming: {str(e)}")
+        print(f"[{request_id}] ❌ Error setting up streaming: {str(e)}")
         traceback.print_exc()
-        total_time = time.time() - start_time
-        
-        # Yield the error
-        yield {"type": "error", "error": str(e), "duration": total_time} 
+        yield {"type": "chunk", "text": f"Error: {str(e)}"} 
