@@ -30,11 +30,15 @@ regex = "^2024.11.6"
 sentry-sdk = { version = "^1.44.0", extras = ["fastapi"] }
 psycopg2-binary = "^2.9.9"
 supabase = "^2.13.0"
+anthropic = "^0.51.0"
+groq = "^0.24.0"
+tenacity = "^8.2.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
 ruff = "^0.3.0"
 mypy = "^1.8.0"
+pytest-asyncio = "^0.21.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
