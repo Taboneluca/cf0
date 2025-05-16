@@ -43,7 +43,12 @@ class Orchestrator:
         
         # Store sheet context
         summary = sheet_summary(sheet)
-        self.sheet_context = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
+        
+        # Backward-compat guard for summary keys
+        rows_key = 'rows' if 'rows' in summary else 'n_rows'
+        cols_key = 'columns' if 'columns' in summary else 'n_cols'
+        
+        self.sheet_context = f"[Context] Active sheet '{summary['name']}' has {summary[rows_key]} rows × {summary[cols_key]} cols; Headers: {summary['headers']}."
     
     def get_agent(self, mode: str) -> BaseAgent:
         """
