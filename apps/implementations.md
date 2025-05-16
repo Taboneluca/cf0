@@ -1,403 +1,306 @@
-# cf0.ai - MVP FINALIZATION ROADMAP  
-*(Last updated 2025-05-09 – Internal use only)*  
+## Implementation Roadmap – AI Spreadsheet Assistant Enhancements
+
+This document is the **single-source of truth** for the next engineering cycle.  It is organised into **9 sequential phases**.  Each phase contains:
+
+• Goal & success criteria  
+• Detailed technical steps (backend ☁️ / frontend 💻)  
+• Concrete code-diff sketches (`path/to/file.py:+new-lines|-deleted`)  
+• Rationale / gotchas
+
+Follow the phases in order – later phases assume earlier refactors are in place.  Every checklist item must close via PR referencing the relevant task-id in Linear.
 
 ---
 
-## 0. Reading Guide  
-• Each numbered **Phase** is meant to be executed sequentially.  
-• Inside a phase, tasks are in the exact order they should be coded.  
-• Every task block contains: **Goal ▸ Affected Files ▸ Exact Edits ▸ Test/Done-When**.  
-• Paths are **relative to workspace root**.  
-• Search tokens like `{{ NEW }}` or `// <<< ADD` are literal strings you will insert to make PR diffs obvious.  
-• After finishing a task, run the matching "Done-When" check before moving on.
+### Phase 0 — Project Preparation
+
+| Checklist | Owner |
+|-----------|-------|
+| ☐ Create *enhancement* branch `feat/assistant-v2` from trunk | Lead Dev |
+| ☐ Enable **CI required checks**: `pytest`, `ruff`, `mypy` | Dev-Ops |
+| ☐ Add `.env.example` keys `PROMPTS_SUPABASE_URL`, `PROMPTS_SUPABASE_KEY` | Docs |
 
 ---
 
-## TABLE OF CONTENTS
-1. Guiding Principles & Coding Standards  
-2. Project Topology Cheat-Sheet  
-3. PHASE 1 – LLM Provider Abstraction  
-4. PHASE 2 – Secure Per-User API Keys & Multi-Tenancy  
-5. PHASE 3 – Template Spreadsheet Tools (3-Stmt, DCF, M&A)  
-6. PHASE 4 – Agent Loop Enhancements & Stepwise Debug Mode  
-7. PHASE 5 – Prompt Versioning & Live Editing  
-8. PHASE 6 – Logging, Metrics & Observability  
-9. PHASE 7 – Front-End (Model Selector, Dashboard, Debug Panel, Waitlist)  
-10. Infrastructure, Deployment & Scaling Notes  
-11. Testing Matrix & CI hooks  
-12. Roll-Out Timeline / Milestones  
+### Phase 1 — Robust & Role-Specific Prompting
 
----
+**Goal**: Each agent (Ask 📰 / Analyst ✏️) always receives
+1. A stable, versioned role prompt pulled from Supabase.
+2. A *dynamic* sheet snippet so the model knows the live context.
 
-## 1. GUIDING PRINCIPLES & CODING STANDARDS
-* 100 % type-hint coverage (MyPy –strict passes).  
-* Replace **all** `print()` with `logger.*`.  
-* No secret literals in repo; rely on `.env`, Doppler or Supabase Vault.  
-* Follow the "Open-Closed" rule: every new provider/model is added without changing existing agent code.  
-* Every tool gets (a) JSON-schema entry in `agents/tools.py` **and** (b) pytest in `apps/api-gateway/tests/tools/`.
-
----
-
-## 2. PROJECT TOPOLOGY CHEAT-SHEET
+#### 1.1  Supabase prompt table migration ☁️
+Schema (run via `supabase/migrations`):
+```sql
+create table role_prompts (
+  id bigint generated always as identity primary key,
+  mode text not null check (mode in ('ask','analyst')),
+  version text default 'v1.0',
+  content text not null,
+  active boolean default false,
+  inserted_at timestamptz default now(),
+  unique (mode) where active  -- only one active per mode
+);
 ```
-apps/
- └─ api-gateway/
-     ├─ agents/              ← current agent & tool code
-     ├─ spreadsheet_engine/  ← cell ops, template builders
-     ├─ db/                  ← SQLAlchemy models (will extend)
-     └─ chat/                ← FastAPI routers
- frontend/
-     app/…                   ← Next.js (App Router) code
-```
-Keep these paths in mind as we reference files.
+➡️  Insert v1.0 rows manually (see `/docs/prompts/*.md`).
 
----
-
-## 3. PHASE 1 – LLM PROVIDER ABSTRACTION (MULTI-MODEL)
-
-### 3-1. Create Generic Interface
-**Goal** Decouple agents from OpenAI.  
-**Affected Files**  
-* `apps/api-gateway/agents/base_agent.py`  
-* `apps/api-gateway/llm/` `__init__.py`, `base.py` (**new dir**)  
-
-**Exact Edits**  
-1.  Add folder:
-    ```
-    mkdir -p apps/api-gateway/llm/providers
-    touch apps/api-gateway/llm/{__init__,base}.py
-    ```
-2.  **`apps/api-gateway/llm/base.py`** ⤵︎
-    ```python
-    from abc import ABC, abstractmethod
-    from typing import Iterable, Dict, Any
-
-    class LLMClient(ABC):
-        name: str                  # "openai:gpt-4o-mini", "anthropic:claude-3-opus" …
-
-        def __init__(self, api_key: str, model: str, **kw): ...
-
-        @abstractmethod
-        async def chat(
-            self,
-            messages: list[dict[str, str|dict]],
-            stream: bool = False,
-            functions: list[dict[str, Any]] | None = None,
-            **params
-        ) -> dict: ...
-
-        @property
-        @abstractmethod
-        def supports_function_call(self) -> bool: ...
-    ```
-3.  **`apps/api-gateway/agents/base_agent.py`**
-    *Top-of-file imports*  
-    ```python
-    # ... existing code ...
-    from llm.base import LLMClient          # <<< ADD
-    ```
-    *Class signature*  
-    ```python
-    class BaseAgent:
-        def __init__(self, llm: LLMClient, mode: AgentMode, *, user_id: str):
-            self.llm = llm
-            # ... existing code ...
-    ```
-    *Replace every direct `openai.chat.completions.create(…)` call with*  
-    ```python
-    completion = await self.llm.chat(
-        messages=chat_messages,
-        stream=want_stream,
-        functions=tool_schema if self.llm.supports_function_call else None,
-        **params,
-    )
-    ```
-    *Remove* `openai_client.py` import lines (they move to providers).
-
-**Done-When** : BaseAgent unit tests pass with a complete LLM implementing the interface.
-
----
-
-### 3-2. Provider Implementations
-**Goal** Support OpenAI, Anthropic, Groq (LLAMA) out-of-box.  
-**Affected Files**  
-* NEW: `apps/api-gateway/llm/providers/openai_client.py`  
-* NEW: `apps/api-gateway/llm/providers/anthropic_client.py`  
-* NEW: `apps/api-gateway/llm/providers/groq_client.py`  
-
-**Exact Edits (OpenAI as example)**  
-```python
-# apps/api-gateway/llm/providers/openai_client.py
-from openai import AsyncOpenAI
-from llm.base import LLMClient
-
-class OpenAIClient(LLMClient):
-    name = "openai"
-
-    def __init__(self, api_key: str, model: str, **kw):
-        self.client = AsyncOpenAI(api_key=api_key)
-        self.model = model
-        self.kw = kw
-
-    async def chat(self, messages, stream=False, functions=None, **params):
-        return await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=stream,
-            functions=functions,
-            **self.kw, **params,
-        )
-
-    @property
-    def supports_function_call(self) -> bool:
-        return True
-```
-Replicate pattern for **Anthropic** (use `anthropic.AsyncAnthropic`) and **Groq** (`groq.AsyncGroq`).  
-*Store provider mapping* in `apps/api-gateway/llm/__init__.py`:
-```python
-from .providers.openai_client import OpenAIClient
-from .providers.anthropic_client import AnthropicClient
-from .providers.groq_client import GroqClient
-
-PROVIDERS = {
-    "openai": OpenAIClient,
-    "anthropic": AnthropicClient,
-    "groq": GroqClient,
-}
-```
-
-**Done-When** :  
-`pytest apps/api-gateway/tests/llm/test_provider_interface.py` passes, verifying `.supports_function_call` & `.chat()`.
-
----
-
-### 3-3. Provider Selection Router
-**Goal** Instantiate correct client per request, default `openai:gpt-4o-mini`.  
-**Affected Files**  
-* `apps/api-gateway/chat/routes.py` (or whichever FastAPI router has `/chat`)  
-* `apps/api-gateway/db/models.py` (add `preferred_model`)  
-* `apps/api-gateway/chat/schemas.py` (`model` field on ChatRequest)  
-
-**Exact Edits**  
-1.  **DB** – Alembic migration:  
-    ```sql
-    ALTER TABLE users ADD COLUMN preferred_model VARCHAR(64) DEFAULT 'openai:gpt-4o-mini';
-    ```
-2.  **Pydantic Schema**  
-    ```python
-    class ChatRequest(BaseModel):
-        message: str
-        model: str | None = None     # e.g. "anthropic:claude-3-haiku"
-        ...
-    ```
-3.  **Router Logic**  
-    ```python
-    model_name = req.model or user.preferred_model
-    provider_key, model_id = model_name.split(":", 1)
-    LLMCls = llm.PROVIDERS[provider_key]
-    llm_client = LLMCls(api_key=resolve_user_api_key(user, provider_key), model=model_id)
-    agent = AnalystAgent(llm_client, mode=req.mode, user_id=user.id)
-    ```
-4.  **Frontend** will supply `model` – see Phase 7.
-
-**Done-When** : Switching `model` param in the playground cURL returns from different providers.
-
----
-
-## 4. PHASE 2 – SECURE PER-USER API KEYS
-
-### 4-1. Database Layer
-**Goal** Encrypt & store arbitrary provider keys.  
-**Affected Files**  
-* `apps/api-gateway/db/models.py`  
-* NEW Alembic migration  
-
-**Exact Edits**  
-```python
-class APIKey(db.Model):
-    __tablename__ = "api_keys"
-    id = Column(UUID, primary_key=True, default=uuid4)
-    user_id = Column(UUID, ForeignKey("users.id"))
-    provider = Column(String, nullable=False)     # "openai", "anthropic"
-    key_enc = Column(LargeBinary, nullable=False) # AES-GCM encrypted
-    created_at = Column(DateTime, default=datetime.utcnow)
-```
-
-Encryption helper in `db/crypto.py` using Fernet + env `CF0_MASTER_KEY`.
-
-### 4-2. CRUD Endpoints
-* `apps/api-gateway/chat/routes_keys.py` (new router)  
-  * POST `/keys/{provider}` – store  
-  * DELETE `/keys/{provider}` – revoke  
-
-### 4-3. Injection at Runtime
-`resolve_user_api_key(user, provider)` returns decrypted secret or falls back to platform key (env var).
-
-**Done-When** : Unit test proves OpenAI call uses user key when present.
-
----
-
-## 5. PHASE 3 – TEMPLATE SPREADSHEET TOOLS
-
-### 5-1. Convert Excel Templates ➜ Python Builders
-**Goal** Insert 3-Stmt, DCF, M&A models programmatically.  
-**Affected Files**  
-* NEW `apps/api-gateway/spreadsheet_engine/templates/{three_stmt.py, dcf.py, mna.py}`  
-* `apps/api-gateway/agents/tools.py` (schema + dispatcher)  
-
-**Exact Edits (DCF example)**  
-1.  **`templates/dcf.py`**  
-    ```python
-    from .workbook_writer import SheetBuilder
-
-    def build_dcf(
-        wb: Workbook,
-        sheet_name: str,
-        periods: int = 5,
-        discount_rate: float = 0.1,
-    ) -> None:
-        s = wb.create_sheet(sheet_name)
-        headers = ["Year"] + [f"Year {i}" for i in range(1, periods+1)]
-        s.append(headers)
-        # write cash-flow rows ...
-    ```
-2.  **`agents/tools.py`** add catalog entry  
-    ```python
-    {
-      "name": "insert_dcf_model",
-      "description": "Insert a standard discounted cash-flow template.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "sheet_name": {"type": "string"},
-          "periods": {"type": "integer", "default": 5},
-          "discount_rate": {"type": "number", "default": 0.1}
-        },
-        "required": ["sheet_name"]
-      }
-    }
-    ```
-3.  **Dispatcher** case:  
-    ```python
-    elif name == "insert_dcf_model":
-        from spreadsheet_engine.templates.dcf import build_dcf
-        build_dcf(wb, **args)
-    ```
-
-**Done-When** : Manual agent prompt "Create a 5-year DCF" produces correctly-formatted sheet.
-
----
-
-## 6. PHASE 4 – AGENT LOOP ENHANCEMENTS & STEPWISE DEBUG
-
-### 6-1. Extract Generator Loop
-**Affected File**  
+#### 1.2  Backend: add `sheet_context` injection
 `apps/api-gateway/agents/base_agent.py`
-
-**Exact Edits**  
-*Refactor* `run()` into:  
-```python
-async def run_iter(self, user_msg: str) -> AsyncGenerator[ChatResponse, None]:
-    # yields after every tool call or model response
+```python:@@class BaseAgent.__init__@
+-        self.system_prompt = get_active_prompt(agent_mode)
++        base_prompt = get_active_prompt(agent_mode)
++
++        # Allow caller to pass an optional runtime context.
++        sheet_ctx: str | None = kwargs.pop('sheet_context', None)
++
++        # Concatenate keeping a blank line separator so formatting is stable.
++        self.system_prompt = base_prompt.strip()
++        if sheet_ctx:
++            self.system_prompt += f"\n\n{sheet_ctx.strip()}"
 ```
-`run()` becomes a thin wrapper that consumes the generator.
 
-### 6-2. Debug Mode Router
-* New FastAPI WS endpoint `/chat/step` streams JSON of each yield (`role`, `content`, `toolCall`, `toolResult`, `usage`).
+**Why**: keeps DB prompt untouched while enriching with volatile sheet data.
 
-**Done-When** : Front-end debug panel (Phase 7) shows live steps.
+#### 1.3  Router augmentation
+`apps/api-gateway/chat/router.py`
+```python:+40  (inside process_message & _streaming/_common helper)
+summary = sheet_summary(sheet)
+ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
 
----
-
-## 7. PHASE 5 – PROMPT VERSIONING & LIVE EDITING
-
-### 7-1. DB & API
-* Table `prompts` (`id`, `agent_mode`, `text`, `version`, `created_at`, `created_by`, `is_active`).  
-* GET `/admin/prompts/{mode}`, POST `/admin/prompts`.
-
-### 7-2. Agent Load
-On session start, `BaseAgent` loads active prompt from cache (LRU, 60 s TTL) else DB.
-
-**Done-When** : Changing prompt via admin UI changes behavior on new chat without redeploy.
-
----
-
-## 8. PHASE 6 – LOGGING, METRICS & OBSERVABILITY
-
-* Install `structlog` + `python-json-logger`.  
-* Add ASGI middleware timing all requests.  
-* Expose Prometheus `/metrics`.  
-* Capture `usage.prompt_tokens` & `usage.completion_tokens` from every provider into histogram `cf0_tokens_total{provider=…,model=…}`.  
-
----
-
-## 9. PHASE 7 – FRONT-END TASKS
-
-### 9-1. Model Selector Dropdown
-**Files**  
-* `frontend/components/ui/ModelSelect.tsx` (new)  
-* Integrate inside `chat/InputBar.tsx`
-
-```tsx
-// ModelSelect.tsx
-export const MODELS = [
-  { label: "GPT-4o mini", value: "openai:gpt-4o-mini" },
-  { label: "Claude 3 Haiku", value: "anthropic:claude-3-haiku" },
-  { label: "LLAMA 3 (Groq)", value: "groq:llama3-70b" },
-];
+agent_extra = dict(sheet_context=ctx)
 ...
+agent = build_ask_agent(llm).clone_with_tools(tool_functions)
+agent.add_system_message(ctx)  # For back-compat in existing BaseAgent
+```
+(Once BaseAgent signature is refactored we will switch to `BaseAgent(..., sheet_context=ctx)`.)
+
+**File changes (Phase 1)**
+• `supabase/migrations/xxxxxxxx_role_prompts.sql` – new table.  
+• `apps/api-gateway/agents/base_agent.py` – constructor patch above.  
+• `apps/api-gateway/chat/router.py` – context snippet injection.  
+• `db/prompts.py` – add `@lru_cache` TTL=60 s if missing.  
+• `.env.example` – new keys `PROMPTS_SUPABASE_URL` & `PROMPTS_SUPABASE_KEY`.
+
+---
+
+### Phase 2 — Token-by-token Streaming Across Providers
+
+**Goal**: Uniform streaming for OpenAI, Anthropic, Groq.
+
+1. **LLM client audit** – ensure each `*.stream_chat()` yields `AIResponse` with incremental `content` _and_ partial `tool_calls`.
+2. **Router SSE contract** – currently emits `{type:'chunk', text}`.  
+   • Extend with `event: update` when a tool result mutates the copy-sheet.  
+   • Close stream with `{type:'complete', sheet:sheet_snapshot}`.
+3. **Frontend** — `/hooks/useChatStream.ts`
+   ```ts
+   if (evt.type==='chunk') appendToMessage(evt.text);
+   else if (evt.type==='update') optimisticSheetPatch(evt.payload);
+   else if (evt.type==='complete') setSheet(evt.sheet);
+   ```
+
+**Diff sketch** (router streaming loop):
+```python:@@async for chunk in agent.stream_run@
+if chunk.kind=='tool_result' and chunk.name!='get_cell':
+    yield { 'type':'update', 'payload': chunk.toolResult }
+elif chunk.kind=='text':
+    yield { 'type':'chunk', 'text': chunk.content }
 ```
 
-Send selected `.value` along with POST `/chat`.
+#### 2.4  "Thinking…" placeholder bubble
 
-### 9-2. Dashboard
-* Route `frontend/app/dashboard/page.tsx`
-* Fetch `/workbooks` list.
-* Use shadcn `Card`, `DataTable`.
+**Problem**: Users see no visual feedback for ~500 ms while the first tokens arrive.  We surface an immediate *thinking* bubble that is later replaced by streamed text.
 
-### 9-3. Debug Panel
-* `components/debug/DebugPanel.tsx`
-  * Connect to `/chat/step` websocket.
-  * Render timeline entries with icons.
-  * "Stop" button => `socket.close()`.
+1. **Backend**  `apps/api-gateway/chat/router.py`
+   ```python:+12  (inside process_message_streaming before agent.stream_run)
+   # Notify client that the assistant has started processing
+   yield { 'type': 'start' }   # <-- new event
+   ```
 
-### 9-4. Waitlist Page
-`frontend/app/waitlist/page.tsx` simple email form hitting `/api/waitlist`.
+2. **Frontend**  `frontend/hooks/useChatStream.ts`
+   ```ts:+25
+   else if (evt.type==='start') {
+     // Insert a blank assistant bubble with spinner
+     dispatch(addAssistantThinkingMessage())
+   }
+   ```
 
-### 9-5. Visual Polish
-* Tailwind theme overrides in `styles/globals.css`  
-* Replace default buttons with `shadcn/ui` Button.
+3. **Frontend**  `frontend/components/chat/Message.tsx`
+   ```tsx:+15
+   if (msg.status==='thinking') return <Bubble> <Spinner/> …thinking… </Bubble>;
+   ```
 
-**Done-When** : UX walkthrough passes Figma parity checklist.
+4. **Stream replacement logic**  – first `chunk` for that message id swaps `status` to `streaming` and appends text; `done` event sets `status:'complete'`.
 
----
-
-## 10. INFRASTRUCTURE NOTES
-* Add `docker-compose.groq.yml` with Groq API sidecar if self-hosted.  
-* Horizontal scaling: use `uvicorn --workers ${CPU_CORES}`; global semaphore moved to Redis.  
-* Health probes `/health` and Prometheus metrics scraped by Grafana Cloud.
-
----
-
-## 11. TESTING MATRIX
-| Layer | Tool | Location |
-|-------|------|----------|
-| Unit  | pytest | `apps/api-gateway/tests/` |
-| Contract (LLM ↔️ Tools) | `pytest --tags tool-call` | new tests |
-| E2E   | Playwright | `frontend/tests/` |
-| Load  | Locust | `infra/load/` |
-
-CI job in `.github/workflows/ci.yml` runs all above on PR.
+**File changes (Phase 2)**
+• `apps/api-gateway/chat/router.py` – emit `'start'`, include update/complete events.  
+• `frontend/hooks/useChatStream.ts` – handle `'start' | 'chunk' | 'update' | 'complete'`.  
+• `frontend/components/chat/Message.tsx` – add `thinking` rendering branch.  
+• Optional: `frontend/types.ts` – extend SSE union type.
 
 ---
 
-## 12. ROLL-OUT PLAN
-1. Phase 1 & 2 in a single backend PR – behind `MULTI_MODEL=true` flag.  
-2. Phase 3 template tools (demo value add) – demo to finance SME.  
-3. Phase 4 & 7 (Debug mode) – flag `DEBUG_UI=true`.  
-4. Prompt editor & observability – enable for internal team.  
-5. Public waitlist landing & gradual user invites.  
+### Phase 3 — Pending Edits & Accept / Reject UI
+
+#### 3.1  Agent **dry-run** execution
+Inside `chat/router.process_message[_streaming]`
+```python
+sheet_copy = sheet.clone()
+# bind mutating tools to copy
+...
+agent = agent.clone_with_tools(tool_functions_copy)
+result = await agent.run(...)
+proposed_updates = result.get('updates', [])
+```
+No changes are committed yet.
+
+#### 3.2  SSE `pending` event
+```python
+yield { 'type':'pending', 'updates': proposed_updates }
+```
+
+#### 3.3  Frontend UX
+* Location:* just above `<MessageInput />` :
+```tsx
+<PendingBar visible={pending.length>0}>
+  <Button onClick={applyAll}>Apply All</Button>
+  <Button variant="ghost" onClick={rejectAll}>Reject All</Button>
+</PendingBar>
+```
+* Chat bubble annotations:* while streaming, render grey bubbles e.g. "→ Editing *Revenue* column…". Map from each `update` group.
+
+#### 3.4  Commit endpoint
+`POST /workbook/{wid}/sheet/{sid}/apply`
+Input: `{updates:[...]}`  – calls current `set_cells_with_xref`.
+
+**File changes (Phase 3)**
+• `apps/api-gateway/chat/router.py`
+  – clone `sheet` → `sheet_copy` and wire mutating tools.  
+  – emit `'pending'` SSE event.  
+  – new `POST /apply` FastAPI route (or reuse existing).  
+• `frontend/components/PendingBar.tsx` – new component.  
+• `frontend/hooks/useChatStream.ts` – handle `'pending'`.  
+• `frontend/pages/api/apply.ts` – call workbook apply endpoint.
 
 ---
 
-### END OF DOCUMENT
+### Phase 4 — Model Swapping Without Context Loss
+
+1. Add `<ModelSelect />` in header – populates options via `/api/models` (already returns catalog).
+2. Extend chat request schema with `model` field (already supported).  
+3. Persist conversation history `memory.py` keyed by workbook; unchanged between models.
+4. `trim_history` update – use `llm.max_context` from catalog (`llm.catalog[key]['max_tokens']`).
+
+**File changes (Phase 4)**
+• `frontend/components/header/ModelSelect.tsx` – dropdown.  
+• `frontend/hooks/useChat.ts` – include `model` in POST body.  
+• `apps/api-gateway/chat/router.py` – pass model → `get_client`.  
+• `apps/api-gateway/chat/token_utils.py` – read per-model `max_tokens`.  
+• `apps/api-gateway/llm/catalog.py` – add `max_tokens` & `supports_tools`.
+
+---
+
+### Phase 5 — Professional Sheet Output
+
+*Prompt additions*
+```md
+• When outputting tables, use the first row as **bold headers**.  
+• Prefer horizontal grouping: metrics in columns, observations in rows.  
+• Separate logical sections by one blank row.  
+• Use provided templates (insert_dcf_template, insert_fsm_template) when relevant.
+```
+Add to Supabase prompt `analyst` v1.1.
+
+Optional: add new tool `format_range(style:str)` later.
+
+**File changes (Phase 5)**
+• `/docs/prompts/analyst_v1.1.md` – new prompt text.  
+• `supabase` – INSERT new row in `role_prompts`.  
+• (optional) `agents/tools.py` – new `format_range` spec & Python stub.
+
+---
+
+### Phase 6 — Advanced Reasoning & Guardrails
+
+1. **Orchestrator** (`agents/orchestrator.py`) – routes ask/analyst or multi-step plan.  
+2. **Evaluator** – after Analyst draft, run AskAgent with policy prompt _"judge compliance"_.  If `score<0.5` -> inject system retry.
+3. **Rule checks** – implement `validate_updates(updates)` inside router; raise if cell beyond `J30` or formula when not allowed.
+
+**File changes (Phase 6)**
+• `apps/api-gateway/agents/orchestrator.py` – new class.  
+• `apps/api-gateway/agents/evaluator_agent.py` – policy checker.  
+• `apps/api-gateway/chat/router.py` – call `orchestrator.run(...)`.  
+• `apps/api-gateway/chat/validators.py` – `validate_updates`.  
+• `requirements.txt` – add `pydantic[email]` if evaluator uses scoring.
+
+---
+
+### Phase 7 — UI Polish
+
+• "Section bubble" rendering: when `chunk` starts with `## <title>` create a sub-bubble header.  
+• Scroll anchoring & typing indicator remain.
+
+**File changes (Phase 7)**
+• `frontend/components/chat/Message.tsx`
+  – detect `##` heading in stream and spawn sub-bubble.  
+• `frontend/styles/chat.css` – nested bubble styling.
+
+---
+
+### Phase 8 — Codebase Structure Improvements
+
+1. **Create sub-packages**
+```
+apps/api-gateway/
+  core/
+    agents/
+    llm/
+    sheets/
+  api/          # FastAPI routers
+  infrastructure/
+```
+2. Migrate modules; update import paths.
+3. Introduce `pyproject.toml` and enable `poetry` for dependency locking.
+
+**File changes (Phase 8)**
+• Move packages into `apps/api-gateway/core/**`.  
+• Update every `import` via `sed` or `ruff --fix-import-s`.  
+• `pyproject.toml` – new Poetry config.  
+• `Dockerfile` – switch from `pip install -r` → `poetry install`.
+
+---
+
+### Phase 9 — Testing & Roll-out
+
+• Unit tests for each tool & validator (`pytest -k tool`).  
+• Integration test: fake LLM that echoes tool calls – assert router returns `pending` event.
+• Canary deploy to `staging.assistant.app` → internal QA.  
+• Gradual rollout 10% → 100%.
+
+**File changes (Phase 9)**
+• `.github/workflows/ci.yml` – add `pytest`, `ruff`, `mypy` jobs.  
+• `apps/api-gateway/tests/test_tools.py` – unit tests.  
+• `apps/api-gateway/tests/test_router_stream.py` – SSE integration test.  
+• `vercel.json` / Railway config – streaming timeouts.
+
+---
+
+### Appendix — Reference Snippets
+
+1. **Event payloads**
+```json
+{ "type":"pending", "updates":[{ "cell":"B2", "new":42 }] }
+{ "type":"update",  "payload":{"cell":"B2","new":42} }
+{ "type":"chunk",   "text":"Computing total…" }
+```
+
+2. **Tool schema** (no change)
+```python
+TOOL_CATALOG = [
+  {"name":"set_cell", "description":..., "parameters":...},
+  ...
+]
+```
+
+3. **Supabase prompt fetch** (60 s LRU cache) already in `db/prompts.py`.
+
+---
+
+> **End-to-end completion target:** *3 engineering weeks*.  Track progress in Linear project `SPRS-AI-V2`.
