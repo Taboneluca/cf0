@@ -5,6 +5,7 @@
   "installCommand": "npm install",
   "outputDirectory": ".next",
   "rewrites": [
+    { "source": "/api/auth/:path*", "destination": "/api/auth/:path*" },
     { "source": "/api/:path*", "destination": "https://api.cf0.ai/:path*" }
   ]
 } 
