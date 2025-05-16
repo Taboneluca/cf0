@@ -7,7 +7,8 @@ avatar_url TEXT,
 is_waitlisted BOOLEAN DEFAULT TRUE,
 is_verified BOOLEAN DEFAULT FALSE,
 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+is_admin BOOLEAN DEFAULT FALSE
 );
 
 -- Create workbooks table
@@ -23,16 +24,38 @@ created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Add sheets column to existing workbooks table if not exists
-ALTER TABLE workbooks ADD COLUMN IF NOT EXISTS sheets JSONB DEFAULT '["Sheet1"]'::jsonb;
+-- Create spreadsheet_workbooks table for backend
+CREATE TABLE IF NOT EXISTS spreadsheet_workbooks (
+id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+wid TEXT UNIQUE NOT NULL,
+created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create spreadsheet_sheets table for backend
+CREATE TABLE IF NOT EXISTS spreadsheet_sheets (
+id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+workbook_wid TEXT REFERENCES spreadsheet_workbooks(wid) ON DELETE CASCADE,
+workbook_id UUID REFERENCES spreadsheet_workbooks(id) ON DELETE CASCADE NOT NULL,
+name TEXT NOT NULL,
+n_rows INT,
+n_cols INT,
+cells JSONB,
+updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+UNIQUE (workbook_wid, name)
+);
+
+-- Create indexes for spreadsheet tables
+CREATE INDEX IF NOT EXISTS idx_spreadsheet_workbooks_wid ON spreadsheet_workbooks(wid);
+CREATE INDEX IF NOT EXISTS idx_spreadsheet_sheets_workbook_wid ON spreadsheet_sheets(workbook_wid);
+CREATE INDEX IF NOT EXISTS idx_spreadsheet_sheets_workbook_id ON spreadsheet_sheets(workbook_id);
 
 -- Create waitlist table
 CREATE TABLE IF NOT EXISTS waitlist (
-id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+id BIGSERIAL PRIMARY KEY,
 email TEXT UNIQUE NOT NULL,
 status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected
-invite_code TEXT UNIQUE,
 invited_at TIMESTAMP WITH TIME ZONE,
+invite_code UUID DEFAULT gen_random_uuid(),
 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -41,6 +64,8 @@ created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workbooks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE waitlist ENABLE ROW LEVEL SECURITY;
+ALTER TABLE spreadsheet_workbooks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE spreadsheet_sheets ENABLE ROW LEVEL SECURITY;
 
 -- Profiles policies
 CREATE POLICY "Users can view their own profile"
@@ -71,6 +96,19 @@ USING (auth.uid() = user_id);
 CREATE POLICY "Users can delete their own workbooks"
 ON workbooks FOR DELETE
 USING (auth.uid() = user_id);
+
+-- spreadsheet tables policies (allow service role full access)
+CREATE POLICY "Service role can manage spreadsheet_workbooks"
+ON spreadsheet_workbooks FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+CREATE POLICY "Service role can manage spreadsheet_sheets"
+ON spreadsheet_sheets FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
 
 -- Waitlist policies (admin only through service role)
 CREATE POLICY "Public can insert to waitlist"
