@@ -38,9 +38,27 @@ export function LoginForm() {
       // First verify if we have a session already to avoid unnecessary logins
       const { data: existingSession } = await supabase.auth.getSession()
       if (existingSession.session) {
-        console.log("Already have a valid session, navigating to dashboard")
-        router.push('/dashboard')
-        return
+        console.log("Client-side session exists, verifying with server")
+        
+        // Verify with server that session is valid before redirecting
+        try {
+          const verifyResponse = await fetch('/api/auth/session-sync', {
+            method: 'POST',
+            credentials: 'include',
+          })
+          
+          if (verifyResponse.ok) {
+            console.log("Server confirmed session is valid, redirecting to dashboard")
+            router.push('/dashboard')
+            return
+          } else {
+            console.log("Server rejected session, continuing with login")
+            // Continue with login flow
+          }
+        } catch (verifyErr) {
+          console.error("Error verifying session:", verifyErr)
+          // Continue with login flow
+        }
       }
       
       // Use our server-side login API endpoint
@@ -169,7 +187,7 @@ export function LoginForm() {
             <label htmlFor="password" className="text-sm font-medium leading-none">
               Password
             </label>
-            <Link href="/reset-password" className="text-sm text-blue-500 hover:text-blue-600">
+            <Link href="/forgot-password" className="text-sm text-blue-500 hover:text-blue-600">
               Forgot password?
             </Link>
           </div>
