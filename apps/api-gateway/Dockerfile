@@ -1,27 +1,26 @@
 FROM python:3.12-slim
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y build-essential libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Install Poetry
-RUN pip install poetry==1.8.2
-
-# Configure poetry to not create a virtual environment
+# Install Poetry & configure
+ENV POETRY_VERSION=1.8.2
+RUN pip install "poetry==$POETRY_VERSION"
 RUN poetry config virtualenvs.create false
 
-# Copy pyproject.toml
+# Copy lock files first to exploit Docker layer caching
 COPY pyproject.toml poetry.lock* ./
+RUN poetry install --no-dev --no-interaction --no-ansi
 
-# Install dependencies
-RUN poetry install --no-dev
-
-# Copy source code
+# Copy source code last
 COPY . .
 
-# Environment variables for LLM providers
-ENV OPENAI_API_KEY=$OPENAI_API_KEY
-ENV ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
-ENV GROQ_API_KEY=$GROQ_API_KEY
-ENV DEFAULT_MODEL="openai:gpt-4o-mini"
+# Runtime environment variables
+ENV PYTHONUNBUFFERED=1 \
+    DEFAULT_MODEL="openai:gpt-4o-mini"
 
 # Expose port
 EXPOSE 8000
