@@ -48,4 +48,7 @@ export interface WorkbookState {
 export interface Message {
   role: "user" | "assistant" | "system"
   content: string
+  id?: string
+  status?: 'thinking' | 'streaming' | 'complete'
+  lastAddedSection?: string  // Tracks the most recently added section header
 }

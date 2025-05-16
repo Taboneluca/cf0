@@ -1,0 +1,107 @@
+/* Chat message styling with section bubbles */
+
+/* Base message styling */
+.message {
+  max-width: 90%;
+  margin-bottom: 0.5rem;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+/* User message styling */
+.message-user {
+  background-color: theme('colors.blue.500');
+  color: white;
+  margin-left: auto;
+}
+
+/* System message styling */
+.message-system {
+  color: theme('colors.gray.600');
+  font-style: italic;
+  background-color: transparent;
+  padding: 0.25rem;
+}
+
+/* Assistant message styling */
+.message-assistant {
+  background-color: theme('colors.gray.100');
+  color: theme('colors.gray.800');
+}
+
+/* Thinking state */
+.message-thinking {
+  display: flex;
+  align-items: center;
+  font-style: italic;
+  color: theme('colors.gray.600');
+}
+
+/* Message with sections styling */
+.message-with-sections {
+  background-color: transparent;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Preamble and epilogue text */
+.message-preamble, 
+.message-epilogue {
+  background-color: theme('colors.gray.100');
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+/* Section styling */
+.message-section {
+  border: 1px solid theme('colors.gray.200');
+  border-radius: 0.5rem;
+  overflow: hidden;
+  animation: section-appear 0.3s ease-in-out;
+}
+
+/* Section appearance animation */
+@keyframes section-appear {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Section title */
+.message-section-title {
+  background-color: theme('colors.gray.200');
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  color: theme('colors.gray.800');
+  border-bottom: 1px solid theme('colors.gray.300');
+}
+
+/* Section content */
+.message-section-content {
+  background-color: theme('colors.gray.100');
+  padding: 0.75rem;
+  white-space: pre-wrap;
+}
+
+/* Links within message content */
+.message-section-content a,
+.message-preamble a,
+.message-epilogue a {
+  color: theme('colors.blue.600');
+  text-decoration: underline;
+}
+
+/* Cell reference highlighting */
+.cell-reference {
+  color: theme('colors.blue.600');
+  font-weight: 500;
+} 
