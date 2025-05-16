@@ -8,6 +8,7 @@ if you move to async Postgres later.
 from __future__ import annotations
 import time
 from typing import Dict, Tuple, List
+from functools import lru_cache
 from .supa import supabase  # ⇐ already initialised elsewhere
 
 # -------------------------------------------------------------------
@@ -42,18 +43,19 @@ def _fetch_active_prompt(mode: str) -> str:
     if supabase is None:
         raise RuntimeError("Supabase client not configured")
     res = (
-        supabase.table("prompts")
-        .select("text")
-        .eq("agent_mode", mode)
-        .eq("is_active", True)
+        supabase.table("role_prompts")
+        .select("content")
+        .eq("mode", mode)
+        .eq("active", True)
         .order("version", desc=True)
         .limit(1)
         .execute()
     )
     if res.data:
-        return res.data[0]["text"]
+        return res.data[0]["content"]
     raise ValueError(f"No active prompt found for mode '{mode}'")
 
+@lru_cache(maxsize=32)
 def get_active_prompt(mode: str) -> str:
     """60 s TTL look-up used by BaseAgent."""
     cached = _cache_get(mode)
@@ -66,43 +68,32 @@ def get_active_prompt(mode: str) -> str:
 def list_prompts(mode: str) -> List[dict]:
     """Return **all** stored versions for admin UI (latest first)."""
     res = (
-        supabase.table("prompts")
+        supabase.table("role_prompts")
         .select("*")
-        .eq("agent_mode", mode)
+        .eq("mode", mode)
         .order("version", desc=True)
         .execute()
     )
     return res.data or []
 
-def create_prompt(mode: str, text: str, created_by: str) -> dict:
+def create_prompt(mode: str, text: str, created_by: str, version: str = "v1.0") -> dict:
     """
     Insert new prompt version and make it active.
     Previous active version is automatically de-activated.
     """
-    # find next version number
-    latest = (
-        supabase.table("prompts")
-        .select("version")
-        .eq("agent_mode", mode)
-        .order("version", desc=True)
-        .limit(1)
-        .execute()
-    )
-    next_version = (latest.data[0]["version"] + 1) if latest.data else 1
-
     # deactivate older active prompt
-    supabase.table("prompts") \
-        .update({"is_active": False}) \
-        .eq("agent_mode", mode) \
-        .eq("is_active", True) \
+    supabase.table("role_prompts") \
+        .update({"active": False}) \
+        .eq("mode", mode) \
+        .eq("active", True) \
         .execute()
 
-    result = supabase.table("prompts").insert({
-        "agent_mode": mode,
-        "text": text,
-        "version": next_version,
-        "is_active": True,
-        "created_by": created_by,
+    result = supabase.table("role_prompts").insert({
+        "mode": mode,
+        "content": text,
+        "version": version,
+        "active": True,
+        "inserted_at": "now()"
     }).execute()
 
     # bust cache

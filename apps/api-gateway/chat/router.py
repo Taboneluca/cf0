@@ -327,8 +327,16 @@ async def process_message(
         else:
             raise ValueError(f"Invalid mode: {mode}")
             
+        # Create sheet context summary
+        summary = sheet_summary(sheet)
+        ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
+        
         # Inject tool functions specific to this session
         agent = agent.clone_with_tools(tool_functions)
+        
+        # Add sheet context
+        agent_extra = dict(sheet_context=ctx)
+        agent.add_system_message(ctx)  # For back-compat in existing BaseAgent
         
         # Run the agent on the message
         print(f"[{request_id}] 🧠 Running agent")
@@ -664,8 +672,16 @@ async def process_message_streaming(
             yield {"type": "error", "error": f"Invalid mode: {mode}"}
             return
             
+        # Create sheet context summary
+        summary = sheet_summary(sheet)
+        ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
+        
         # Inject tool functions specific to this session
         agent = agent.clone_with_tools(tool_functions)
+        
+        # Add sheet context
+        agent_extra = dict(sheet_context=ctx)
+        agent.add_system_message(ctx)  # For back-compat in existing BaseAgent
         
         # Use the streaming run interface
         print(f"[{request_id}] 🧠 Running agent in streaming mode")
