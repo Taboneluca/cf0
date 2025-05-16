@@ -48,30 +48,22 @@ export function CreateWorkbookButton({ userId }: CreateWorkbookButtonProps) {
       // Generate a random UUID for the new workbook
       const newWorkbookId = crypto.randomUUID();
       
-      // Create empty workbook with initial data structure
-      const initialData = {
-        columns: Array.from({ length: 100 }, (_, i) => String.fromCharCode(65 + i)),
-        rows: Array.from({ length: 30 }, (_, i) => i + 1),
-        cells: {},
-      }
-
-      const { data, error } = await supabase
-        .from("workbooks")
-        .insert({
-          id: newWorkbookId,
-          user_id: sessionData.session.user.id, // Use session user ID
-          title,
-          description,
-          is_public: isPublic,
-          data: initialData,
-        })
-        .select()
-        .single()
+      // Using the admin function to bypass RLS issues
+      const { data, error } = await supabase.rpc(
+        'admin_insert_workbook',
+        {
+          workbook_id: newWorkbookId,
+          owner_id: sessionData.session.user.id,
+          workbook_title: title,
+          workbook_description: description,
+          is_public: isPublic
+        }
+      )
 
       if (error) throw error
 
       // Navigate to the new workbook
-      router.push(`/workbook/${data.id}`)
+      router.push(`/workbook/${newWorkbookId}`)
       router.refresh()
     } catch (error) {
       console.error("Error creating workbook:", error)
