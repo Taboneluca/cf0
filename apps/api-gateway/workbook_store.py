@@ -251,17 +251,10 @@ def get_workbook(wid: str) -> Workbook:
                 if asyncio.get_event_loop().is_running():
                     # We are in an async context, use create_task
                     try:
-                        # Use a background task and wait briefly
+                        # Start the DB fetch in the background; we *do not* block
+                        # inside this synchronous function.
                         sheet_data_future = asyncio.create_task(load_workbook(wid))
-                        # Wait for a short time to see if data becomes available
-                        try:
-                            sheet_data = asyncio.wait_for(sheet_data_future, 0.5)
-                            # Add await here to fix the coroutine object error
-                            sheet_data = await sheet_data
-                        except asyncio.TimeoutError:
-                            # Timeout waiting for data, proceed with empty workbook
-                            print(f"Timeout waiting for workbook {wid} data from DB, creating empty workbook")
-                            sheet_data = {}
+                        sheet_data = {}                 # continue with empty workbook
                     except Exception as e:
                         print(f"Error loading workbook in async context: {e}")
                         sheet_data = {}
