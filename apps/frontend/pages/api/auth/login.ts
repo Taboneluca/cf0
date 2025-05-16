@@ -45,25 +45,42 @@ export default async function handler(
     console.log('Login successful for user ID:', data.user.id);
     console.log('Session expires at:', new Date(data.session?.expires_at! * 1000).toISOString());
     
+    // Set stronger cache control to prevent caching auth responses
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
     // Verify cookies are being set by logging cookie headers
     const cookies = res.getHeader('set-cookie');
     if (cookies) {
       console.log('Setting cookies:', Array.isArray(cookies) ? 
         cookies.map(c => c.split(';')[0]) : 
-        cookies.split(';')[0]);
+        (typeof cookies === 'string' ? cookies.split(';')[0] : cookies));
+      
+      // Make sure our session cookie has secure attributes
+      if (Array.isArray(cookies)) {
+        const authCookie = cookies.find(c => c.includes('sb-'));
+        if (authCookie) {
+          console.log('Auth cookie attributes:', authCookie.split(';').map(attr => attr.trim()).join(', '));
+        }
+      } else if (typeof cookies === 'string' && cookies.includes('sb-')) {
+        console.log('Auth cookie attributes:', cookies.split(';').map(attr => attr.trim()).join(', '));
+      }
     } else {
       console.warn('No cookies set in response headers');
     }
 
-    // Return success response (user data can be useful for the client)
+    // Return success response with minimal data
     return res.status(200).json({
       success: true,
       user: {
         id: data.user.id,
         email: data.user.email,
-        // Avoid sending sensitive info like session tokens back in the JSON body
       },
-      // Add the site URL to help debug redirection issues
+      // Include session info for debugging but not the actual token
+      session: {
+        expires_at: data.session?.expires_at,
+      },
       siteUrl: process.env.NEXT_PUBLIC_SITE_URL || 'not set'
     });
   } catch (error: any) {
