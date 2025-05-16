@@ -20,6 +20,7 @@ COPY . .
 
 # Runtime environment variables
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app:$PYTHONPATH \
     DEFAULT_MODEL="openai:gpt-4o-mini"
 
 # Expose port
