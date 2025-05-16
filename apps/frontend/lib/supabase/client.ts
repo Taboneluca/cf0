@@ -13,9 +13,38 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+    // Always use localStorage - sessionStorage clears on refresh
     storage: typeof window !== 'undefined' ? localStorage : undefined
   }
 })
+
+// Create function to get the current user ID that ensures we have a valid session
+export async function getCurrentUserId() {
+  if (typeof window === 'undefined') return null;
+  
+  try {
+    // Try to get session
+    const { data } = await supabase.auth.getSession();
+    
+    // If no session, try to refresh it
+    if (!data.session) {
+      const { error } = await supabase.auth.refreshSession();
+      if (error) {
+        console.error("Session refresh failed:", error.message);
+        return null;
+      }
+      
+      // Get session again after refresh
+      const { data: refreshData } = await supabase.auth.getSession();
+      return refreshData.session?.user?.id || null;
+    }
+    
+    return data.session?.user?.id || null;
+  } catch (err) {
+    console.error("Error getting user ID:", err);
+    return null;
+  }
+}
 
 // Set up an auth state change listener to handle token refresh failures
 // This helps prevent the "User not authenticated" errors in the console
@@ -24,6 +53,7 @@ if (typeof window !== 'undefined') {
   supabase.auth.getSession().then(({ data }) => {
     console.log('Current auth status:', {
       isAuthenticated: !!data.session,
+      userId: data.session?.user?.id,
       expires: data.session?.expires_at ? new Date(data.session.expires_at * 1000).toISOString() : 'no-session'
     })
   })
