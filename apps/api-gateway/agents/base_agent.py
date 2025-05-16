@@ -126,6 +126,7 @@ class BaseAgent:
         tools: list[dict],
         *,
         agent_mode: str | None = None,
+        **kwargs
     ):
         """
         Parameters
@@ -135,19 +136,30 @@ class BaseAgent:
         agent_mode :
             When provided we fetch the *active* prompt for that mode
             from Supabase with a 60 s TTL LRU cache.
+        kwargs :
+            Additional parameters that can be passed to the agent.
+            sheet_context: Optional runtime sheet context to append to the prompt.
         """
         self.llm = llm
         self.tools = tools
 
         if agent_mode:
             try:
-                self.system_prompt = get_active_prompt(agent_mode)
+                base_prompt = get_active_prompt(agent_mode)
             except Exception as e:
                 # Don't crash the session – fall back silently and log.
                 print(f"⚠️  Prompt DB lookup failed for mode={agent_mode}: {e}")
-                self.system_prompt = fallback_prompt
+                base_prompt = fallback_prompt
         else:
-            self.system_prompt = fallback_prompt
+            base_prompt = fallback_prompt
+
+        # Allow caller to pass an optional runtime context.
+        sheet_ctx: str | None = kwargs.pop('sheet_context', None)
+
+        # Concatenate keeping a blank line separator so formatting is stable.
+        self.system_prompt = base_prompt.strip()
+        if sheet_ctx:
+            self.system_prompt += f"\n\n{sheet_ctx.strip()}"
 
     def clone_with_tools(self, tool_functions: dict[str, callable]) -> 'BaseAgent':
         """
@@ -303,7 +315,7 @@ class BaseAgent:
                             {"role": "tool", "tool_call_id": tool_id,
                             "content": json.dumps({"error": "empty-args"})},
                             {"role": "assistant",
-                            "content": f"Function call `{name}` had empty arguments. "
+                             "content": f"Function call `{name}` had empty arguments. "
                                     "Please resend the call with valid JSON arguments."}
                         ])
                         continue        # go to next iteration instead of aborting
