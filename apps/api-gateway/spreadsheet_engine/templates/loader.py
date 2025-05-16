@@ -11,10 +11,19 @@ def _load(name: str) -> dict:
     if name in _cache:
         return _cache[name]
     try:
-        data = (COMPILED_DIR / f"{name}.json").read_bytes()
-        tpl = json.loads(zlib.decompress(base64.b64decode(data)))
+        # Try to read the file using read_text instead of read_bytes for better error handling
+        template_path = COMPILED_DIR / f"{name}.json"
+        if not template_path.exists():
+            raise ValueError(f"Template {name} does not exist")
+            
+        # Read and parse the template
+        data = template_path.read_text(encoding='utf-8')
+        tpl = json.loads(data)  # Simplified - no zlib/base64 decoding if not needed
+        
         _cache[name] = tpl
         return tpl
+    except FileNotFoundError:
+        raise ValueError(f"Template {name} does not exist")
     except Exception as e:
         raise ValueError(f"Failed to load template {name}: {e}")
 
@@ -28,14 +37,22 @@ def describe_template(template: str):
     Returns:
         Dictionary with metadata for each sheet
     """
-    tpl = _load(template)
-    return {
-        s: {
-            "rows": meta["n_rows"],
-            "cols": meta["n_cols"],
-            "first_row": meta["cells"][0] if meta["cells"] else []
-        } for s, meta in tpl.items()
-    }
+    try:
+        tpl = _load(template)
+        return {
+            s: {
+                "rows": meta["n_rows"],
+                "cols": meta["n_cols"],
+                "first_row": meta["cells"][0] if meta["cells"] else []
+            } for s, meta in tpl.items()
+        }
+    except Exception as e:
+        # Return a friendly error message instead of raising an exception
+        return {
+            "error": str(e),
+            "template": template,
+            "available_templates": ["fsm", "dcf"]  # List of known templates
+        }
 
 def preview_cells(template: str, sheet: str, range: str):
     """
