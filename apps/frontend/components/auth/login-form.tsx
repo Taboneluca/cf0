@@ -4,8 +4,9 @@ import Link from "next/link"
 
 import type React from "react"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { supabase } from "@/lib/supabase/client"
 
 export function LoginForm() {
   const [email, setEmail] = useState("")
@@ -13,6 +14,15 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  
+  // Check if we were redirected from a protected page
+  useEffect(() => {
+    const from = searchParams?.get('from')
+    if (from) {
+      setError(`You need to be logged in to access ${from}`)
+    }
+  }, [searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -21,6 +31,14 @@ export function LoginForm() {
 
     try {
       console.log("Attempting login with:", email)
+      
+      // First verify if we have a session already to avoid unnecessary logins
+      const { data: existingSession } = await supabase.auth.getSession()
+      if (existingSession.session) {
+        console.log("Already have a valid session, navigating to dashboard")
+        router.push('/dashboard')
+        return
+      }
       
       // Use our server-side login API endpoint
       const response = await fetch('/api/auth/login', {
@@ -52,17 +70,37 @@ export function LoginForm() {
         }
       })
       
+      // After successful login, verify the session with Supabase client
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+      
+      if (sessionError || !sessionData.session) {
+        console.error("Session verification failed after login:", sessionError?.message || "No session found")
+        
+        // Try direct sign in with the Supabase client as fallback
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password
+        })
+        
+        if (signInError) {
+          console.error("Fallback sign-in failed:", signInError.message)
+        } else {
+          console.log("Fallback sign-in successful")
+        }
+      } else {
+        console.log("Session verified, expires:", 
+          sessionData.session.expires_at 
+            ? new Date(sessionData.session.expires_at * 1000).toISOString()
+            : 'no expiration date'
+        )
+      }
+      
       // Refresh all route caches
       router.refresh()
       
-      // Use router.push for navigation within Next.js app
-      router.push('/dashboard')
-      
-      // Give a slight delay to ensure router has time to process
-      setTimeout(() => {
-        // If we're still on this page after router.push, fall back to a hard navigation
-        window.location.href = '/dashboard'
-      }, 1000)
+      // Get the redirect destination, defaulting to dashboard
+      const destination = searchParams?.get('from') || '/dashboard'
+      router.push(destination)
     } catch (err: any) {
       console.error("Login error:", err)
       setError(err.message || "An error occurred during login")
