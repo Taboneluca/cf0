@@ -326,7 +326,7 @@ async def process_message(
         
         # Create sheet context summary
         summary = sheet_summary(sheet)
-        ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
+        ctx = f"[Context] Active sheet '{summary['name']}' has {summary['n_rows']} rows × {summary['n_cols']} cols; Headers: {summary['headers']}."
         
         # Run the orchestrator with the given mode
         print(f"[{request_id}] 🧠 Running orchestrator with mode={mode}")
@@ -656,7 +656,7 @@ async def process_message_streaming(
         try:
             # Create sheet context summary
             summary = sheet_summary(sheet)
-            ctx = f"[Context] Active sheet '{summary['name']}' has {summary['rows']} rows × {summary['columns']} cols; Headers: {summary['headers']}."
+            ctx = f"[Context] Active sheet '{summary['name']}' has {summary['n_rows']} rows × {summary['n_cols']} cols; Headers: {summary['headers']}."
             
             # Import and initialize orchestrator
             from agents.orchestrator import Orchestrator

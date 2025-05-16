@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Set smaller base font size */
+html {
+  font-size: 14px;
+}
+
 body {
   font-family: Arial, Helvetica, sans-serif;
 }
