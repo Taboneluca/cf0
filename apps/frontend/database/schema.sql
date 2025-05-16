@@ -85,9 +85,10 @@ CREATE POLICY "Users can view public workbooks"
 ON workbooks FOR SELECT
 USING (is_public = true);
 
-CREATE POLICY "Users can insert their own workbooks"
+CREATE POLICY "Allow authenticated users to insert workbooks"
 ON workbooks FOR INSERT
-WITH CHECK (auth.uid() = user_id);
+TO authenticated
+WITH CHECK (auth.uid() IS NOT NULL);
 
 CREATE POLICY "Users can update their own workbooks"
 ON workbooks FOR UPDATE
