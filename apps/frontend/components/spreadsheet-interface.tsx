@@ -46,13 +46,19 @@ export default function SpreadsheetInterface({
   }, [initialData, wid]);
 
   const [mode, setMode] = useState<"ask" | "analyst">("ask")
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "system",
-      content:
-        "Welcome to the Spreadsheet Assistant. I can help you analyze your data or modify your spreadsheet based on your instructions.",
-    },
-  ])
+  const [messages, setMessages] = useState<Message[]>([])
+
+  // Initialize welcome message only once
+  useEffect(() => {
+    // Only set the welcome message if there are no messages
+    if (messages.length === 0) {
+      setMessages([{
+        role: "system",
+        content: "Welcome to the Spreadsheet Assistant. I can help you analyze your data or modify your spreadsheet based on your instructions.",
+        id: "welcome_message"
+      }])
+    }
+  }, [])
 
   // Enhanced updateCell that handles cross-sheet references
   const updateCell = async (row: number, col: string, value: string, sheetId?: string) => {

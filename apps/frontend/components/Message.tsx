@@ -1,5 +1,6 @@
 import React from 'react';
 import { Message as MessageType } from '@/types/spreadsheet';
+import clsx from 'clsx';
 
 type SectionProps = {
   title: string;
@@ -33,11 +34,14 @@ type MessageProps = {
  * when message content contains headings (## Title)
  */
 const Message: React.FC<MessageProps> = ({ message }) => {
+  // Base bubble style
+  const baseBubble = "rounded-lg px-3 py-2 max-w-[90%] break-words";
+  
   // Don't process sections for user messages
   if (message.role === 'user') {
     const parts = message.content.split(/(@[\w!:.]+)/g);
     return (
-      <div className="message message-user">
+      <div className={clsx(baseBubble, "self-end bg-blue-500 text-white ml-auto")}>
         {parts.map((part, i) => 
           part.match(/^@[\w!:.]+$/) 
             ? <span key={i} className="font-semibold underline">{part}</span>
@@ -47,10 +51,10 @@ const Message: React.FC<MessageProps> = ({ message }) => {
     );
   }
 
-  // For system messages, render simple italic text
+  // For system messages, render simple italic text with smaller font
   if (message.role === 'system') {
     return (
-      <div className="message message-system">
+      <div className="text-sm text-gray-500 whitespace-pre-wrap">
         {message.content}
       </div>
     );
@@ -65,7 +69,7 @@ const Message: React.FC<MessageProps> = ({ message }) => {
   if (matches.length === 0 || message.status === 'thinking' || message.status === 'streaming') {
     const parts = message.content.split(/(@[\w!:.]+)/g);
     return (
-      <div className="message message-assistant">
+      <div className={clsx(baseBubble, "self-start bg-gray-100")}>
         {message.status === 'thinking' ? (
           <div className="message-thinking">Thinking...</div>
         ) : (
