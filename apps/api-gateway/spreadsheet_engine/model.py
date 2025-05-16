@@ -460,6 +460,16 @@ class Spreadsheet:
         sheet.cells = data["cells"]
         return sheet
 
+    def clone(self) -> 'Spreadsheet':
+        """Create a deep copy of this spreadsheet"""
+        import copy
+        new_sheet = Spreadsheet(rows=self.n_rows, cols=self.n_cols, name=self.name)
+        new_sheet.headers = copy.deepcopy(self.headers)
+        new_sheet.cells = copy.deepcopy(self.cells)
+        new_sheet.deps = copy.deepcopy(self.deps)
+        new_sheet.workbook = self.workbook  # Same workbook reference
+        return new_sheet
+
 # Remove old/deprecated code
 # current_sheet = Spreadsheet()
 sheets: dict[str, Spreadsheet] = {}

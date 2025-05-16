@@ -8,7 +8,7 @@ import asyncio
 from dotenv import load_dotenv
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
-from spreadsheet_engine import (
+from core.sheets import (
     Spreadsheet, 
     set_cell, 
     create_new_sheet,
@@ -17,23 +17,23 @@ from spreadsheet_engine import (
     DEFAULT_COLS
 )
 from workbook_store import get_sheet, get_workbook, workbooks, initialize as initialize_workbook_store
-from chat.router import process_message, process_message_streaming
-from chat.schemas import ChatRequest, ChatResponse
-from llm import PROVIDERS  # Import the provider registry
-from llm.catalog import get_models, get_model_info  # Import the new model catalog functions
-from chat.memory import clear_history, get_history
-from agents.base_agent import ChatStep
-from agents.ask_agent import build as build_ask_agent  
-from agents.analyst_agent import build as build_analyst_agent
-from chat.admin_prompts import router as prompts_admin_router
+from api.router import process_message, process_message_streaming
+from api.schemas import ChatRequest, ChatResponse
+from core.llm import PROVIDERS  # Import the provider registry
+from core.llm.catalog import get_models, get_model_info  # Import the new model catalog functions
+from api.memory import clear_history, get_history
+from core.agents.base_agent import ChatStep
+from core.agents.ask_agent import build as build_ask_agent  
+from core.agents.analyst_agent import build as build_analyst_agent
+from api.admin_prompts import router as prompts_admin_router
 import json
 from fastapi.responses import StreamingResponse
-from spreadsheet_engine.adapter import get_implementation_info
-from spreadsheet_engine.adapter import SpreadsheetAdapter
+from core.sheets.adapter import get_implementation_info
+from core.sheets.adapter import SpreadsheetAdapter
 import time
 import traceback
 from functools import partial
-from spreadsheet_engine.operations import (
+from core.sheets.operations import (
     get_cell, get_range, summarize_sheet, calculate,
     set_cell, add_row, add_column, delete_row, delete_column,
     sort_range, find_replace, create_new_sheet,
@@ -41,7 +41,7 @@ from spreadsheet_engine.operations import (
     apply_scalar_to_row, apply_scalar_to_column, set_cells,
     list_sheets, get_sheet_summary
 )
-from spreadsheet_engine.summary import sheet_summary
+from core.sheets.summary import sheet_summary
 
 # Load environment variables
 load_dotenv()
@@ -340,9 +340,6 @@ async def stream_chat(req: ChatRequest):
         
         # Define the streaming generator
         async def event_generator():
-            # First, send a "start" event
-            yield f"event: start\ndata: {json.dumps({'status': 'processing'})}\n\n"
-            
             # Process the message with streaming
             async for chunk in process_message_streaming(
                 req.mode, 
@@ -353,21 +350,16 @@ async def stream_chat(req: ChatRequest):
                 workbook_metadata={
                     "sheets": wb.list_sheets(),
                     "active": req.sid,
-                    "all_sheets_data": all_sheets_data
+                    "all_sheets_data": all_sheets_data,
+                    "contexts": req.contexts
                 },
                 model=req.model
             ):
-                # Send each chunk as a "chunk" event
-                yield f"event: chunk\ndata: {json.dumps(chunk)}\n\n"
-            
-            # Add a final state event
-            final_sheet = sheet.optimized_to_dict(max_rows=30, max_cols=30)
-            final_state = {
-                "event": "complete",
-                "sheet": final_sheet,
-                "all_sheets": {name: s.optimized_to_dict(max_rows=30, max_cols=30) for name, s in wb.all_sheets().items()},
-            }
-            yield f"event: complete\ndata: {json.dumps(final_state)}\n\n"
+                # Each chunk already has a 'type' field that determines the event
+                event_type = chunk.get('type', 'chunk')
+                
+                # Send each chunk with its appropriate event type
+                yield f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
         
         return StreamingResponse(
             event_generator(),
@@ -686,6 +678,109 @@ async def chat_step(ws: WebSocket):
         traceback.print_exc()
         await ws.send_json({"error": str(e)})
         await ws.close()
+
+# Add this after the existing endpoints
+
+class ApplyUpdatesRequest(BaseModel):
+    updates: List[Dict[str, Any]]
+
+@app.post("/workbook/{wid}/sheet/{sid}/apply")
+async def apply_updates(request: ApplyUpdatesRequest, wid: str, sid: str):
+    """Apply a batch of cell updates to a sheet"""
+    try:
+        # Get the workbook and sheet
+        wb = get_workbook(wid)
+        sheet = wb.sheet(sid)
+        
+        if not sheet:
+            raise HTTPException(status_code=404, detail=f"Sheet {sid} not found")
+        
+        # Define a function to handle cross-sheet references
+        def set_cells_with_xref(updates: list[dict[str, Any]]):
+            from collections import defaultdict
+            results = []
+            
+            # Check for empty updates
+            if not updates:
+                return {"error": "No updates provided"}
+            
+            # Group updates by sheet
+            sheet_updates = defaultdict(list)
+            
+            for update in updates:
+                # Skip invalid update objects
+                if not isinstance(update, dict) or "cell" not in update:
+                    continue
+                    
+                cell_ref = update["cell"]
+                value = update.get("value", update.get("new_value", update.get("new", None)))
+                
+                # If the cell reference includes a sheet name (e.g., Sheet2!A1)
+                if "!" in cell_ref:
+                    sheet_name, ref = cell_ref.split("!", 1)
+                    sheet_updates[sheet_name].append({"cell": ref, "value": value})
+                else:
+                    sheet_updates[sid].append({"cell": cell_ref, "value": value})
+            
+            # Apply updates to each sheet
+            for target_sid, sheet_updates_list in sheet_updates.items():
+                try:
+                    target_sheet = wb.sheet(target_sid)
+                    if not target_sheet:
+                        results.append({"error": f"Sheet {target_sid} not found"})
+                        continue
+                        
+                    for update in sheet_updates_list:
+                        result = set_cell(update["cell"], update["value"], sheet=target_sheet)
+                        # Add sheet information to the result
+                        result["sheet_id"] = target_sid
+                        results.append(result)
+                except Exception as e:
+                    results.append({"error": f"Error updating sheet {target_sid}: {str(e)}"})
+            
+            return {"updates": results}
+        
+        # Apply the updates
+        result = set_cells_with_xref(request.updates)
+        
+        # Clear cached snapshot – changes are now accepted
+        from chat.router import PENDING_STORE
+        PENDING_STORE.pop((wid, sid), None)
+        
+        # Return the updated sheet and results
+        return {
+            "status": "success",
+            "result": result,
+            "sheet": sheet.to_dict()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/workbook/{wid}/sheet/{sid}/reject")
+async def reject_updates(wid: str, sid: str):
+    """Roll back all optimistic updates that were streamed but not applied."""
+    try:
+        from chat.router import PENDING_STORE
+        
+        key = (wid, sid)
+        snap = PENDING_STORE.pop(key, None)
+        if snap is None:
+            raise HTTPException(404, "Nothing to reject")
+            
+        # Replace the live sheet contents with the snapshot
+        wb = get_workbook(wid)
+        if not wb:
+            raise HTTPException(404, f"Workbook {wid} not found")
+            
+        # Replace the sheet in the workbook with our snapshot
+        wb._sheets[sid] = snap  # low-level swap; keep same object key
+        
+        return {
+            "status": "reverted",
+            "sheet": snap.to_dict()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
