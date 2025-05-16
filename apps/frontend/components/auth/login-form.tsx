@@ -14,11 +14,14 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
-  const searchParams = useSearchParams()
+  
+  // Using optional chaining with useSearchParams to handle server rendering safely
+  const searchParams = useSearchParams?.()
   
   // Check if we were redirected from a protected page
   useEffect(() => {
-    const from = searchParams?.get('from')
+    // Use optional chaining for more resilience during SSR
+    const from = searchParams?.get?.('from')
     if (from) {
       setError(`You need to be logged in to access ${from}`)
     }
@@ -99,7 +102,7 @@ export function LoginForm() {
       router.refresh()
       
       // Get the redirect destination, defaulting to dashboard
-      const destination = searchParams?.get('from') || '/dashboard'
+      const destination = searchParams?.get?.('from') || '/dashboard'
       router.push(destination)
     } catch (err: any) {
       console.error("Login error:", err)
