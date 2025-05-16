@@ -1,19 +1,14 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
 import { Session } from '@supabase/supabase-js'
+import { supabase } from '@/lib/supabase/client'
 
 export default function useSupabaseSession() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-    )
-
     // Get initial session
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
@@ -25,7 +20,7 @@ export default function useSupabaseSession() {
       setSession(newSession)
       
       // Handle token refresh failure
-      if (event === 'TOKEN_REFRESH_FAILED') {
+      if (event === 'TOKEN_REFRESH_FAILED' as any) {
         console.log('Token refresh failed, attempting anonymous auth')
         // Silently try to sign in anonymously or with a basic provider
         supabase.auth.signInAnonymously().catch(err => {
