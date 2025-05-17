@@ -36,10 +36,12 @@ class GroqClient(LLMClient):
         # Create new client with updated options
         new_client = GroqClient(self.api_key, self.model, **new_kw)
         
-        # Handle headers separately - Groq SDK expects headers at client creation, not call-time
+        # Handle headers separately - No longer pass headers to AsyncGroq constructor as it's not supported
         if extra_headers:
-            # Create a new client instance with headers
-            new_client.client = AsyncGroq(api_key=self.api_key, headers=extra_headers)
+            # Create a new client instance without headers parameter
+            new_client.client = AsyncGroq(api_key=self.api_key)
+            # Store headers elsewhere if needed
+            new_client._extra_headers = extra_headers
         
         # Set JSON mode flag
         new_client.force_json = force_function_usage

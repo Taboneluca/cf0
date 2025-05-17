@@ -53,8 +53,7 @@ async def _save_sheet(wid: str, sheet: Spreadsheet):
             "name": sheet.name,
             "n_rows": sheet.n_rows,
             "n_cols": sheet.n_cols,
-            "cells": json.dumps(sheet.cells, default=str),
-            "updated_at": "now()"
+            "cells": json.dumps(sheet.cells, default=str)
         }
         
         # Check if workbook exists, create it if it doesn't

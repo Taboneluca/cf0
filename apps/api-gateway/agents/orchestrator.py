@@ -35,30 +35,9 @@ class Orchestrator:
         # Configure provider-specific options
         provider = getattr(llm, 'provider', '') if hasattr(llm, 'provider') else ''
         
-        if provider == 'groq' or force_json_mode:
-            # Apply JSON mode for Groq models (Llama-3, etc.)
-            print(f"📊 Configuring {llm.model} (Groq) for JSON mode")
-            # Configure Groq client to use JSON mode
-            try:
-                if hasattr(llm, 'with_options'):
-                    self.llm = llm.with_options(
-                        extra_headers={"x-groq-format": "json"},
-                        force_function_usage=True
-                    )
-            except Exception as e:
-                print(f"⚠️ Failed to configure Groq JSON mode: {e}")
-                
-        elif provider == 'anthropic':
-            # Anthropic-specific configuration if needed
-            print(f"📊 Configuring {llm.model} (Claude) for streaming")
-            # Claude models generally handle tool calls well without special config
-            # But we can add any needed options here
-            try:
-                if hasattr(llm, 'with_options'):
-                    self.llm = llm.with_options()  # No special options needed currently
-            except Exception as e:
-                print(f"⚠️ Failed to configure Claude streaming: {e}")
-                
+        # Don't apply JSON headers when streaming is used
+        # JSON mode is incompatible with streaming in Groq
+        
         self.sheet = sheet
         self.tool_functions = tool_functions or {}
         
@@ -171,8 +150,12 @@ class Orchestrator:
         # Add sheet context if not already there
         agent.add_system_message(self.sheet_context)
         
-        # Stream from the agent
-        async for step in agent.run_iter(message, history):
+        # For ask mode, add explicit instruction to not generate any financial templates
+        if mode == "ask":
+            agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
+        
+        # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
+        async for step in agent.stream_run(message, history):
             # For analyst mode, we could add validation here if needed
             # For now, just pass through the ChatStep
             yield step
