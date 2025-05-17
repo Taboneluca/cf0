@@ -51,4 +51,5 @@ export interface Message {
   id?: string
   status?: 'thinking' | 'streaming' | 'complete'
   lastAddedSection?: string  // Tracks the most recently added section header
+  sectionStart?: boolean     // Flag when a new section is starting
 }

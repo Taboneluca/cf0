@@ -83,9 +83,21 @@ export function useChatStream(
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response body reader available');
       
-      // Add empty assistant message with "thinking" status
+      // Add empty assistant message immediately (no need to wait for 'start' event)
+      setMessages(prev => [
+        ...prev, 
+        { 
+          role: 'assistant',
+          content: '',
+          id: `assistant_${Date.now()}`,
+          status: 'thinking'
+        }
+      ]);
+      
+      // Streaming parser variables
       const decoder = new TextDecoder();
-      let buf = ''; // Buffer to accumulate partial chunks
+      let buffer = ''; // Buffer to accumulate partial chunks
+      let firstChunkProcessed = false;
       
       // Process the stream
       while (true) {
@@ -96,95 +108,84 @@ export function useChatStream(
         }
         
         // Decode and add to our buffer
-        buf += decoder.decode(value, { stream: true });
-        console.debug('[SSE buffer]', buf);
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+        console.debug('[SSE raw chunk]', buffer);
         
-        // Process complete blocks
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const block = buf.slice(0, idx);
-          buf = buf.slice(idx + 2); // Keep the remainder
+        // Process complete SSE events (split on double newlines)
+        while (true) {
+          const eventEnd = buffer.indexOf('\n\n');
+          if (eventEnd === -1) break;
           
-          console.debug('[SSE processing block]', block);
+          // Extract an event from the buffer
+          const eventText = buffer.substring(0, eventEnd);
+          buffer = buffer.substring(eventEnd + 2);
           
-          // Extract the data line from the block
-          const dataLine = block.split('\n').find(line => line.startsWith('data: '));
+          // Parse the event (format: "event: type\ndata: JSON")
+          const eventLines = eventText.split('\n');
+          const eventType = eventLines.find(line => line.startsWith('event:'))?.substring(7)?.trim();
+          const dataLine = eventLines.find(line => line.startsWith('data:'));
           
           if (!dataLine) {
-            console.debug('[SSE skip] No data line in block');
+            console.debug('[SSE skip] No data line in event:', eventText);
             continue;
           }
           
           try {
-            const event = JSON.parse(dataLine.slice(6)); // Remove 'data: ' prefix
-            console.debug('[SSE parsed event]', event);
+            const eventData = JSON.parse(dataLine.substring(5).trim());
+            console.debug(`[SSE ${eventType || 'unknown'}]`, eventData);
             
-            // Process the event based on its type
-            if (event.type === 'start') {
-              console.log('Received start event');
-              // Add a thinking message
-              setMessages(prev => [
-                ...prev, 
-                { 
-                  role: 'assistant',
-                  content: '',
-                  id: `assistant_${Date.now()}`,
-                  status: 'thinking'
-                }
-              ]);
-            } 
-            else if (event.type === 'chunk') {
-              // Update the assistant message with new text
-              console.debug(`Received text chunk: ${event.text.length} chars`);
-              
-              // Handle Llama fallback safety - if the text starts with "<function=set_cells"
-              if (typeof event.text === 'string' && event.text.startsWith('<function=set_cells')) {
-                console.log('Detected Llama function call in text, treating as tool result');
-                // TODO: Process as a tool call if needed
-                continue;
+            // Process different event types
+            if (eventType === 'start' || eventData.type === 'start') {
+              console.log('Start event received');
+              // Already added message above, just noting the start
+              firstChunkProcessed = true;
+            }
+            else if (eventType === 'chunk' || eventData.type === 'chunk') {
+              // First chunk received
+              if (!firstChunkProcessed) {
+                firstChunkProcessed = true;
               }
               
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const lastMessage = newMessages[newMessages.length - 1];
-                
-                if (lastMessage.role === 'assistant') {
-                  // Append the new text to the existing message
-                  lastMessage.content += event.text;
-                  lastMessage.status = 'streaming';
+              // Update the assistant message with new text (may be just one token)
+              if (typeof eventData.text === 'string') {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const lastMessage = newMessages[newMessages.length - 1];
                   
-                  // Detect if this is a section header being added
-                  // This will help the UI create nice visual transitions as sections form
-                  const sectionHeaderMatch = event.text.match(/^##\s+([^\n]+)$/);
-                  if (sectionHeaderMatch) {
-                    lastMessage.lastAddedSection = sectionHeaderMatch[1];
+                  if (lastMessage.role === 'assistant') {
+                    // Append the new text to the existing message
+                    lastMessage.content += eventData.text;
+                    lastMessage.status = 'streaming';
+                    
+                    // Detect section headers for better UI transitions
+                    if (lastMessage.content.endsWith('\n## ')) {
+                      lastMessage.sectionStart = true;
+                    }
+                    const fullSectionMatch = /##\s+([^\n]+)$/.exec(lastMessage.content);
+                    if (fullSectionMatch) {
+                      lastMessage.lastAddedSection = fullSectionMatch[1];
+                    }
                   }
-                } else {
-                  // If there's somehow no assistant message, add one
-                  newMessages.push({
-                    role: 'assistant',
-                    content: event.text,
-                    id: `assistant_${Date.now()}`,
-                    status: 'streaming'
-                  });
-                }
-                
-                return newMessages;
-              });
+                  
+                  return newMessages;
+                });
+              }
             }
-            else if (event.type === 'update') {
-              // Handle sheet update from tool
-              console.log('Sheet update received:', event.payload);
-              // We can optimistically update the UI here
+            else if (eventType === 'update' || eventData.type === 'update') {
+              // Handle spreadsheet update events
+              console.log('Sheet update received:', eventData.payload);
             }
-            else if (event.type === 'pending') {
-              // Store updates for later application
-              console.log(`Received ${event.updates.length} pending updates`);
-              setPendingUpdates(event.updates);
+            else if (eventType === 'pending' || eventData.type === 'pending') {
+              // Store pending updates for user approval
+              console.log(`Received ${eventData.updates?.length || 0} pending updates`);
+              if (eventData.updates && Array.isArray(eventData.updates)) {
+                setPendingUpdates(eventData.updates);
+              }
             }
-            else if (event.type === 'complete') {
-              // Mark the streaming as complete and update the sheet
-              console.log('Received completion event');
+            else if (eventType === 'complete' || eventData.type === 'complete') {
+              // Mark the streaming as complete
+              console.log('Stream complete event received');
               setMessages(prev => {
                 const newMessages = [...prev];
                 const lastMessage = newMessages[newMessages.length - 1];
@@ -196,24 +197,26 @@ export function useChatStream(
                 return newMessages;
               });
               
-              // Update the spreadsheet with the final state
-              if (event.sheet) {
-                console.log('Updating sheet with final state from server');
-                const uiSheet = backendSheetToUI(event.sheet);
+              // Update the spreadsheet with final state
+              if (eventData.sheet) {
+                console.log('Applying final sheet state from server');
+                const uiSheet = backendSheetToUI(eventData.sheet);
                 dispatch({
                   type: 'UPDATE_SHEET',
                   payload: { id: active, data: uiSheet }
                 });
               }
             }
-            else if (event.type === 'error') {
-              console.error('Streaming error:', event.error);
-              // Add an error message
+            else if (eventType === 'error' || eventData.type === 'error') {
+              // Handle error events
+              const errorMsg = eventData.error || 'Unknown streaming error';
+              console.error('Stream error:', errorMsg);
+              
               setMessages(prev => [
                 ...prev,
                 { 
                   role: 'system', 
-                  content: `Error: ${event.error}`,
+                  content: `Error: ${errorMsg}`,
                   id: `error_${Date.now()}`
                 }
               ]);
