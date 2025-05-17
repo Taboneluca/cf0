@@ -323,10 +323,15 @@ async def process_message(
         
         # Initialize the orchestrator with the LLM client and tools
         from agents.orchestrator import Orchestrator
+        
+        # For Groq models, force JSON mode
+        force_json_mode = hasattr(llm_client, 'provider') and llm_client.provider == 'groq'
+        
         orchestrator = Orchestrator(
             llm=llm_client,
             sheet=sheet,
-            tool_functions=tool_functions
+            tool_functions=tool_functions,
+            force_json_mode=force_json_mode
         )
         
         # Create sheet context summary
@@ -673,10 +678,15 @@ async def process_message_streaming(
             
             # Import and initialize orchestrator
             from agents.orchestrator import Orchestrator
+            
+            # For Groq models, force JSON mode
+            force_json_mode = hasattr(llm_client, 'provider') and llm_client.provider == 'groq'
+            
             orchestrator = Orchestrator(
                 llm=llm_client,
                 sheet=sheet,
-                tool_functions=tool_functions
+                tool_functions=tool_functions,
+                force_json_mode=force_json_mode
             )
 
             # Notify client that the assistant has started processing

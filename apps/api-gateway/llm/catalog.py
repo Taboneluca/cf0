@@ -17,6 +17,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
 # Map from provider-qualified model names to internal model IDs
 ALIAS_MAP = {
     "groq:llama-3-3-70b":          "llama-3.3-70b-versatile",
+    "groq:llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
     "anthropic:claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
     "anthropic:claude-3-5-sonnet": "claude-3-5-sonnet-20240620",
 }
