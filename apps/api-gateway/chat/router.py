@@ -5,6 +5,7 @@ import os
 from typing import Dict, Any, Optional, AsyncGenerator
 from functools import partial
 import json  # for serializing sheet state
+from dotenv import load_dotenv
 
 # Import the factory function instead of the provider registry
 from llm.factory import get_client, get_default_client
@@ -25,6 +26,9 @@ from spreadsheet_engine.operations import (
     list_sheets, get_sheet_summary
 )
 from spreadsheet_engine.templates import dcf, fsm, loader as template_loader
+
+# Flag to control template tools
+ENABLE_TEMPLATES = os.getenv("ENABLE_TEMPLATE_TOOLS", "0") == "1"
 
 # -------------------------------------------------------------------
 # Pending-changes cache  (wid,sid) ➜ Spreadsheet snapshot
@@ -271,8 +275,18 @@ async def process_message(
             
             return result
         
-        # Prepare all the tool functions
-        tool_functions = {
+        # Create a streaming wrapper for tool functions
+        def create_streaming_wrapper(tool_fn, name):
+            """Create a wrapper that logs the call"""
+            def wrapper(*args, **kwargs):
+                print(f"[{request_id}] 🔧 Streaming tool call: {name}")
+                result = tool_fn(*args, **kwargs)
+                return result
+            return wrapper
+            
+        # Prepare all the tool functions with streaming wrappers
+        tool_functions = {}
+        for name, fn in {
             "get_cell": _wrap_get_cell(get_cell, sheet),
             "get_range": _wrap_get_range(get_range, sheet),
             "calculate": _wrap_calculate(calculate, sheet),
@@ -293,20 +307,27 @@ async def process_message(
             "create_new_sheet": partial(create_new_sheet, sheet=sheet),
             "list_sheets": partial(list_sheets, wid=wid),
             "get_sheet_summary": partial(get_sheet_summary, wid=wid),
-            "insert_template_sheets": partial(template_loader.insert_template_sheets,
-                                              wb=workbook)
-        }
+        }.items():
+            tool_functions[name] = create_streaming_wrapper(fn, name)
         
-        # Template-specific tools
-        template_functions = {
-            "insert_fsm_template": partial(fsm.insert_template, workbook=workbook),
-            "insert_dcf_template": partial(dcf.insert_template, workbook=workbook),
-            "insert_dcf_model": partial(dcf.build_dcf, wb=workbook),
-            "insert_fsm_model": partial(fsm.build_fsm, wb=workbook)
-        }
+        # Add template tools only if enabled
+        if ENABLE_TEMPLATES:
+            template_functions = {
+                "insert_template_sheets": partial(template_loader.insert_template_sheets, wb=workbook),
+                "insert_fsm_template": partial(fsm.insert_template, workbook=workbook),
+                "insert_dcf_template": partial(dcf.insert_template, workbook=workbook),
+                "insert_dcf_model": partial(dcf.build_dcf, wb=workbook),
+                "insert_fsm_model": partial(fsm.build_fsm, wb=workbook)
+            }
+            # Add the template tools wrapper
+            for name, fn in template_functions.items():
+                tool_functions[name] = create_streaming_wrapper(fn, name)
         
-        # Add the template tools to the tool functions
-        tool_functions.update(template_functions)
+        # For ask mode, restrict to read-only tools
+        if mode == "ask":
+            read_only_tools = {k: v for k, v in tool_functions.items() 
+                              if k in {"get_cell", "get_range", "sheet_summary", "calculate"}}
+            tool_functions = read_only_tools
         
         # Set up LLM client using factory
         try:
@@ -642,19 +663,27 @@ async def process_message_streaming(
             "create_new_sheet": partial(create_new_sheet, sheet=sheet),
             "list_sheets": partial(list_sheets, wid=wid),
             "get_sheet_summary": partial(get_sheet_summary, wid=wid),
-            "insert_template_sheets": partial(template_loader.insert_template_sheets,
-                                              wb=workbook)
         }.items():
             tool_functions[name] = create_streaming_wrapper(fn, name)
         
-        # Template-specific tools
-        for name, fn in {
-            "insert_fsm_template": partial(fsm.insert_template, workbook=workbook),
-            "insert_dcf_template": partial(dcf.insert_template, workbook=workbook),
-            "insert_dcf_model": partial(dcf.build_dcf, wb=workbook),
-            "insert_fsm_model": partial(fsm.build_fsm, wb=workbook)
-        }.items():
-            tool_functions[name] = create_streaming_wrapper(fn, name)
+        # Add template tools only if enabled
+        if ENABLE_TEMPLATES:
+            template_functions = {
+                "insert_template_sheets": partial(template_loader.insert_template_sheets, wb=workbook),
+                "insert_fsm_template": partial(fsm.insert_template, workbook=workbook),
+                "insert_dcf_template": partial(dcf.insert_template, workbook=workbook),
+                "insert_dcf_model": partial(dcf.build_dcf, wb=workbook),
+                "insert_fsm_model": partial(fsm.build_fsm, wb=workbook)
+            }
+            # Add the template tools wrapper
+            for name, fn in template_functions.items():
+                tool_functions[name] = create_streaming_wrapper(fn, name)
+        
+        # For ask mode, restrict to read-only tools
+        if mode == "ask":
+            read_only_tools = {k: v for k, v in tool_functions.items() 
+                              if k in {"get_cell", "get_range", "sheet_summary", "calculate"}}
+            tool_functions = read_only_tools
         
         # Set up LLM client using factory
         try:
