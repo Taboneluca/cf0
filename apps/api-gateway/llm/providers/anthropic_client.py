@@ -10,10 +10,37 @@ def _prune_none(d: dict[str, Any]) -> dict[str, Any]:
 
 class AnthropicClient(LLMClient):
     name = "anthropic"
+    provider = "anthropic"  # Add provider property for detection
 
     def __init__(self, api_key: str, model: str, **kw):
         super().__init__(api_key, model, **kw)
         self.client = AsyncAnthropic(api_key=api_key)
+
+    def with_options(self, **options):
+        """Create a new client with additional options"""
+        new_kw = dict(self.kw)
+        # Update with new options
+        extra_headers = None
+        force_function_usage = False
+        
+        # Extract special options
+        for k, v in options.items():
+            if k == 'extra_headers':
+                extra_headers = v
+            elif k == 'force_function_usage':
+                force_function_usage = v
+            else:
+                new_kw[k] = v
+        
+        # Create new client with updated options
+        new_client = AnthropicClient(self.api_key, self.model, **new_kw)
+        
+        # Handle headers separately if needed
+        if extra_headers:
+            # Anthropic client takes headers at client creation
+            new_client.client = AsyncAnthropic(api_key=self.api_key, headers=extra_headers)
+        
+        return new_client
 
     def to_provider_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """Convert standard messages to Anthropic format"""
@@ -156,6 +183,7 @@ class AnthropicClient(LLMClient):
         params = _prune_none(params)
         self.kw = _prune_none(self.kw)
         
+        # Get the stream response
         response_stream = await self.client.messages.create(
             model=self.model,
             messages=claude_messages,
@@ -166,47 +194,86 @@ class AnthropicClient(LLMClient):
             **params,
         )
         
+        # Initialize accumulators for content and tool calls
         current_content = ""
         current_tool_calls = {}  # id -> tool call
         
-        async for chunk in response_stream:
-            if hasattr(chunk, "delta") and hasattr(chunk.delta, "text"):
-                current_content += chunk.delta.text
+        # Process each streaming event
+        async for event in response_stream:
+            new_content = None
+            new_tool_data = None
+            
+            # Process different types of events from Claude's streaming API
+            if event.type == "content_block_start":
+                # Content block started
+                pass
                 
-            if hasattr(chunk, "delta") and hasattr(chunk.delta, "tool_use"):
-                tool_use = chunk.delta.tool_use
+            elif event.type == "content_block_delta":
+                # Handle content delta (the most common event type)
+                if hasattr(event, "delta") and hasattr(event.delta, "text"):
+                    new_content = event.delta.text
+                    current_content += new_content
+            
+            elif event.type == "content_block_stop":
+                # Content block completed
+                pass
                 
-                # Get or initialize tool call
-                if tool_use.id not in current_tool_calls:
-                    current_tool_calls[tool_use.id] = {
-                        "id": tool_use.id,
-                        "name": tool_use.name if hasattr(tool_use, "name") else "",
-                        "input": {}
-                    }
+            elif event.type == "message_start":
+                # Message started
+                pass
                 
-                # Update the tool call with new data
-                if hasattr(tool_use, "name") and tool_use.name:
-                    current_tool_calls[tool_use.id]["name"] = tool_use.name
+            elif event.type == "message_delta":
+                # Message metadata changed
+                pass
+                
+            elif event.type == "message_stop":
+                # Message completed
+                pass
+                
+            elif event.type == "content_block_delta" and hasattr(event, "delta") and hasattr(event.delta, "type") and event.delta.type == "tool_use":
+                # Handle tool use delta
+                tool_use = event.delta
+                
+                if hasattr(tool_use, "id") and tool_use.id:
+                    tool_id = tool_use.id
                     
-                if hasattr(tool_use, "input") and tool_use.input:
-                    # Merge the input dictionaries
-                    current_tool_calls[tool_use.id]["input"].update(tool_use.input)
+                    # Initialize tool call if it doesn't exist
+                    if tool_id not in current_tool_calls:
+                        current_tool_calls[tool_id] = {
+                            "id": tool_id,
+                            "name": getattr(tool_use, "name", "") if hasattr(tool_use, "name") else "",
+                            "input": {}
+                        }
+                    
+                    # Update tool data
+                    if hasattr(tool_use, "name") and tool_use.name:
+                        current_tool_calls[tool_id]["name"] = tool_use.name
+                        
+                    if hasattr(tool_use, "input") and tool_use.input:
+                        # Merge input dictionaries (Claude may stream tool input in parts)
+                        if isinstance(tool_use.input, dict):
+                            current_tool_calls[tool_id]["input"].update(tool_use.input)
+                        
+                    # Signal that we have new tool data
+                    new_tool_data = True
             
-            # Convert current state to AIResponse
-            tool_calls = []
-            for tc_data in current_tool_calls.values():
-                # Only add if we have a name
-                if tc_data["name"]:
-                    tool_calls.append(ToolCall(
-                        name=tc_data["name"],
-                        args=tc_data["input"],
-                        id=tc_data["id"]
-                    ))
-            
-            yield AIResponse(
-                content=current_content,
-                tool_calls=tool_calls
-            )
+            # If we have new content or tool data, emit an AIResponse
+            if new_content or new_tool_data:
+                # Convert current state to AIResponse
+                tool_calls = []
+                for tc_data in current_tool_calls.values():
+                    # Only include valid tool calls with a name
+                    if tc_data["name"]:
+                        tool_calls.append(ToolCall(
+                            name=tc_data["name"],
+                            args=tc_data["input"],
+                            id=tc_data["id"]
+                        ))
+                
+                yield AIResponse(
+                    content=current_content,
+                    tool_calls=tool_calls
+                )
 
     @property
     def supports_tool_calls(self) -> bool:
