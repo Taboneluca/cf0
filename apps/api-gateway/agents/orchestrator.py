@@ -32,19 +32,32 @@ class Orchestrator:
         """
         self.llm = llm
         
-        # Apply JSON mode for Groq models
-        if force_json_mode or (hasattr(llm, 'provider') and llm.provider == 'groq'):
-            print(f"📊 Configuring {llm.model} for JSON mode")
-            # Try to configure the model to use JSON mode
+        # Configure provider-specific options
+        provider = getattr(llm, 'provider', '') if hasattr(llm, 'provider') else ''
+        
+        if provider == 'groq' or force_json_mode:
+            # Apply JSON mode for Groq models (Llama-3, etc.)
+            print(f"📊 Configuring {llm.model} (Groq) for JSON mode")
+            # Configure Groq client to use JSON mode
             try:
                 if hasattr(llm, 'with_options'):
                     self.llm = llm.with_options(
                         extra_headers={"x-groq-format": "json"},
                         force_function_usage=True
                     )
-                # Alternatively, some providers might need different configuration
             except Exception as e:
-                print(f"⚠️ Failed to configure JSON mode: {e}")
+                print(f"⚠️ Failed to configure Groq JSON mode: {e}")
+                
+        elif provider == 'anthropic':
+            # Anthropic-specific configuration if needed
+            print(f"📊 Configuring {llm.model} (Claude) for streaming")
+            # Claude models generally handle tool calls well without special config
+            # But we can add any needed options here
+            try:
+                if hasattr(llm, 'with_options'):
+                    self.llm = llm.with_options()  # No special options needed currently
+            except Exception as e:
+                print(f"⚠️ Failed to configure Claude streaming: {e}")
                 
         self.sheet = sheet
         self.tool_functions = tool_functions or {}

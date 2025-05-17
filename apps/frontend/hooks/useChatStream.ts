@@ -121,6 +121,12 @@ export function useChatStream(
           const eventText = buffer.substring(0, eventEnd);
           buffer = buffer.substring(eventEnd + 2);
           
+          // Skip ping events (Anthropic sends these)
+          if (eventText.startsWith('event: ping')) {
+            console.debug('[SSE ping] Heartbeat received');
+            continue;
+          }
+          
           // Parse the event (format: "event: type\ndata: JSON")
           const eventLines = eventText.split('\n');
           const eventType = eventLines.find(line => line.startsWith('event:'))?.substring(7)?.trim();
@@ -135,19 +141,16 @@ export function useChatStream(
             const eventData = JSON.parse(dataLine.substring(5).trim());
             console.debug(`[SSE ${eventType || 'unknown'}]`, eventData);
             
-            // Process different event types
+            // Process different providers' event types:
+            
+            // 1. Our standard internal event types
             if (eventType === 'start' || eventData.type === 'start') {
               console.log('Start event received');
               // Already added message above, just noting the start
               firstChunkProcessed = true;
             }
             else if (eventType === 'chunk' || eventData.type === 'chunk') {
-              // First chunk received
-              if (!firstChunkProcessed) {
-                firstChunkProcessed = true;
-              }
-              
-              // Update the assistant message with new text (may be just one token)
+              // This is our standard format for text chunks (all providers mapped to this)
               if (typeof eventData.text === 'string') {
                 setMessages(prev => {
                   const newMessages = [...prev];
@@ -172,6 +175,29 @@ export function useChatStream(
                 });
               }
             }
+            
+            // 2. Anthropic specific events (these should be translated on the server side, 
+            // but we handle them here just in case they come through directly)
+            else if (eventType === 'content_block_delta' && eventData.delta?.text) {
+              // Anthropic sends content_block_delta with text property
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const lastMessage = newMessages[newMessages.length - 1];
+                
+                if (lastMessage.role === 'assistant') {
+                  lastMessage.content += eventData.delta.text;
+                  lastMessage.status = 'streaming';
+                }
+                
+                return newMessages;
+              });
+            }
+            else if (eventType === 'content_block_delta' && eventData.delta?.type === 'tool_use') {
+              // Anthropic tool use events (handled by the server)
+              console.debug('[SSE Anthropic tool]', eventData.delta);
+            }
+            
+            // 3. Standard spreadsheet events
             else if (eventType === 'update' || eventData.type === 'update') {
               // Handle spreadsheet update events
               console.log('Sheet update received:', eventData.payload);

@@ -679,8 +679,14 @@ async def process_message_streaming(
             # Import and initialize orchestrator
             from agents.orchestrator import Orchestrator
             
-            # For Groq models, force JSON mode
-            force_json_mode = hasattr(llm_client, 'provider') and llm_client.provider == 'groq'
+            # Determine provider-specific settings
+            provider = ""
+            if hasattr(llm_client, 'provider'):
+                provider = llm_client.provider
+                
+            # Provider-specific configurations
+            force_json_mode = provider == 'groq'  # For Groq/Llama models
+            use_native_tools = provider == 'anthropic'  # For Claude models
             
             orchestrator = Orchestrator(
                 llm=llm_client,

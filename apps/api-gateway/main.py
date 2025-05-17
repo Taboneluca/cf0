@@ -348,6 +348,11 @@ async def stream_chat(req: ChatRequest):
             yield start_event
             print(f"[{request_id}] 📤 Sent start event")
             
+            # Detect which provider we're using (for logging purposes)
+            provider = "default"
+            if req.model:
+                provider = req.model.split(":")[0] if ":" in req.model else req.model
+                
             # Process the message with streaming
             async for chunk in process_message_streaming(
                 req.mode, 
@@ -374,20 +379,20 @@ async def stream_chat(req: ChatRequest):
                 if event_type == 'chunk' and 'text' in chunk:
                     # For text chunks, print a sample (useful for verifying token-by-token streaming)
                     text_preview = chunk['text'].replace('\n', '\\n')[:30]
-                    print(f"[{request_id}] 💬 Text chunk[{len(chunk['text'])}]: '{text_preview}...'")
+                    print(f"[{request_id}] 💬 {provider} text chunk[{len(chunk['text'])}]: '{text_preview}...'")
                 elif event_type == 'update':
-                    print(f"[{request_id}] 🔄 Update event: {json.dumps(chunk)[:40]}...")
+                    print(f"[{request_id}] 🔄 {provider} update event: {json.dumps(chunk)[:40]}...")
                 elif event_type == 'pending':
-                    print(f"[{request_id}] 📝 Pending updates: {len(chunk.get('updates', []))} items")
+                    print(f"[{request_id}] 📝 {provider} pending updates: {len(chunk.get('updates', []))} items")
                 elif event_type == 'complete':
-                    print(f"[{request_id}] ✅ Completion event")
+                    print(f"[{request_id}] ✅ {provider} completion event")
                 elif event_type == 'error':
-                    print(f"[{request_id}] ❌ Error event: {chunk.get('error', 'Unknown error')}")
+                    print(f"[{request_id}] ❌ {provider} error event: {chunk.get('error', 'Unknown error')}")
                     
-                # Force flush if possible (helps ensure chunks go out as soon as possible)
+                # Force flush to ensure token-by-token streaming
                 await asyncio.sleep(0)
             
-            print(f"[{request_id}] ✅ SSE stream completed")
+            print(f"[{request_id}] ✅ SSE stream completed for {provider}")
         
         return StreamingResponse(
             event_generator(),
