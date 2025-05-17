@@ -56,6 +56,7 @@ export function useChatStream(
     const signal = abortControllerRef.current.signal;
     
     try {
+      console.log(`Starting chat stream request: mode=${mode}, wid=${wid}, sid=${active}, model=${model || 'default'}`);
       // Create unique request URL
       const apiUrl = `/api/chat/stream`;
       const response = await fetch(apiUrl, {
@@ -76,6 +77,8 @@ export function useChatStream(
         throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
       }
       
+      console.log('Stream response initiated successfully');
+      
       // Set up server-sent events
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response body reader available');
@@ -87,25 +90,42 @@ export function useChatStream(
       // Process the stream
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log('Stream complete - reader done');
+          break;
+        }
         
         const chunk = eventSource.decode(value);
-        const events = chunk
-          .split('\n\n')
-          .filter(line => line.trim() !== '' && line.startsWith('data: '))
-          .map(line => {
-            try {
-              return JSON.parse(line.slice(6)); // Remove 'data: ' prefix
-            } catch (e) {
-              console.error('Error parsing SSE event:', e, line);
-              return null;
-            }
-          })
-          .filter(Boolean) as StreamEvent[];
+        console.debug('[SSE raw chunk]', chunk);
+        
+        // Parse the SSE events correctly
+        const events: StreamEvent[] = [];
+        for (const block of chunk.split('\n\n')) {
+          if (!block.trim()) continue;
+          
+          console.debug('[SSE processing block]', block);
+          const dataLine = block.split('\n').find(line => line.startsWith('data: '));
+          
+          if (!dataLine) {
+            console.debug('[SSE skip] No data line in block');
+            continue;
+          }
+          
+          try {
+            const parsed = JSON.parse(dataLine.slice(6)); // Remove 'data: ' prefix
+            events.push(parsed);
+            console.debug('[SSE parsed event]', parsed);
+          } catch (e) {
+            console.error('Error parsing SSE event:', e, dataLine);
+          }
+        }
+        
+        console.debug(`[SSE chunk] Parsed ${events.length} events`);
         
         // Process each event
         for (const event of events) {
           if (event.type === 'start') {
+            console.log('Received start event');
             // Add a thinking message
             setMessages(prev => [
               ...prev, 
@@ -119,6 +139,7 @@ export function useChatStream(
           } 
           else if (event.type === 'chunk') {
             // Update the assistant message with new text
+            console.debug(`Received text chunk: ${event.text.length} chars`);
             setMessages(prev => {
               const newMessages = [...prev];
               const lastMessage = newMessages[newMessages.length - 1];
@@ -149,15 +170,17 @@ export function useChatStream(
           }
           else if (event.type === 'update') {
             // Handle sheet update from tool
-            console.log('Sheet update:', event.payload);
+            console.log('Sheet update received:', event.payload);
             // We can optimistically update the UI here
           }
           else if (event.type === 'pending') {
             // Store updates for later application
+            console.log(`Received ${event.updates.length} pending updates`);
             setPendingUpdates(event.updates);
           }
           else if (event.type === 'complete') {
             // Mark the streaming as complete and update the sheet
+            console.log('Received completion event');
             setMessages(prev => {
               const newMessages = [...prev];
               const lastMessage = newMessages[newMessages.length - 1];
@@ -171,6 +194,7 @@ export function useChatStream(
             
             // Update the spreadsheet with the final state
             if (event.sheet) {
+              console.log('Updating sheet with final state from server');
               const uiSheet = backendSheetToUI(event.sheet);
               dispatch({
                 type: 'UPDATE_SHEET',
@@ -208,11 +232,13 @@ export function useChatStream(
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
+      console.log('Chat stream request completed');
     }
   }, [active, dispatch, isStreaming, mode, setMessages, wid]);
 
   const cancelStream = useCallback(() => {
     if (abortControllerRef.current) {
+      console.log('Manually cancelling active stream');
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsStreaming(false);
@@ -222,6 +248,7 @@ export function useChatStream(
   const applyPendingUpdates = useCallback(async () => {
     if (pendingUpdates.length === 0) return;
     
+    console.log(`Applying ${pendingUpdates.length} pending updates to workbook`);
     try {
       const response = await fetch(`/api/workbook/${wid}/sheet/${active}/apply`, {
         method: 'POST',
@@ -239,6 +266,7 @@ export function useChatStream(
       // Refresh the sheet data
       const data = await response.json();
       if (data.sheet) {
+        console.log('Updates applied, refreshing sheet data');
         const uiSheet = backendSheetToUI(data.sheet);
         dispatch({
           type: 'UPDATE_SHEET',
@@ -252,6 +280,7 @@ export function useChatStream(
 
   const rejectPendingUpdates = useCallback(() => {
     // Simply clear pending updates without applying them
+    console.log('Rejecting pending updates');
     setPendingUpdates([]);
   }, []);
 

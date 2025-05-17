@@ -340,6 +340,9 @@ async def stream_chat(req: ChatRequest):
         
         # Define the streaming generator
         async def event_generator():
+            request_id = f"sse-{int(time.time()*1000)}"
+            print(f"[{request_id}] 🚀 Starting SSE stream for mode={req.mode}, wid={req.wid}, sid={req.sid}")
+            
             # Process the message with streaming
             async for chunk in process_message_streaming(
                 req.mode, 
@@ -359,7 +362,16 @@ async def stream_chat(req: ChatRequest):
                 event_type = chunk.get('type', 'chunk')
                 
                 # Send each chunk with its appropriate event type
-                yield f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
+                sse_payload = f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
+                print(f"[{request_id}] 📤 Sending SSE: event={event_type}, data_length={len(json.dumps(chunk))}")
+                
+                # Print the first few chars of text chunks for debugging
+                if event_type == 'chunk' and 'text' in chunk:
+                    print(f"[{request_id}] 💬 Text chunk: {chunk['text'][:40]}...")
+                
+                yield sse_payload
+                
+            print(f"[{request_id}] ✅ SSE stream completed")
         
         return StreamingResponse(
             event_generator(),

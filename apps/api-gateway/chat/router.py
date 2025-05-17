@@ -695,12 +695,14 @@ async def process_message_streaming(
                 if chunk.role == "assistant" and chunk.content:
                     # Format the text chunk and stream it
                     content_buffer += chunk.content
+                    print(f"[{request_id}] ⇢ Emitting chunk: {chunk.content[:40]}...")
                     yield {"type": "chunk", "text": chunk.content}
                 
                 elif chunk.role == "tool" and chunk.toolResult:
                     # For tool results, we stream an indicator and trigger UI update
                     tool_result = chunk.toolResult
                     tool_name = chunk.toolCall["name"] if chunk.toolCall else "unknown-tool"
+                    print(f"[{request_id}] ⇢ Tool result from {tool_name}: {str(tool_result)[:100]}...")
                     
                     # Skip read-only operations
                     if tool_name != "get_cell" and tool_name != "get_range":
@@ -712,6 +714,7 @@ async def process_message_streaming(
                                 collected_updates.append(tool_result)
                             
                             # Stream the update info to client for live updates
+                            print(f"[{request_id}] ⇢ Emitting update from {tool_name}")
                             yield {"type": "update", "payload": tool_result}
             
             # Save conversation history (optimistic, we have a complete response)
@@ -728,6 +731,7 @@ async def process_message_streaming(
             
             # End with the final sheet state
             sheet_output = sheet.to_dict()
+            print(f"[{request_id}] ⇢ Emitting completion event with final sheet state")
             yield {"type": "complete", "sheet": sheet_output}
             
         except Exception as e:
