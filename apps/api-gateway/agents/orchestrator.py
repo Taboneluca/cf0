@@ -19,7 +19,8 @@ class Orchestrator:
     def __init__(self, 
                  llm: LLMClient,
                  sheet: Spreadsheet,
-                 tool_functions: Dict[str, callable] = None):
+                 tool_functions: Dict[str, callable] = None,
+                 force_json_mode: bool = False):
         """
         Initialize the orchestrator with the LLM client that will be used for all steps.
         
@@ -27,8 +28,24 @@ class Orchestrator:
             llm: LLM client that will be used for all agent interactions
             sheet: The spreadsheet object to operate on
             tool_functions: Dictionary of tool functions to use
+            force_json_mode: Force JSON mode for models like Groq/Llama that need explicit instructions
         """
         self.llm = llm
+        
+        # Apply JSON mode for Groq models
+        if force_json_mode or (hasattr(llm, 'provider') and llm.provider == 'groq'):
+            print(f"📊 Configuring {llm.model} for JSON mode")
+            # Try to configure the model to use JSON mode
+            try:
+                if hasattr(llm, 'with_options'):
+                    self.llm = llm.with_options(
+                        extra_headers={"x-groq-format": "json"},
+                        force_function_usage=True
+                    )
+                # Alternatively, some providers might need different configuration
+            except Exception as e:
+                print(f"⚠️ Failed to configure JSON mode: {e}")
+                
         self.sheet = sheet
         self.tool_functions = tool_functions or {}
         

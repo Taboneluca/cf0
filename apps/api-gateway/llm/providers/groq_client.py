@@ -10,10 +10,28 @@ def _prune_none(d: dict[str, Any]) -> dict[str, Any]:
 
 class GroqClient(LLMClient):
     name = "groq"
+    provider = "groq"  # Add provider property for detection
 
     def __init__(self, api_key: str, model: str, **kw):
         super().__init__(api_key, model, **kw)
         self.client = AsyncGroq(api_key=api_key)
+    
+    def with_options(self, **options):
+        """Create a new client with additional options"""
+        new_kw = dict(self.kw)
+        # Update with new options
+        for k, v in options.items():
+            if k == 'extra_headers':
+                # Special handling for headers
+                new_kw['headers'] = {**(new_kw.get('headers', {})), **v}
+            elif k == 'force_function_usage':
+                # This is a flag for internal use, not passed to API
+                pass
+            else:
+                new_kw[k] = v
+                
+        # Create new client with updated options
+        return GroqClient(self.api_key, self.model, **new_kw)
     
     def to_provider_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """Convert standard messages to Groq format"""
