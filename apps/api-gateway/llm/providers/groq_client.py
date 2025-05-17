@@ -15,23 +15,35 @@ class GroqClient(LLMClient):
     def __init__(self, api_key: str, model: str, **kw):
         super().__init__(api_key, model, **kw)
         self.client = AsyncGroq(api_key=api_key)
+        self.force_json = False
     
     def with_options(self, **options):
         """Create a new client with additional options"""
         new_kw = dict(self.kw)
         # Update with new options
+        extra_headers = None
+        force_function_usage = False
+        
+        # Extract special options
         for k, v in options.items():
             if k == 'extra_headers':
-                # Special handling for headers
-                new_kw['headers'] = {**(new_kw.get('headers', {})), **v}
+                extra_headers = v
             elif k == 'force_function_usage':
-                # This is a flag for internal use, not passed to API
-                pass
+                force_function_usage = v
             else:
                 new_kw[k] = v
-                
+        
         # Create new client with updated options
-        return GroqClient(self.api_key, self.model, **new_kw)
+        new_client = GroqClient(self.api_key, self.model, **new_kw)
+        
+        # Handle headers separately - Groq SDK expects headers at client creation, not call-time
+        if extra_headers:
+            # Create a new client instance with headers
+            new_client.client = AsyncGroq(api_key=self.api_key, headers=extra_headers)
+        
+        # Set JSON mode flag
+        new_client.force_json = force_function_usage
+        return new_client
     
     def to_provider_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """Convert standard messages to Groq format"""
@@ -133,6 +145,10 @@ class GroqClient(LLMClient):
         params = _prune_none(params)
         self.kw = _prune_none(self.kw)
         
+        # Force JSON response format if needed
+        if self.force_json and tools:
+            params["response_format"] = {"type": "json_object"}
+        
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=groq_messages,
@@ -166,6 +182,10 @@ class GroqClient(LLMClient):
         # Remove None values from parameters
         params = _prune_none(params)
         self.kw = _prune_none(self.kw)
+        
+        # Force JSON response format if needed
+        if self.force_json and tools:
+            params["response_format"] = {"type": "json_object"}
         
         response_stream = await self.client.chat.completions.create(
             model=self.model,

@@ -343,6 +343,11 @@ async def stream_chat(req: ChatRequest):
             request_id = f"sse-{int(time.time()*1000)}"
             print(f"[{request_id}] 🚀 Starting SSE stream for mode={req.mode}, wid={req.wid}, sid={req.sid}")
             
+            # Send the initial 'start' event (important for clients to initialize state)
+            start_event = f"event: start\ndata: {json.dumps({'type': 'start'})}\n\n"
+            yield start_event
+            print(f"[{request_id}] 📤 Sent start event")
+            
             # Process the message with streaming
             async for chunk in process_message_streaming(
                 req.mode, 
@@ -361,21 +366,37 @@ async def stream_chat(req: ChatRequest):
                 # Each chunk already has a 'type' field that determines the event
                 event_type = chunk.get('type', 'chunk')
                 
-                # Send each chunk with its appropriate event type
+                # Format and send as Server-Sent Event
                 sse_payload = f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
-                print(f"[{request_id}] 📤 Sending SSE: event={event_type}, data_length={len(json.dumps(chunk))}")
-                
-                # Print the first few chars of text chunks for debugging
-                if event_type == 'chunk' and 'text' in chunk:
-                    print(f"[{request_id}] 💬 Text chunk: {chunk['text'][:40]}...")
-                
                 yield sse_payload
                 
+                # Print debug info about the event
+                if event_type == 'chunk' and 'text' in chunk:
+                    # For text chunks, print a sample (useful for verifying token-by-token streaming)
+                    text_preview = chunk['text'].replace('\n', '\\n')[:30]
+                    print(f"[{request_id}] 💬 Text chunk[{len(chunk['text'])}]: '{text_preview}...'")
+                elif event_type == 'update':
+                    print(f"[{request_id}] 🔄 Update event: {json.dumps(chunk)[:40]}...")
+                elif event_type == 'pending':
+                    print(f"[{request_id}] 📝 Pending updates: {len(chunk.get('updates', []))} items")
+                elif event_type == 'complete':
+                    print(f"[{request_id}] ✅ Completion event")
+                elif event_type == 'error':
+                    print(f"[{request_id}] ❌ Error event: {chunk.get('error', 'Unknown error')}")
+                    
+                # Force flush if possible (helps ensure chunks go out as soon as possible)
+                await asyncio.sleep(0)
+            
             print(f"[{request_id}] ✅ SSE stream completed")
         
         return StreamingResponse(
             event_generator(),
-            media_type="text/event-stream"
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"  # Helps with NGINX buffering
+            }
         )
         
     except Exception as e:
