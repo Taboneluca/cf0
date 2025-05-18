@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Iterable, Dict, Any, List, Optional, AsyncGenerator
+from typing import Iterable, Dict, Any, List, Optional, AsyncGenerator, Callable
 from .chat_types import Message, AIResponse
 
 class LLMClient(ABC):
@@ -51,6 +51,49 @@ class LLMClient(ABC):
             AIResponse chunks as they are generated
         """
         pass
+    
+    async def consume_stream(
+        self, 
+        messages: List[Message],
+        on_chunk: Callable[[AIResponse], None] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **params
+    ) -> AIResponse:
+        """
+        Helper function to consume a stream and gather full response.
+        Properly iterates through the async generator.
+        
+        Args:
+            messages: List of standardized Message objects
+            on_chunk: Optional callback function to process each chunk
+            tools: List of tools to make available to the model
+            params: Additional parameters for the provider
+            
+        Returns:
+            Final complete AIResponse
+        """
+        current_content = ""
+        current_tool_calls = []
+        
+        # Properly iterate through the async generator with async for
+        async for chunk in self.stream_chat(messages=messages, tools=tools, **params):
+            # Call the callback function if provided
+            if on_chunk:
+                on_chunk(chunk)
+                
+            # Accumulate content if present
+            if chunk.content is not None:
+                current_content = chunk.content
+            
+            # Use the latest tool calls from the stream
+            if chunk.tool_calls:
+                current_tool_calls = chunk.tool_calls
+        
+        # Return the final complete response
+        return AIResponse(
+            content=current_content,
+            tool_calls=current_tool_calls
+        )
     
     @abstractmethod
     def to_provider_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:

@@ -4,6 +4,15 @@ from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
+# Model alias mapping to normalize model names
+MODEL_ALIASES = {
+    "llama3-8b-8192": "llama3-8b-8192",          # official slug
+    "llama-3-8b": "llama3-8b-8192",              # fall-back
+    "llama3-70b-8192": "llama3-70b-8192",        # official slug
+    "llama-3-70b": "llama3-70b-8192",            # fall-back
+    "llama-3.3-70b-versatile": "llama-3.3-70b-versatile", # official slug
+}
+
 def _prune_none(d: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of d without keys whose value is None."""
     return {k: v for k, v in d.items() if v is not None}
@@ -13,6 +22,13 @@ class GroqClient(LLMClient):
     provider = "groq"  # Add provider property for detection
 
     def __init__(self, api_key: str, model: str, **kw):
+        # Normalize model name - strip 'groq:' prefix if present 
+        # and map through aliases if needed
+        if model.startswith("groq:"):
+            model = model.removeprefix("groq:")
+        # Look up in alias table for standardization
+        model = MODEL_ALIASES.get(model, model)
+        
         super().__init__(api_key, model, **kw)
         self.client = AsyncGroq(api_key=api_key)
         self.force_json = False
