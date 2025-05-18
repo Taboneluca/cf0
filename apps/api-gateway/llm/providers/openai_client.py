@@ -194,6 +194,7 @@ class OpenAIClient(LLMClient):
         retry_count = 0
         while True:
             try:
+                # First await the response stream creation to get the async generator
                 response_stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=openai_messages,
@@ -206,6 +207,7 @@ class OpenAIClient(LLMClient):
                 current_content = ""
                 current_tool_calls = {}  # id -> tool call
                 
+                # Now iterate on the response stream
                 async for chunk in response_stream:
                     delta = chunk.choices[0].delta
                     

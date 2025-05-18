@@ -190,6 +190,7 @@ class GroqClient(LLMClient):
         if "response_format" in params:
             del params["response_format"]
         
+        # First await the response stream creation to get the async generator
         response_stream = await self.client.chat.completions.create(
             model=self.model,
             messages=groq_messages,
@@ -202,6 +203,7 @@ class GroqClient(LLMClient):
         current_content = ""
         current_tool_calls = {}  # id -> tool call
         
+        # Now iterate on the response stream
         async for chunk in response_stream:
             delta = chunk.choices[0].delta
             
