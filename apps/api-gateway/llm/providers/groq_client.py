@@ -137,8 +137,21 @@ class GroqClient(LLMClient):
             usage=usage
         )
 
-    async def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
+    # We need a non-async method to return an async generator without becoming a coroutine
+    def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
         """Send a chat completion request to Groq"""
+        # CRITICAL FIX: This method is no longer async, so it won't turn into a coroutine
+        # when returning an async generator from stream_chat
+        
+        if stream:
+            # This now works correctly - returning an async generator from a non-async method
+            return self.stream_chat(messages, tools, **params)
+            
+        # For non-streaming, we use a special helper that runs the async code
+        return self._chat_sync(messages, tools, **params)
+    
+    async def _chat_sync(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params):
+        """Internal async helper for non-streaming chat"""
         def _wrap_tools(tools):
             if not tools:
                 return None
@@ -153,10 +166,6 @@ class GroqClient(LLMClient):
                     }
                 })
             return wrapped
-            
-        if stream:
-            # Return the async generator directly - don't use 'return await' which unwraps the generator
-            return self.stream_chat(messages, tools, **params)
             
         groq_messages = self.to_provider_messages(messages)
         
@@ -207,70 +216,79 @@ class GroqClient(LLMClient):
         if "response_format" in params:
             del params["response_format"]
         
-        # Create the stream without awaiting
-        response_stream = self.client.chat.completions.create(
-            model=self.model,
-            messages=groq_messages,
-            stream=True,
-            tools=_wrap_tools(tools),
-            **self.kw,
-            **params,
-        )
-        
-        current_content = ""
-        current_tool_calls = {}  # id -> tool call
-        
-        # Now iterate on the response stream
-        async for chunk in response_stream:
-            delta = chunk.choices[0].delta
+        # CRITICAL FIX: Yield immediately to ensure this is an async generator
+        # This initial yield must happen before any awaits
+        yield AIResponse(content="", tool_calls=[])
             
-            # Handle new content
-            if delta.content:
-                current_content += delta.content
-            
-            # Handle tool calls
-            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    tc_id = tc_delta.id
-                    
-                    # Initialize tool call if new
-                    if tc_id not in current_tool_calls:
-                        current_tool_calls[tc_id] = {
-                            "id": tc_id,
-                            "name": "",
-                            "arguments": ""
-                        }
-                    
-                    # Update tool call with new data
-                    if hasattr(tc_delta, "function"):
-                        if hasattr(tc_delta.function, "name") and tc_delta.function.name:
-                            current_tool_calls[tc_id]["name"] = tc_delta.function.name
-                            
-                        if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
-                            current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
-            
-            # Convert current state to AIResponse
-            tool_calls = []
-            for tc_data in current_tool_calls.values():
-                # Only add if we have a name
-                if tc_data["name"]:
-                    # Try to parse arguments as JSON
-                    args = tc_data["arguments"]
-                    try:
-                        args = json.loads(args)
-                    except:
-                        pass  # Keep as string if not valid JSON
-                        
-                    tool_calls.append(ToolCall(
-                        name=tc_data["name"],
-                        args=args,
-                        id=tc_data["id"]
-                    ))
-            
-            yield AIResponse(
-                content=current_content,
-                tool_calls=tool_calls
+        try:
+            # Create the stream - awaiting happens after our first yield
+            stream = await self.client.chat.completions.create(
+                model=self.model,
+                messages=groq_messages,
+                stream=True, 
+                tools=_wrap_tools(tools),
+                **self.kw,
+                **params,
             )
+            
+            current_content = ""
+            current_tool_calls = {}  # id -> tool call
+            
+            # Now iterate on the response stream
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                
+                # Handle new content
+                if delta.content:
+                    current_content += delta.content
+                
+                # Handle tool calls
+                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        tc_id = tc_delta.id
+                        
+                        # Initialize tool call if new
+                        if tc_id not in current_tool_calls:
+                            current_tool_calls[tc_id] = {
+                                "id": tc_id,
+                                "name": "",
+                                "arguments": ""
+                            }
+                        
+                        # Update tool call with new data
+                        if hasattr(tc_delta, "function"):
+                            if hasattr(tc_delta.function, "name") and tc_delta.function.name:
+                                current_tool_calls[tc_id]["name"] = tc_delta.function.name
+                                
+                            if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
+                                current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
+                
+                # Convert current state to AIResponse
+                tool_calls = []
+                for tc_data in current_tool_calls.values():
+                    # Only add if we have a name
+                    if tc_data["name"]:
+                        # Try to parse arguments as JSON
+                        args = tc_data["arguments"]
+                        try:
+                            args = json.loads(args)
+                        except:
+                            pass  # Keep as string if not valid JSON
+                            
+                        tool_calls.append(ToolCall(
+                            name=tc_data["name"],
+                            args=args,
+                            id=tc_data["id"]
+                        ))
+                
+                yield AIResponse(
+                    content=current_content,
+                    tool_calls=tool_calls
+                )
+        except Exception as e:
+            # We already yielded at least once
+            print(f"Error in stream processing: {str(e)}")
+            yield AIResponse(content=f"Error: {str(e)}", tool_calls=[])
             
     @property
     def supports_tool_calls(self) -> bool:
