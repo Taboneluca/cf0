@@ -748,14 +748,28 @@ class BaseAgent:
                 is_function_call = False
                 current_tool_calls = {}  # Track accumulating tool calls
                 
-                # Instead of awaiting the generator, iterate through it with async for
-                async for chunk in self.llm.chat(
+                # Get the stream object from llm.chat
+                stream = self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=True,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
                     temperature=None,  # let the per-model filter decide
                     max_tokens=400  # Limit response size while still allowing sufficient explanation
-                ):
+                )
+                
+                # ――― guard rail ―――
+                import inspect
+                if inspect.isawaitable(stream) and not inspect.isasyncgen(stream):
+                    # somebody returned a coroutine by mistake – await it once & wrap
+                    print(f"[{agent_id}] ⚠️ Provider returned a coroutine instead of an async generator - converting")
+                    stream_result = await stream
+                    async def _one_shot():
+                        yield stream_result
+                    stream = _one_shot()
+                # ――― end guard rail ―――
+                
+                # Instead of awaiting the generator, iterate through it with async for
+                async for chunk in stream:
                     # Check if this is an AIResponse or OpenAI format
                     if hasattr(chunk, "choices") and chunk.choices:
                         delta = chunk.choices[0].delta
