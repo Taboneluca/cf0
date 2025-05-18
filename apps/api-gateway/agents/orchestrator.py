@@ -1,8 +1,11 @@
 from typing import Optional, Dict, Any, AsyncGenerator
 import time
+import json
+import os
 
 from llm.base import LLMClient
 from llm.factory import get_client
+from llm.streaming_utils import wrap_stream_with_guard
 from .analyst_agent import build as build_analyst_agent
 from .ask_agent import build as build_ask_agent
 from .base_agent import BaseAgent, ChatStep
@@ -155,9 +158,8 @@ class Orchestrator:
             agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
         
         # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
-        async for step in agent.stream_run(message, history):
-            # For analyst mode, we could add validation here if needed
-            # For now, just pass through the ChatStep
+        guarded_stream = wrap_stream_with_guard(agent.stream_run(message, history))
+        async for step in guarded_stream:
             yield step
         
         print(f"[{request_id}] ✅ Orchestrator stream completed in {time.time() - start_time:.2f}s") 
