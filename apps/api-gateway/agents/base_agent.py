@@ -716,7 +716,7 @@ class BaseAgent:
             "apply_scalar_to_column", "create_new_sheet"
         }
         final_text_buffer = ""
-        start_time = time.time()  # Define start_time
+        start_time = time.time()
         
         print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
         in_tool_calling_phase = True
@@ -741,7 +741,8 @@ class BaseAgent:
                             "function": m.pop("function_call")
                         }]
                 
-                response_stream = self.llm.chat(  # Removed 'await' here!
+                # First await the stream creation to get an async generator
+                response_stream = await self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=True,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
