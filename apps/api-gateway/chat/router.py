@@ -731,36 +731,34 @@ async def process_message_streaming(
             collected_updates = []
             
             # Start streaming
-            print(f"[{request_id}] 🔄 Starting streaming with orchestrator, mode={mode}")
+            print(f"[{request_id}] 🔄 Starting streaming with orchestrator")
             content_buffer = ""
             
             # Stream the orchestrator's response
-            async for chunk in orchestrator.stream_run(mode, message, history):
-                
-                if chunk.role == "assistant" and chunk.content:
+            async for chunk in orchestrator.stream_run("analyst", message, history):
+                # Guard for strings - handle both string content and ChatStep objects
+                if isinstance(chunk, str):
+                    # Format the text chunk and stream it
+                    content_buffer += chunk
+                    yield {"type": "chunk", "text": chunk}
+                elif hasattr(chunk, "role") and chunk.role == "assistant" and hasattr(chunk, "content") and chunk.content:
                     # Format the text chunk and stream it
                     content_buffer += chunk.content
-                    print(f"[{request_id}] ⇢ Emitting chunk: {chunk.content[:40]}...")
                     yield {"type": "chunk", "text": chunk.content}
-                
-                elif chunk.role == "tool" and chunk.toolResult:
+                elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
                     # For tool results, we stream an indicator and trigger UI update
                     tool_result = chunk.toolResult
-                    tool_name = chunk.toolCall["name"] if chunk.toolCall else "unknown-tool"
-                    print(f"[{request_id}] ⇢ Tool result from {tool_name}: {str(tool_result)[:100]}...")
+                    tool_name = getattr(chunk.toolCall, "name", "unknown-tool") if hasattr(chunk, "toolCall") else "unknown-tool"
                     
-                    # Skip read-only operations
-                    if tool_name != "get_cell" and tool_name != "get_range":
-                        # If it's an update type tool, add it to collected updates
-                        if isinstance(tool_result, dict):
-                            if "updates" in tool_result:
-                                collected_updates.extend(tool_result["updates"])
-                            elif "cell" in tool_result:  # Single cell operation
-                                collected_updates.append(tool_result)
-                            
-                            # Stream the update info to client for live updates
-                            print(f"[{request_id}] ⇢ Emitting update from {tool_name}")
-                            yield {"type": "update", "payload": tool_result}
+                    # If it's an update type tool, add it to collected updates
+                    if isinstance(tool_result, dict):
+                        if "updates" in tool_result:
+                            collected_updates.extend(tool_result["updates"])
+                        elif "cell" in tool_result:  # Single cell operation
+                            collected_updates.append(tool_result)
+                        
+                        # Stream the update info to client for live updates
+                        yield {"type": "update", "payload": tool_result}
             
             # Save conversation history (optimistic, we have a complete response)
             if content_buffer:
