@@ -25,6 +25,8 @@ ALIAS_MAP = {
     "llama3-8b-8192":              "llama3-8b-8192",
     "groq:llama-3-8b":             "llama3-8b-8192",
     "llama-3-8b":                  "llama3-8b-8192",
+    "groq:llama3-70b-8192":        "llama3-70b-8192",
+    "llama3-70b-8192":             "llama3-70b-8192",
     
     # Anthropic aliases
     "anthropic:claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
