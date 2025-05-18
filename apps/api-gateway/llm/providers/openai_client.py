@@ -109,8 +109,17 @@ class OpenAIClient(LLMClient):
             usage=usage
         )
 
-    async def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
+    def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
         """Send a chat completion request to OpenAI with simple retry"""
+        if stream:
+            # This now works correctly - returning an async generator from a non-async method
+            return self.stream_chat(messages, tools, **params)
+        
+        # For non-streaming, we use a special helper that runs the async code
+        return self._chat_sync(messages, tools, **params)
+
+    async def _chat_sync(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params):
+        """Internal async helper for non-streaming chat"""
         def _wrap_tools(tools):
             if not tools:
                 return None
@@ -125,10 +134,6 @@ class OpenAIClient(LLMClient):
                     }
                 })
             return wrapped
-            
-        if stream:
-            # Return the async generator directly - don't use 'return await' which unwraps the generator
-            return self.stream_chat(messages, tools, **params)
             
         openai_messages = self.to_provider_messages(messages)
         
@@ -162,7 +167,7 @@ class OpenAIClient(LLMClient):
                 wait_time = 2 ** (retry_count - 1)
                 print(f"Rate limit exceeded, retrying in {wait_time}s (attempt {retry_count}/{max_retries})...")
                 await asyncio.sleep(wait_time)
-    
+
     async def stream_chat(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
         """Stream a chat completion from OpenAI with simple retry"""
         def _wrap_tools(tools):
@@ -190,13 +195,18 @@ class OpenAIClient(LLMClient):
         params = _prune_none(params)
         self.kw = _prune_none(self.kw)
         
+        # CRITICAL FIX: Yield immediately to ensure this is an async generator
+        # This initial yield must happen before any awaits
+        yield AIResponse(content="", tool_calls=[])
+        
         # Simple retry logic for rate limits
         max_retries = 3
         retry_count = 0
+        
         while True:
             try:
-                # Create the stream without awaiting
-                response_stream = self.client.chat.completions.create(
+                # Create the stream - awaiting happens after our first yield
+                response_stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=openai_messages,
                     stream=True,
