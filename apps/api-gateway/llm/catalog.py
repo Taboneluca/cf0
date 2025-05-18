@@ -43,9 +43,33 @@ ALIAS_MAP = {
     "gpt-o4-mini":                "o4-mini",
 }
 
+def normalize_model_name(model: str) -> str:
+    """
+    Normalize a model name by handling provider prefixes and alias mapping.
+    
+    Args:
+        model: Raw model name, possibly with provider prefix (e.g., "groq:llama-3-8b")
+        
+    Returns:
+        Normalized model ID suitable for provider APIs
+    """
+    # First try direct lookup in the alias map
+    if model in ALIAS_MAP:
+        return ALIAS_MAP[model]
+        
+    # For provider-prefixed models, strip the prefix and check again
+    if ":" in model:
+        provider, model_id = model.split(":", 1)
+        # Try with just the model_id
+        if model_id in ALIAS_MAP:
+            return ALIAS_MAP[model_id]
+    
+    # Return as-is if no mapping exists
+    return model
+
 def normalise(model: str) -> str:
     """Convert provider-qualified model names to internal IDs for token counting"""
-    return ALIAS_MAP.get(model, model)
+    return normalize_model_name(model)
 
 # Load additional models from environment variables (format: MODEL_KEY_1=provider:id:tool_calls:max_tokens)
 def _load_env_models():
