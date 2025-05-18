@@ -195,8 +195,8 @@ class OpenAIClient(LLMClient):
         retry_count = 0
         while True:
             try:
-                # First await the response stream creation to get the async generator
-                response_stream = await self.client.chat.completions.create(
+                # Create the stream without awaiting
+                response_stream = self.client.chat.completions.create(
                     model=self.model,
                     messages=openai_messages,
                     stream=True,

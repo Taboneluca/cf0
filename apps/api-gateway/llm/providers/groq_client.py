@@ -155,7 +155,8 @@ class GroqClient(LLMClient):
             return wrapped
             
         if stream:
-            return await self.stream_chat(messages, tools, **params)
+            # Return the async generator directly - don't use 'return await' which unwraps the generator
+            return self.stream_chat(messages, tools, **params)
             
         groq_messages = self.to_provider_messages(messages)
         
@@ -206,8 +207,8 @@ class GroqClient(LLMClient):
         if "response_format" in params:
             del params["response_format"]
         
-        # First await the response stream creation to get the async generator
-        response_stream = await self.client.chat.completions.create(
+        # Create the stream without awaiting
+        response_stream = self.client.chat.completions.create(
             model=self.model,
             messages=groq_messages,
             stream=True,
