@@ -741,24 +741,21 @@ class BaseAgent:
                             "function": m.pop("function_call")
                         }]
                 
-                # First await the stream creation to get an async generator
-                response_stream = await self.llm.chat(
+                # Setup for collecting the streaming response
+                current_content = ""
+                function_name = None
+                function_args = ""
+                is_function_call = False
+                current_tool_calls = {}  # Track accumulating tool calls
+                
+                # Instead of awaiting the generator, iterate through it with async for
+                async for chunk in self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=True,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
                     temperature=None,  # let the per-model filter decide
                     max_tokens=400  # Limit response size while still allowing sufficient explanation
-                )
-                
-                # Process the streaming response
-                current_content = ""
-                function_name = None
-                function_args = ""
-                is_function_call = False
-                current_tool_calls = {}  # Define current_tool_calls dictionary
-                
-                # Collect the response chunks
-                async for chunk in response_stream:
+                ):
                     # Check if this is an AIResponse or OpenAI format
                     if hasattr(chunk, "choices") and chunk.choices:
                         delta = chunk.choices[0].delta
