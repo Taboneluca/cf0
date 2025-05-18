@@ -127,7 +127,8 @@ class OpenAIClient(LLMClient):
             return wrapped
             
         if stream:
-            return await self.stream_chat(messages, tools, **params)
+            # Return the async generator directly - don't use 'return await' which unwraps the generator
+            return self.stream_chat(messages, tools, **params)
             
         openai_messages = self.to_provider_messages(messages)
         

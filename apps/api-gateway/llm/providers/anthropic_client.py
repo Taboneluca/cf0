@@ -131,7 +131,8 @@ class AnthropicClient(LLMClient):
     async def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
         """Send a chat request to Anthropic"""
         if stream:
-            return await self.stream_chat(messages, tools, **params)
+            # Return the async generator directly - don't use 'return await' which unwraps the generator
+            return self.stream_chat(messages, tools, **params)
             
         claude_messages, system_message = self.to_provider_messages(messages)
         

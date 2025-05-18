@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from db.prompts import get_active_prompt
 from types import SimpleNamespace
 from llm.chat_types import AIResponse, Message
-from llm.catalog import normalise  # Import the new normalise function
+from llm.catalog import normalise, normalize_model_name  # Import the normalize_model_name function
 
 load_dotenv()
 MAX_RETRIES = 3
@@ -48,7 +48,7 @@ def get_max_tokens(model: str) -> int:
     """Get the max token limit for a given model, with fallback"""
     try:
         # Normalize to standardized model name
-        model_id = normalise(model)
+        model_id = normalize_model_name(model)
         # Try to find in MODEL_LIMITS
         if model_id in MODEL_LIMITS:
             return MODEL_LIMITS[model_id]
