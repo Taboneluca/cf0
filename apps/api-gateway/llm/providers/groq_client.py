@@ -185,9 +185,10 @@ class GroqClient(LLMClient):
         params = _prune_none(params)
         self.kw = _prune_none(self.kw)
         
-        # Force JSON response format if needed
-        if self.force_json and tools:
-            params["response_format"] = {"type": "json_object"}
+        # Don't force JSON response format when streaming
+        # JSON format conflicts with streaming and causes errors
+        if "response_format" in params:
+            del params["response_format"]
         
         response_stream = await self.client.chat.completions.create(
             model=self.model,

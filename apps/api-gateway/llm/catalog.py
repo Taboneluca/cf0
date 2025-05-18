@@ -16,11 +16,27 @@ CATALOG: Dict[str, Dict[str, Any]] = {
 
 # Map from provider-qualified model names to internal model IDs
 ALIAS_MAP = {
+    # Groq aliases
     "groq:llama-3-3-70b":          "llama-3.3-70b-versatile",
     "groq:llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
     "llama-3.3-70b-versatile":      "llama-3.3-70b-versatile",
+    "llama-3-3-70b":               "llama-3.3-70b-versatile",
+    
+    # Anthropic aliases
     "anthropic:claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
+    "claude-3-7-sonnet":           "claude-3-7-sonnet-20250219",
     "anthropic:claude-3-5-sonnet": "claude-3-5-sonnet-20240620",
+    "claude-3-5-sonnet":           "claude-3-5-sonnet-20240620",
+    
+    # OpenAI aliases
+    "openai:gpt-4o":              "gpt-4o",
+    "gpt-4o":                     "gpt-4o",
+    "openai:gpt-4o-mini":         "gpt-4o-mini",
+    "gpt-4o-mini":                "gpt-4o-mini",
+    "openai:gpt-o3":              "o3",
+    "gpt-o3":                     "o3",
+    "openai:gpt-o4-mini":         "o4-mini",
+    "gpt-o4-mini":                "o4-mini",
 }
 
 def normalise(model: str) -> str:

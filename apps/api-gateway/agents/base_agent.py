@@ -716,6 +716,7 @@ class BaseAgent:
             "apply_scalar_to_column", "create_new_sheet"
         }
         final_text_buffer = ""
+        start_time = time.time()  # Define start_time
         
         print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
         in_tool_calling_phase = True
@@ -740,7 +741,7 @@ class BaseAgent:
                             "function": m.pop("function_call")
                         }]
                 
-                response_stream = await self.llm.chat(
+                response_stream = self.llm.chat(  # Removed 'await' here!
                     messages=_dicts_to_messages(messages),
                     stream=True,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
@@ -753,6 +754,7 @@ class BaseAgent:
                 function_name = None
                 function_args = ""
                 is_function_call = False
+                current_tool_calls = {}  # Define current_tool_calls dictionary
                 
                 # Collect the response chunks
                 async for chunk in response_stream:
@@ -782,16 +784,22 @@ class BaseAgent:
                             yield delta.content
                     else:
                         # Handle AIResponse format
-                        if chunk.content:
+                        if hasattr(chunk, "content") and chunk.content:
+                            # Handle both string and non-string content
                             content_chunk = chunk.content
-                            if isinstance(content_chunk, str) and not current_content and not in_tool_calling_phase:
-                                in_tool_calling_phase = False
-                                print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
-                            
-                            current_content += content_chunk
-                            yield content_chunk
+                            # Check if content is a string before trying to process it as one
+                            if isinstance(content_chunk, str):
+                                if not current_content and not in_tool_calling_phase:
+                                    in_tool_calling_phase = False
+                                    print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
+                                
+                                current_content += content_chunk
+                                yield content_chunk
+                            else:
+                                # Handle non-string content (log it but don't yield)
+                                print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
                         
-                        if chunk.tool_calls and not is_function_call and chunk.tool_calls:
+                        if hasattr(chunk, "tool_calls") and chunk.tool_calls:
                             is_function_call = True
                             first_tool = chunk.tool_calls[0]
                             function_name = first_tool.name

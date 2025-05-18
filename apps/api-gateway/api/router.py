@@ -645,6 +645,17 @@ async def process_message_streaming(
         }.items():
             tool_functions[name] = create_streaming_wrapper(fn, name)
         
+        # For ask mode, restrict to read-only tools
+        if mode == "ask":
+            # Only provide read-only tools in ask mode
+            read_only_tools = {
+                "get_cell": _wrap_get_cell(get_cell, sheet),
+                "get_range": _wrap_get_range(get_range, sheet),
+                "sheet_summary": partial(summarize_sheet, sheet=sheet),
+                "calculate": _wrap_calculate(calculate, sheet)
+            }
+            tool_functions = {name: create_streaming_wrapper(fn, name) for name, fn in read_only_tools.items()}
+        
         # Set up LLM client using factory
         try:
             if model:
@@ -685,19 +696,22 @@ async def process_message_streaming(
             
             # Stream the orchestrator's response
             async for chunk in orchestrator.stream_run(mode, message, history):
-                
-                if chunk.role == "assistant" and chunk.content:
+                # Guard for strings - handle both string content and ChatStep objects
+                if isinstance(chunk, str):
+                    # Format the text chunk and stream it
+                    content_buffer += chunk
+                    yield {"type": "chunk", "text": chunk}
+                elif hasattr(chunk, "role") and chunk.role == "assistant" and hasattr(chunk, "content") and chunk.content:
                     # Format the text chunk and stream it
                     content_buffer += chunk.content
                     yield {"type": "chunk", "text": chunk.content}
-                
-                elif chunk.role == "tool" and chunk.toolResult:
+                elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
                     # For tool results, we stream an indicator and trigger UI update
                     tool_result = chunk.toolResult
-                    tool_name = chunk.toolCall["name"] if chunk.toolCall else "unknown-tool"
+                    tool_name = getattr(chunk.toolCall, "name", "unknown-tool") if hasattr(chunk, "toolCall") else "unknown-tool"
                     
                     # Skip read-only operations
-                    if tool_name != "get_cell" and tool_name != "get_range":
+                    if tool_name not in {"get_cell", "get_range"}:
                         # If it's an update type tool, add it to collected updates
                         if isinstance(tool_result, dict):
                             if "updates" in tool_result:
