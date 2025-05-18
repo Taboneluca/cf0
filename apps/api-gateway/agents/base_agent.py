@@ -16,6 +16,7 @@ from db.prompts import get_active_prompt
 from types import SimpleNamespace
 from llm.chat_types import AIResponse, Message
 from llm.catalog import normalise, normalize_model_name  # Import the normalize_model_name function
+from llm.streaming_utils import wrap_stream_with_guard
 
 load_dotenv()
 MAX_RETRIES = 3
@@ -768,8 +769,11 @@ class BaseAgent:
                     stream = _one_shot()
                 # ――― end guard rail ―――
                 
+                # Wrap the stream with our guard to protect against infinite loops
+                guarded_stream = wrap_stream_with_guard(stream)
+                
                 # Instead of awaiting the generator, iterate through it with async for
-                async for chunk in stream:
+                async for chunk in guarded_stream:
                     # Check if this is an AIResponse or OpenAI format
                     if hasattr(chunk, "choices") and chunk.choices:
                         delta = chunk.choices[0].delta

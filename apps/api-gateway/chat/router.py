@@ -13,7 +13,7 @@ from agents.ask_agent import build as build_ask_agent
 from agents.analyst_agent import build as build_analyst_agent
 from spreadsheet_engine.model import Spreadsheet
 from spreadsheet_engine.summary import sheet_summary
-from workbook_store import get_sheet, get_workbook
+from workbook_store import get_sheet, get_workbook, list_sheets, get_sheet_summary
 from chat.memory import get_history, add_to_history
 from agents.base_agent import ChatStep
 from chat.schemas import ChatRequest, ChatResponse
@@ -23,9 +23,10 @@ from spreadsheet_engine.operations import (
     sort_range, find_replace, create_new_sheet,
     get_row_by_header, get_column_by_header,
     apply_scalar_to_row, apply_scalar_to_column, set_cells,
-    list_sheets, get_sheet_summary
+    get_sheet_summary
 )
 from spreadsheet_engine.templates import dcf, fsm, loader as template_loader
+from llm.streaming_utils import wrap_stream_with_guard
 
 # Flag to control template tools
 ENABLE_TEMPLATES = os.getenv("ENABLE_TEMPLATE_TOOLS", "0") == "1"
@@ -734,8 +735,13 @@ async def process_message_streaming(
             print(f"[{request_id}] 🔄 Starting streaming with orchestrator")
             content_buffer = ""
             
+            # Wrap the stream with our guard to protect against infinite loops
+            guarded_stream = wrap_stream_with_guard(
+                orchestrator.stream_run("analyst", message, history)
+            )
+
             # Stream the orchestrator's response
-            async for chunk in orchestrator.stream_run("analyst", message, history):
+            async for chunk in guarded_stream:
                 # Guard for strings - handle both string content and ChatStep objects
                 if isinstance(chunk, str):
                     # Format the text chunk and stream it
