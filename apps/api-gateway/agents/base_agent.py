@@ -744,6 +744,7 @@ class BaseAgent:
                 
                 # Setup for collecting the streaming response
                 current_content = ""
+                previous_content = ""  # Track previous content to calculate delta
                 function_name = None
                 function_args = ""
                 is_function_call = False
@@ -790,14 +791,17 @@ class BaseAgent:
                         
                         # Accumulate content for text response
                         if hasattr(delta, "content") and delta.content:
-                            current_content += delta.content
+                            # Get just the new content (delta)
+                            new_content = delta.content
+                            current_content += new_content
+                            
                             if in_tool_calling_phase:
                                 # We've transitioned from tool calling to final answer
                                 in_tool_calling_phase = False
                                 print(f"[{agent_id}] 💬 Transitioning to final answer")
                             
                             # Only yield content chunks, not function calls
-                            yield delta.content
+                            yield new_content
                     else:
                         # Handle AIResponse format
                         if hasattr(chunk, "content") and chunk.content:
@@ -809,8 +813,21 @@ class BaseAgent:
                                     in_tool_calling_phase = False
                                     print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
                                 
-                                current_content += content_chunk
-                                yield content_chunk
+                                # Calculate the delta/new content only
+                                if content_chunk.startswith(current_content):
+                                    # Most LLM providers send the full content each time
+                                    # Extract only the new part
+                                    new_content = content_chunk[len(current_content):]
+                                    current_content = content_chunk
+                                    
+                                    # Only yield if there's actually new content
+                                    if new_content:
+                                        yield new_content
+                                else:
+                                    # If we can't determine the delta for some reason, 
+                                    # yield the whole chunk but update current_content
+                                    current_content = content_chunk
+                                    yield content_chunk
                             else:
                                 # Handle non-string content (log it but don't yield)
                                 print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
