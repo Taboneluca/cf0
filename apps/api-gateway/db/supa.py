@@ -139,10 +139,30 @@ async def _do_save_workbook(workbook_data: Dict[str, Any], sheets: List[Spreadsh
                 "cells": json.dumps(sheet.cells)
             }
             
-            supabase.table("spreadsheet_sheets").upsert(
-                sheet_data,
-                on_conflict=["workbook_wid", "name"]
-            ).execute()
+            try:
+                # First try with ON CONFLICT
+                supabase.table("spreadsheet_sheets").upsert(
+                    sheet_data,
+                    on_conflict=["workbook_wid", "name"]
+                ).execute()
+            except Exception as e:
+                if "there is no unique or exclusion constraint" in str(e):
+                    # Fall back to a delete and insert approach
+                    print(f"⚠️ ON CONFLICT not supported, using delete-insert fallback for sheet {sheet.name}")
+                    # First delete any existing row
+                    supabase.table("spreadsheet_sheets")\
+                        .delete()\
+                        .eq("workbook_wid", wid)\
+                        .eq("name", sheet.name)\
+                        .execute()
+                    
+                    # Then insert the new row
+                    supabase.table("spreadsheet_sheets")\
+                        .insert(sheet_data)\
+                        .execute()
+                else:
+                    # Re-raise if it's a different error
+                    raise
         
         print(f"✅ Saved workbook {wid} with {len(sheets)} sheets")
     
@@ -185,10 +205,30 @@ async def _do_save_sheet(wid: str, sheet: Spreadsheet) -> None:
             "cells": json.dumps(sheet.cells)
         }
         
-        supabase.table("spreadsheet_sheets").upsert(
-            sheet_data,
-            on_conflict=["workbook_wid", "name"]
-        ).execute()
+        try:
+            # First try with ON CONFLICT
+            supabase.table("spreadsheet_sheets").upsert(
+                sheet_data,
+                on_conflict=["workbook_wid", "name"]
+            ).execute()
+        except Exception as e:
+            if "there is no unique or exclusion constraint" in str(e):
+                # Fall back to a delete and insert approach
+                print(f"⚠️ ON CONFLICT not supported, using delete-insert fallback for sheet {sheet.name}")
+                # First delete any existing row
+                supabase.table("spreadsheet_sheets")\
+                    .delete()\
+                    .eq("workbook_wid", wid)\
+                    .eq("name", sheet.name)\
+                    .execute()
+                
+                # Then insert the new row
+                supabase.table("spreadsheet_sheets")\
+                    .insert(sheet_data)\
+                    .execute()
+            else:
+                # Re-raise if it's a different error
+                raise
         
         print(f"✅ Saved sheet {sheet.name} in workbook {wid}")
     
