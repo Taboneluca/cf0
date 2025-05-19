@@ -11,6 +11,7 @@ MODEL_ALIASES = {
     "llama3-70b-8192": "llama3-70b-8192",        # official slug
     "llama-3-70b": "llama3-70b-8192",            # fall-back
     "llama-3.3-70b-versatile": "llama-3.3-70b-versatile", # official slug
+    "llama-3-3-70b": "llama-3.3-70b-versatile",  # fall-back
 }
 
 def _prune_none(d: dict[str, Any]) -> dict[str, Any]:

@@ -16,7 +16,7 @@ from db.prompts import get_active_prompt
 from types import SimpleNamespace
 from llm.chat_types import AIResponse, Message
 from llm.catalog import normalise, normalize_model_name  # Import the normalize_model_name function
-from llm.streaming_utils import wrap_stream_with_guard
+from llm import wrap_stream_with_guard
 
 load_dotenv()
 MAX_RETRIES = 3
