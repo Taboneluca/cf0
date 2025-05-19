@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 # Import the factory function instead of the provider registry
 from llm.factory import get_client, get_default_client
+from llm import wrap_stream_with_guard
 from agents.ask_agent import build as build_ask_agent
 from agents.analyst_agent import build as build_analyst_agent
 from spreadsheet_engine.model import Spreadsheet
@@ -26,7 +27,6 @@ from spreadsheet_engine.operations import (
     get_sheet_summary
 )
 from spreadsheet_engine.templates import dcf, fsm, loader as template_loader
-from llm.streaming_utils import wrap_stream_with_guard
 
 # Flag to control template tools
 ENABLE_TEMPLATES = os.getenv("ENABLE_TEMPLATE_TOOLS", "0") == "1"

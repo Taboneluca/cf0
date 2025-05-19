@@ -5,7 +5,7 @@ import os
 
 from llm.base import LLMClient
 from llm.factory import get_client
-from llm.streaming_utils import wrap_stream_with_guard
+from llm import wrap_stream_with_guard
 from .analyst_agent import build as build_analyst_agent
 from .ask_agent import build as build_ask_agent
 from .base_agent import BaseAgent, ChatStep
