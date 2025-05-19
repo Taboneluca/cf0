@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Iterable, Dict, Any, List, Optional, AsyncGenerator, Callable
+from typing import Iterable, Dict, Any, List, Optional, AsyncGenerator, Callable, Union
 from .chat_types import Message, AIResponse
 
 class LLMClient(ABC):
@@ -11,16 +11,27 @@ class LLMClient(ABC):
         self.kw = kw
 
     @abstractmethod
-    async def chat(
+    def chat(
         self,
         messages: List[Message],
         stream: bool = False,
         tools: Optional[List[Dict[str, Any]]] = None,
         **params
-    ) -> AIResponse: 
+    ) -> Union[AsyncGenerator[AIResponse, None], AIResponse]:
         """
         Send a chat request to the provider and return a standardized response.
         
+        IMPORTANT: This is deliberately NOT async to avoid the coroutine issue with async generators.
+        The correct implementation pattern is:
+        
+        def chat(self, messages, stream=False, tools=None, **params):
+            if stream:
+                return self.stream_chat(messages, tools, **params)
+            return self._chat_sync(messages, tools, **params)
+            
+        async def _chat_sync(self, messages, tools=None, **params):
+            # Implementation for non-streaming case
+            
         Args:
             messages: List of chat messages in standardized format
             stream: Whether to stream the response
@@ -28,7 +39,8 @@ class LLMClient(ABC):
             params: Additional parameters for the provider
             
         Returns:
-            Standardized AIResponse with content and/or tool_calls
+            If stream=False: AIResponse with content and/or tool_calls
+            If stream=True: AsyncGenerator yielding AIResponse chunks
         """
         pass
 
@@ -41,6 +53,26 @@ class LLMClient(ABC):
     ) -> AsyncGenerator[AIResponse, None]:
         """
         Stream a chat response from the provider.
+        
+        IMPORTANT: This method MUST yield at least once BEFORE any await statements
+        to ensure it's properly recognized as an async generator.
+        
+        The correct implementation pattern is:
+        
+        async def stream_chat(self, messages, tools=None, **params):
+            # Yield immediately BEFORE any awaits
+            yield AIResponse(content="", tool_calls=[])
+            
+            try:
+                # Now it's safe to await
+                stream = await self.client.create_stream(...)
+                
+                # Process the stream...
+                async for chunk in stream:
+                    # ...
+                    yield AIResponse(...)
+            except Exception as e:
+                yield AIResponse(content=f"Error: {str(e)}")
         
         Args:
             messages: List of chat messages in standardized format
