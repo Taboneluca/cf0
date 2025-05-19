@@ -391,7 +391,8 @@ async def stream_chat(req: ChatRequest):
                     
                 # Add a small delay between chunks to ensure proper streaming
                 # This helps prevent buffering on the client side
-                await asyncio.sleep(0.02)  # 20ms delay between chunks
+                # Make the delay very small for better real-time experience
+                await asyncio.sleep(0.01)  # 10ms delay between chunks
             
             print(f"[{request_id}] ✅ SSE stream completed for {provider}")
         

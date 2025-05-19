@@ -23,11 +23,30 @@ export function useChatStream(
   const currentMessageIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const [wb, dispatch, loading] = useWorkbook();
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   
   // Debugging references
   const debugChunkCount = useRef(0);
   const debugLastChunkTime = useRef(Date.now());
   
+  // Add a function to scroll to bottom of messages
+  const scrollToBottom = useCallback(() => {
+    if (typeof document !== 'undefined') {
+      // Find all message containers and scroll the last one into view
+      const messageContainers = document.querySelectorAll('.message-streaming');
+      if (messageContainers.length > 0) {
+        const lastMessage = messageContainers[messageContainers.length - 1];
+        lastMessage?.scrollIntoView({ behavior: 'smooth' });
+      }
+      
+      // Also try scrolling the messages container if available
+      const messagesContainer = document.querySelector('.overflow-y-auto');
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    }
+  }, []);
+
   const cancelStream = useCallback(() => {
     if (abortControllerRef.current) {
       if (DEBUG_STREAMING) console.log('[Stream DEBUG] Cancelling stream');
@@ -195,14 +214,19 @@ export function useChatStream(
                 const newMessages = [...prev];
                 const index = newMessages.findIndex(m => m.id === id);
                 if (index >= 0) {
+                  // Force a new object creation to ensure React detects the update
                   newMessages[index] = {
                     ...newMessages[index],
                     content: content,
                     status: 'streaming'
                   };
                 }
-                return newMessages;
+                // Immediately force a re-render by creating a new array
+                return [...newMessages];
               });
+              
+              // Force scrolling after each chunk
+              setTimeout(scrollToBottom, 0);
             }
             else if (event.type === 'update') {
               // Add to pending updates for now

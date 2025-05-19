@@ -69,11 +69,11 @@ const Message: React.FC<MessageProps> = ({ message }) => {
   if (matches.length === 0 || message.status === 'thinking' || message.status === 'streaming') {
     const parts = message.content.split(/(@[\w!:.]+)/g);
     return (
-      <div className={clsx(baseBubble, "self-start bg-gray-100")}>
+      <div className={clsx(baseBubble, "self-start bg-gray-100", {"animate-pulse-slow": message.status === 'streaming'})}>
         {message.status === 'thinking' ? (
           <div className="message-thinking">Thinking...</div>
         ) : (
-          <div className="message-streaming">
+          <div className="message-streaming whitespace-pre-wrap">
             {parts.map((part, i) => 
               part.match(/^@[\w!:.]+$/) 
                 ? <span key={i} className="text-blue-600 font-semibold">{part}</span>
