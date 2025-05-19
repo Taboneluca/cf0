@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any, AsyncGenerator
 import time
 import json
 import os
+import inspect
 
 from llm.base import LLMClient
 from llm.factory import get_client
@@ -158,7 +159,23 @@ class Orchestrator:
             agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
         
         # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
-        guarded_stream = wrap_stream_with_guard(agent.stream_run(message, history))
+        agent_stream = agent.stream_run(message, history)
+        
+        # Verify we got an actual async generator
+        if not inspect.isasyncgen(agent_stream):
+            if inspect.isawaitable(agent_stream):
+                print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
+                agent_stream = await agent_stream
+                if not inspect.isasyncgen(agent_stream):
+                    print(f"[{request_id}] ❌ Agent still did not return an async generator after awaiting")
+                    raise TypeError("Agent.stream_run did not return an async generator")
+            else:
+                print(f"[{request_id}] ❌ Agent did not return an async generator or coroutine")
+                raise TypeError("Agent.stream_run did not return an async generator")
+            
+        # Now wrap it with the guard
+        guarded_stream = wrap_stream_with_guard(agent_stream)
+        
         async for step in guarded_stream:
             yield step
         
