@@ -611,13 +611,22 @@ async def process_message_streaming(
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
                 sheet_tools = ["create_new_sheet"]
                 table_tools = ["add_column", "add_row", "delete_column", "delete_row", "sort_range", "find_replace"]
+                cell_tools = ["set_cell", "get_cell", "get_range"]
                 
                 # Ensure that kwargs is always a dictionary
                 if len(args) == 1 and isinstance(args[0], str) and not kwargs:
                     # Handle the case where a single string argument is passed
                     # This happens with some tools when called with just a string
                     if name == "set_cell":
-                        return tool_fn(cell=args[0])
+                        # For set_cell, we need cell and value parameters
+                        # Check if the string is in "A1=value" format
+                        if "=" in args[0]:
+                            cell_ref, value = args[0].split("=", 1)
+                            return tool_fn(cell=cell_ref.strip(), value=value.strip())
+                        else:
+                            # If there's no equals sign, it might just be a cell reference
+                            # We'll set an empty string as the value
+                            return tool_fn(cell=args[0], value="")
                     elif name == "get_cell":
                         return tool_fn(cell_ref=args[0])
                     elif name == "get_range":
@@ -644,6 +653,9 @@ async def process_message_streaming(
                         except TypeError as e:
                             print(f"[{request_id}] ⚠️ Error calling {name}: {str(e)}")
                             return {"error": f"Invalid parameters for {name}: {str(e)}"}
+                elif name == "set_cell" and len(args) == 2:
+                    # Handle case where set_cell is called with (cell, value) positional args
+                    return tool_fn(cell=args[0], value=args[1])
                 else:
                     # Normal case - keyword arguments
                     try:
