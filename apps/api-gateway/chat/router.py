@@ -329,7 +329,7 @@ async def process_message(
                                     return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
                             except json.JSONDecodeError:
                                 # Handle possible formula notation or special characters in single string
-                                if '=' in args[0] and len(args[0].split('=')) == 2:
+                                if '=' in args[0] and len(args[0].split('=', 1)) == 2:
                                     # Process as A1=value format
                                     try:
                                         cell_ref, value = args[0].split('=', 1)
@@ -342,6 +342,17 @@ async def process_message(
                         # If it's not JSON, try to interpret as a simple "A1=value" format
                         elif "=" in args[0]:
                             try:
+                                # Handle LaTeX-style math notation by preserving the entire string
+                                # Check if this contains LaTeX-style notation
+                                if '\\' in args[0] or '\\text{' in args[0]:
+                                    # Preserve the entire string as a formula, find the cell reference first
+                                    if '=' in args[0]:
+                                        cell_ref, formula = args[0].split('=', 1)
+                                        update = [{"cell": cell_ref.strip(), "value": formula.strip()}]
+                                        return tool_fn(updates=update)
+                                    else:
+                                        return {"error": f"Formula missing cell reference: {args[0]}"}
+                                # Standard A1=value format
                                 cell_ref, value = args[0].split("=", 1)
                                 update = [{"cell": cell_ref.strip(), "value": value.strip()}]
                                 return tool_fn(updates=update)
@@ -789,7 +800,7 @@ async def process_message_streaming(
                                     return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
                             except json.JSONDecodeError:
                                 # Handle possible formula notation or special characters in single string
-                                if '=' in args[0] and len(args[0].split('=')) == 2:
+                                if '=' in args[0] and len(args[0].split('=', 1)) == 2:
                                     # Process as A1=value format
                                     try:
                                         cell_ref, value = args[0].split('=', 1)
@@ -802,6 +813,17 @@ async def process_message_streaming(
                         # If it's not JSON, try to interpret as a simple "A1=value" format
                         elif "=" in args[0]:
                             try:
+                                # Handle LaTeX-style math notation by preserving the entire string
+                                # Check if this contains LaTeX-style notation
+                                if '\\' in args[0] or '\\text{' in args[0]:
+                                    # Preserve the entire string as a formula, find the cell reference first
+                                    if '=' in args[0]:
+                                        cell_ref, formula = args[0].split('=', 1)
+                                        update = [{"cell": cell_ref.strip(), "value": formula.strip()}]
+                                        return tool_fn(updates=update)
+                                    else:
+                                        return {"error": f"Formula missing cell reference: {args[0]}"}
+                                # Standard A1=value format
                                 cell_ref, value = args[0].split("=", 1)
                                 update = [{"cell": cell_ref.strip(), "value": value.strip()}]
                                 return tool_fn(updates=update)
