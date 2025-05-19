@@ -719,8 +719,9 @@ class BaseAgent:
         final_text_buffer = ""
         start_time = time.time()
         
-        # Enable debug flag to trace content flow
+        # Enable debug flags for tracing different aspects of streaming
         debug_streaming = os.getenv("DEBUG_STREAMING", "0") == "1"
+        debug_delta = os.getenv("DEBUG_STREAMING_DELTA", "0") == "1"
         
         print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
         in_tool_calling_phase = True
@@ -809,22 +810,65 @@ class BaseAgent:
                             # Update tracking of current content BEFORE yielding
                             current_content += new_content
                             
-                            # Split large new_content by sentences to make streaming smoother
-                            if len(new_content) > 20 and ('.' in new_content or '\n' in new_content):
-                                # Split by sentence or line
+                            # Split larger chunks into smaller ones for smoother streaming
+                            # This improves the user experience by making the text appear more natural
+                            if len(new_content) > 15:  # Smaller threshold for more frequent updates
+                                # Split by sentence, newline or at word boundaries
                                 parts = []
-                                for part in new_content.replace('\n', '.\n').split('.'):
-                                    if part.strip():
-                                        parts.append(part.strip() + ('.' if not part.endswith('\n') else ''))
+                                
+                                # First try to split by sentence/paragraph
+                                if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
+                                    import re
+                                    # Split on sentence boundaries or newlines
+                                    pattern = r'([.!?]|\n)'
+                                    pieces = re.split(pattern, new_content)
+                                    
+                                    i = 0
+                                    while i < len(pieces) - 1:
+                                        # Group sentence with its punctuation
+                                        if i + 1 < len(pieces):
+                                            sentence = pieces[i] + pieces[i+1]
+                                            if sentence.strip():  # Only add non-empty
+                                                parts.append(sentence)
+                                            i += 2
+                                        else:
+                                            # Should be rare, handle odd cases
+                                            if pieces[i].strip():
+                                                parts.append(pieces[i])
+                                            i += 1
+                                else:
+                                    # If no sentence breaks, split at word boundaries
+                                    words = new_content.split(' ')
+                                    current_part = ""
+                                    
+                                    for word in words:
+                                        if len(current_part) + len(word) + 1 <= 20:  # Keep parts reasonably small
+                                            if current_part:
+                                                current_part += ' ' + word
+                                            else:
+                                                current_part = word
+                                        else:
+                                            if current_part:
+                                                parts.append(current_part)
+                                            current_part = word
+                                    
+                                    # Add the last part if any
+                                    if current_part:
+                                        parts.append(current_part)
+                                
+                                # If splitting failed, fallback to original
+                                if not parts:
+                                    parts = [new_content]
                                 
                                 if debug_streaming:
-                                    print(f"[{agent_id}] 💬 Split content into {len(parts)} parts")
+                                    print(f"[{agent_id}] 🔀 Split content into {len(parts)} parts")
                                 
                                 # Yield each part separately for smoother streaming
                                 for part in parts:
-                                    yield part
+                                    if part.strip():  # Skip empty parts
+                                        yield part
                             else:
-                                # Only yield content chunks, not function calls
+                                # Small enough to yield directly
                                 yield new_content
                     else:
                         # Handle AIResponse format
@@ -838,70 +882,107 @@ class BaseAgent:
                                     print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
                                 
                                 # Calculate the delta/new content only
+                                new_content = ""
+                                
                                 if content_chunk.startswith(previous_content):
                                     # Extract only the new part
                                     new_content = content_chunk[len(previous_content):]
-                                    previous_content = content_chunk  # Update previous for next delta
-                                    
-                                    if debug_streaming:
-                                        print(f"[{agent_id}] 💬 Streaming delta chunk: '{new_content}'")
-                                    
-                                    # Split large new_content by sentences for smoother streaming
-                                    if len(new_content) > 20 and ('.' in new_content or '\n' in new_content):
-                                        # Split by sentence or line
-                                        parts = []
-                                        for part in new_content.replace('\n', '.\n').split('.'):
-                                            if part.strip():
-                                                parts.append(part.strip() + ('.' if not part.endswith('\n') else ''))
-                                        
-                                        if debug_streaming:
-                                            print(f"[{agent_id}] 💬 Split content into {len(parts)} parts")
-                                        
-                                        # Yield each part separately for smoother streaming
-                                        for part in parts:
-                                            yield part
-                                    else:
-                                        # Only yield if there's actually new content
-                                        if new_content:
-                                            yield new_content
+                                    if debug_delta:
+                                        print(f"[{agent_id}] 🔄 Simple prefix match: '{new_content}'")
                                 else:
-                                    # Get a best estimate of the delta if we can
-                                    # Look for the longest matching prefix
-                                    prefix_len = 0
+                                    # More complex case - find where content diverges
+                                    # Find the longest common prefix to identify what's new
+                                    common_length = 0
                                     for i in range(min(len(previous_content), len(content_chunk))):
                                         if previous_content[i] == content_chunk[i]:
-                                            prefix_len += 1
+                                            common_length += 1
                                         else:
                                             break
                                     
-                                    if prefix_len > 0:
-                                        # We found some matching prefix
-                                        new_content = content_chunk[prefix_len:]
-                                        previous_content = content_chunk
-                                        
-                                        if debug_streaming:
-                                            print(f"[{agent_id}] 💬 Streaming fallback chunk with prefix match: '{new_content}'")
-                                        
-                                        # Only yield if there's actually new content
-                                        if new_content:
-                                            yield new_content
+                                    if common_length > 0:
+                                        # Extract the new content using the common prefix
+                                        new_content = content_chunk[common_length:]
+                                        if debug_delta:
+                                            print(f"[{agent_id}] 🔄 Prefix match at position {common_length}: '{new_content}'")
                                     else:
-                                        # If we can't determine the delta for some reason, 
-                                        # Just yield the change in content length to avoid duplicates
+                                        # This shouldn't happen often, but handle the case where content
+                                        # completely changes or is reorganized
                                         if len(content_chunk) > len(current_content):
                                             new_content = content_chunk[len(current_content):]
-                                            current_content = content_chunk
-                                            
-                                            if debug_streaming:
-                                                print(f"[{agent_id}] 💬 Streaming fallback chunk with length delta: '{new_content}'")
-                                            
-                                            yield new_content
+                                            if debug_delta:
+                                                print(f"[{agent_id}] 🔄 Using length difference: {len(new_content)} chars")
                                         else:
-                                            # Last resort - yield differently formatted content
-                                            current_content = content_chunk
-                                            if debug_streaming:
-                                                print(f"[{agent_id}] 💬 Streaming full chunk as fallback")
-                                            yield content_chunk
+                                            # Last resort - yield the whole chunk and update tracking
+                                            new_content = content_chunk
+                                            if debug_delta:
+                                                print(f"[{agent_id}] 🔄 Fallback to full chunk: {len(new_content)} chars")
+                                
+                                # Update tracking for next iteration
+                                previous_content = content_chunk
+                                current_content = content_chunk
+                                
+                                if new_content:
+                                    if debug_streaming:
+                                        print(f"[{agent_id}] 💬 Streaming delta: '{new_content[:30]}{'...' if len(new_content) > 30 else ''}'")
+                                    
+                                    # For longer content, split into chunks for smoother streaming
+                                    if len(new_content) > 15:
+                                        # Split on sentences or newlines first for natural breaks
+                                        parts = []
+                                        
+                                        # First try to split by sentence/paragraph
+                                        if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
+                                            import re
+                                            # Split on sentence boundaries or newlines
+                                            pattern = r'([.!?]|\n)'
+                                            pieces = re.split(pattern, new_content)
+                                            
+                                            i = 0
+                                            while i < len(pieces) - 1:
+                                                # Group sentence with its punctuation
+                                                if i + 1 < len(pieces):
+                                                    sentence = pieces[i] + pieces[i+1]
+                                                    if sentence.strip():  # Only add non-empty
+                                                        parts.append(sentence)
+                                                    i += 2
+                                                else:
+                                                    if pieces[i].strip():
+                                                        parts.append(pieces[i])
+                                                    i += 1
+                                        else:
+                                            # If no sentence breaks, split at word boundaries
+                                            words = new_content.split(' ')
+                                            current_part = ""
+                                            
+                                            for word in words:
+                                                if len(current_part) + len(word) + 1 <= 20:
+                                                    if current_part:
+                                                        current_part += ' ' + word
+                                                    else:
+                                                        current_part = word
+                                                else:
+                                                    if current_part:
+                                                        parts.append(current_part)
+                                                    current_part = word
+                                            
+                                            # Add the last part if any
+                                            if current_part:
+                                                parts.append(current_part)
+                                        
+                                        # If splitting failed, fallback to original
+                                        if not parts:
+                                            parts = [new_content]
+                                        
+                                        if debug_streaming:
+                                            print(f"[{agent_id}] 🔀 Split delta into {len(parts)} parts")
+                                        
+                                        # Yield each part separately for smoother streaming
+                                        for part in parts:
+                                            if part.strip():  # Skip empty parts
+                                                yield part
+                                    else:
+                                        # Small enough to yield directly
+                                        yield new_content
                             else:
                                 # Handle non-string content (log it but don't yield)
                                 print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
@@ -933,6 +1014,7 @@ class BaseAgent:
                 
             except Exception as e:
                 print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")
+                traceback.print_exc()  # Add stack trace for better debugging
                 yield f"\nError communicating with AI service: {str(e)}"
                 return
             
