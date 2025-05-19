@@ -22,7 +22,7 @@ export function useChatStream(
   const [pendingUpdates, setPendingUpdates] = useState<any[]>([]);
   const currentMessageIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const { workbook, updateSheet } = useWorkbook();
+  const [wb, dispatch, loading] = useWorkbook();
   
   // Debugging references
   const debugChunkCount = useRef(0);
@@ -38,7 +38,7 @@ export function useChatStream(
   }, []);
 
   const applyPendingUpdates = useCallback(() => {
-    if (pendingUpdates.length > 0 && workbook) {
+    if (pendingUpdates.length > 0 && wb) {
       if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Applying ${pendingUpdates.length} pending updates`);
       // Process & apply the updates
       pendingUpdates.forEach(update => {
@@ -46,21 +46,24 @@ export function useChatStream(
       });
       setPendingUpdates([]);
     }
-  }, [pendingUpdates, workbook]);
+  }, [pendingUpdates, wb]);
 
   const rejectPendingUpdates = useCallback(() => {
     if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Rejecting ${pendingUpdates.length} pending updates`);
     setPendingUpdates([]);
   }, [pendingUpdates]);
 
-  const sendMessage = useCallback(async (message: string) => {
-    if (!workbook || !workbook.id || !workbook.activeSheet) return;
+  const sendMessage = useCallback(async (message: string, contexts: string[] = [], model?: string) => {
+    if (!wb || !wb.wid || !wb.active || loading) {
+      if (DEBUG_STREAMING) console.log('[Stream DEBUG] Cannot send message - workbook not ready', { wb, loading });
+      return;
+    }
     
     // Reset debugging counters
     debugChunkCount.current = 0;
     debugLastChunkTime.current = Date.now();
     
-    if (DEBUG_STREAMING) console.log('[Stream DEBUG] Starting new streaming request');
+    if (DEBUG_STREAMING) console.log('[Stream DEBUG] Starting new streaming request', { message, mode, wid: wb.wid, sid: wb.active });
     
     // Cancel any existing stream
     cancelStream();
@@ -102,8 +105,10 @@ export function useChatStream(
         body: JSON.stringify({
           mode,
           message,
-          wid: workbook.id,
-          sid: workbook.activeSheet,
+          wid: wb.wid,
+          sid: wb.active,
+          contexts,
+          model
         }),
         signal: abortController.signal
       });
@@ -220,7 +225,11 @@ export function useChatStream(
               // If we have a sheet update, apply it
               if (event.sheet) {
                 const sheetUI = backendSheetToUI(event.sheet);
-                updateSheet(workbook.id, workbook.activeSheet, sheetUI);
+                // Use the dispatch to update sheet data
+                dispatch({
+                  type: 'UPDATE_SHEET',
+                  payload: { id: wb.active, data: sheetUI }
+                });
               }
               
               setIsStreaming(false);
@@ -238,7 +247,7 @@ export function useChatStream(
                   newMessages[index] = {
                     ...newMessages[index],
                     content: `Error: ${event.error}`,
-                    status: 'error'
+                    status: 'complete' // Change to 'complete' to make it display properly
                   };
                 }
                 return newMessages;
@@ -265,9 +274,11 @@ export function useChatStream(
           const newMessages = [...prev];
           const index = newMessages.findIndex(m => m.id === id);
           if (index >= 0) {
+            // Get the current content from the message or use empty string
+            const currentContent = newMessages[index].content || '';
             newMessages[index] = {
               ...newMessages[index],
-              content: content + "\n\n[Stopped by user]",
+              content: currentContent + "\n\n[Stopped by user]",
               status: 'complete'
             };
           }
@@ -282,7 +293,7 @@ export function useChatStream(
             newMessages[index] = {
               ...newMessages[index],
               content: `Error: ${(e as Error).message}`,
-              status: 'error'
+              status: 'complete' // Change to 'complete' to make it display properly
             };
           }
           return newMessages;
@@ -292,7 +303,7 @@ export function useChatStream(
     } finally {
       abortControllerRef.current = null;
     }
-  }, [workbook, mode, cancelStream, setMessages, updateSheet]);
+  }, [wb, loading, dispatch, mode, cancelStream, setMessages]);
 
   return {
     sendMessage,
