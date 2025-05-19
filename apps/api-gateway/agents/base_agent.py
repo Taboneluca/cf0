@@ -719,6 +719,9 @@ class BaseAgent:
         final_text_buffer = ""
         start_time = time.time()
         
+        # Enable debug flag to trace content flow
+        debug_streaming = os.getenv("DEBUG_STREAMING", "0") == "1"
+        
         print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
         in_tool_calling_phase = True
         
@@ -794,15 +797,35 @@ class BaseAgent:
                         if hasattr(delta, "content") and delta.content:
                             # Get just the new content (delta)
                             new_content = delta.content
-                            current_content += new_content
+                            
+                            if debug_streaming:
+                                print(f"[{agent_id}] 💬 Streaming chunk: '{new_content}'")
                             
                             if in_tool_calling_phase:
                                 # We've transitioned from tool calling to final answer
                                 in_tool_calling_phase = False
                                 print(f"[{agent_id}] 💬 Transitioning to final answer")
                             
-                            # Only yield content chunks, not function calls
-                            yield new_content
+                            # Update tracking of current content BEFORE yielding
+                            current_content += new_content
+                            
+                            # Split large new_content by sentences to make streaming smoother
+                            if len(new_content) > 20 and ('.' in new_content or '\n' in new_content):
+                                # Split by sentence or line
+                                parts = []
+                                for part in new_content.replace('\n', '.\n').split('.'):
+                                    if part.strip():
+                                        parts.append(part.strip() + ('.' if not part.endswith('\n') else ''))
+                                
+                                if debug_streaming:
+                                    print(f"[{agent_id}] 💬 Split content into {len(parts)} parts")
+                                
+                                # Yield each part separately for smoother streaming
+                                for part in parts:
+                                    yield part
+                            else:
+                                # Only yield content chunks, not function calls
+                                yield new_content
                     else:
                         # Handle AIResponse format
                         if hasattr(chunk, "content") and chunk.content:
@@ -815,20 +838,70 @@ class BaseAgent:
                                     print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
                                 
                                 # Calculate the delta/new content only
-                                if content_chunk.startswith(current_content):
-                                    # Most LLM providers send the full content each time
+                                if content_chunk.startswith(previous_content):
                                     # Extract only the new part
-                                    new_content = content_chunk[len(current_content):]
-                                    current_content = content_chunk
+                                    new_content = content_chunk[len(previous_content):]
+                                    previous_content = content_chunk  # Update previous for next delta
                                     
-                                    # Only yield if there's actually new content
-                                    if new_content:
-                                        yield new_content
+                                    if debug_streaming:
+                                        print(f"[{agent_id}] 💬 Streaming delta chunk: '{new_content}'")
+                                    
+                                    # Split large new_content by sentences for smoother streaming
+                                    if len(new_content) > 20 and ('.' in new_content or '\n' in new_content):
+                                        # Split by sentence or line
+                                        parts = []
+                                        for part in new_content.replace('\n', '.\n').split('.'):
+                                            if part.strip():
+                                                parts.append(part.strip() + ('.' if not part.endswith('\n') else ''))
+                                        
+                                        if debug_streaming:
+                                            print(f"[{agent_id}] 💬 Split content into {len(parts)} parts")
+                                        
+                                        # Yield each part separately for smoother streaming
+                                        for part in parts:
+                                            yield part
+                                    else:
+                                        # Only yield if there's actually new content
+                                        if new_content:
+                                            yield new_content
                                 else:
-                                    # If we can't determine the delta for some reason, 
-                                    # yield the whole chunk but update current_content
-                                    current_content = content_chunk
-                                    yield content_chunk
+                                    # Get a best estimate of the delta if we can
+                                    # Look for the longest matching prefix
+                                    prefix_len = 0
+                                    for i in range(min(len(previous_content), len(content_chunk))):
+                                        if previous_content[i] == content_chunk[i]:
+                                            prefix_len += 1
+                                        else:
+                                            break
+                                    
+                                    if prefix_len > 0:
+                                        # We found some matching prefix
+                                        new_content = content_chunk[prefix_len:]
+                                        previous_content = content_chunk
+                                        
+                                        if debug_streaming:
+                                            print(f"[{agent_id}] 💬 Streaming fallback chunk with prefix match: '{new_content}'")
+                                        
+                                        # Only yield if there's actually new content
+                                        if new_content:
+                                            yield new_content
+                                    else:
+                                        # If we can't determine the delta for some reason, 
+                                        # Just yield the change in content length to avoid duplicates
+                                        if len(content_chunk) > len(current_content):
+                                            new_content = content_chunk[len(current_content):]
+                                            current_content = content_chunk
+                                            
+                                            if debug_streaming:
+                                                print(f"[{agent_id}] 💬 Streaming fallback chunk with length delta: '{new_content}'")
+                                            
+                                            yield new_content
+                                        else:
+                                            # Last resort - yield differently formatted content
+                                            current_content = content_chunk
+                                            if debug_streaming:
+                                                print(f"[{agent_id}] 💬 Streaming full chunk as fallback")
+                                            yield content_chunk
                             else:
                                 # Handle non-string content (log it but don't yield)
                                 print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
@@ -907,7 +980,21 @@ class BaseAgent:
                             total_time = time.time() - start_time
                             print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply "
                                   f"in {total_time:.2f}s with {len(collected_updates)} updates")
-                            yield f"\n{result['reply']}"
+                            
+                            # Split final reply into smaller parts for streaming
+                            reply = result['reply']
+                            if len(reply) > 50:
+                                parts = []
+                                for sentence in reply.split('.'):
+                                    if sentence.strip():
+                                        parts.append(sentence.strip() + '.')
+                                
+                                # Yield each part separately for smooth streaming
+                                for part in parts:
+                                    yield f"\n{part}"
+                            else:
+                                yield f"\n{reply}"
+                                
                             return
                     
                     # -------- NEW: add the required tool-result message --------
