@@ -607,9 +607,10 @@ async def process_message_streaming(
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
                 
-                # Financial model tools require special handling
+                # Tools that need special handling
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
                 sheet_tools = ["create_new_sheet"]
+                table_tools = ["add_column", "add_row", "delete_column", "delete_row", "sort_range", "find_replace"]
                 
                 # Ensure that kwargs is always a dictionary
                 if len(args) == 1 and isinstance(args[0], str) and not kwargs:
@@ -624,17 +625,32 @@ async def process_message_streaming(
                     elif name == "create_new_sheet":
                         # Handle create_new_sheet with a string argument as the name parameter
                         return tool_fn(name=args[0])
+                    elif name == "add_column" or name == "add_row":
+                        # For add_column and add_row, use the header parameter for the string
+                        return tool_fn(header=args[0])
                     elif name in financial_model_tools:
                         # Prevent financial model tools from being called with incorrect arguments
                         # or when not specifically requested
                         print(f"[{request_id}] ⚠️ Preventing inappropriate call to {name} with string argument")
                         return {"error": f"The {name} tool requires specific parameters, not a string."}
+                    elif name in table_tools:
+                        # Handle other table manipulation tools safely
+                        print(f"[{request_id}] ⚠️ The {name} tool requires specific parameters, not a string.")
+                        return {"error": f"The {name} tool requires specific parameters. Please provide complete arguments."}
                     else:
                         # For other functions, pass through to parameter inspection
-                        return tool_fn(args[0])
+                        try:
+                            return tool_fn(args[0])
+                        except TypeError as e:
+                            print(f"[{request_id}] ⚠️ Error calling {name}: {str(e)}")
+                            return {"error": f"Invalid parameters for {name}: {str(e)}"}
                 else:
                     # Normal case - keyword arguments
-                    return tool_fn(*args, **kwargs)
+                    try:
+                        return tool_fn(*args, **kwargs)
+                    except TypeError as e:
+                        print(f"[{request_id}] ⚠️ Error calling {name} with {args} and {kwargs}: {str(e)}")
+                        return {"error": f"Invalid parameters for {name}: {str(e)}"}
             return wrapper
             
         # Prepare all the tool functions with streaming wrappers
