@@ -35,6 +35,9 @@ export function useChatStream(
   const debugChunkCount = useRef(0);
   const debugLastChunkTime = useRef(Date.now());
   
+  // Track current streaming content for incremental updates
+  const streamingContentRef = useRef<string>('');
+  
   // Add a function to scroll to bottom of messages
   const scrollToBottom = useCallback(() => {
     if (typeof document !== 'undefined') {
@@ -78,15 +81,44 @@ export function useChatStream(
     setPendingUpdates([]);
   }, [pendingUpdates]);
 
+  // Helper function for updating message content that forces re-render
+  const updateMessageContent = useCallback((id: string, text: string) => {
+    streamingContentRef.current = text;
+    
+    setMessages(prev => {
+      // Create a new array with all messages
+      const newMessages = [...prev];
+      
+      // Find the message index
+      const index = newMessages.findIndex(m => m.id === id);
+      if (index >= 0) {
+        // Create a new message object with updated content and a new timestamp
+        // The timestamp forces React to see this as a new state value
+        newMessages[index] = {
+          ...newMessages[index],
+          content: text,
+          status: 'streaming' as const,
+          timestamp: Date.now() // Force re-render
+        };
+      }
+      
+      return newMessages;
+    });
+    
+    // Ensure the UI scrolls to show new content
+    requestAnimationFrame(scrollToBottom);
+  }, [setMessages, scrollToBottom]);
+
   const sendMessage = useCallback(async (message: string, contexts: string[] = [], model?: string) => {
     if (!wb || !wb.wid || !wb.active || loading) {
       if (DEBUG_STREAMING) console.log('[Stream DEBUG] Cannot send message - workbook not ready', { wb, loading });
       return;
     }
     
-    // Reset debugging counters
+    // Reset debugging counters and streaming content
     debugChunkCount.current = 0;
     debugLastChunkTime.current = Date.now();
+    streamingContentRef.current = '';
     
     if (DEBUG_STREAMING) console.log('[Stream DEBUG] Starting new streaming request', { message, mode, wid: wb.wid, sid: wb.active });
     
@@ -151,7 +183,6 @@ export function useChatStream(
       // We need to decode the stream chunks
       const decoder = new TextDecoder();
       let buffer = '';
-      let content = '';
       
       // For streaming performance analysis
       let totalCharsReceived = 0;
@@ -221,32 +252,15 @@ export function useChatStream(
               });
             }
             else if (event.type === 'chunk') {
-              // Update the message content with the new chunk
-              content += event.text;
+              // Add the new text to the current content
+              const newContent = streamingContentRef.current + event.text;
               
-              // Force immediate update with each new chunk
-              setMessages(prev => {
-                const newMessages = prev.map(m => 
-                  m.id === id 
-                    ? { 
-                        ...m, 
-                        content: content, 
-                        status: 'streaming' as const,
-                        // Add a timestamp to force React to see this as a new state value
-                        timestamp: Date.now()
-                      } 
-                    : m
-                );
-                
-                // Immediately scroll to show new content
-                setTimeout(scrollToBottom, 0);
-                
-                return newMessages;
-              });
+              // Update with immediate rendering
+              updateMessageContent(id, newContent);
               
               // Add extra debug for the chunk content
               if (DEBUG_STREAMING) {
-                console.log(`[Stream DEBUG] Chunk content: "${event.text.substring(0, 20).replace(/\n/g, "\\n")}..."`);
+                console.log(`[Stream DEBUG] Chunk content: "${event.text}"`);
               }
             }
             else if (event.type === 'update') {
@@ -348,7 +362,7 @@ export function useChatStream(
     } finally {
       abortControllerRef.current = null;
     }
-  }, [wb, loading, dispatch, mode, cancelStream, setMessages]);
+  }, [wb, loading, dispatch, mode, cancelStream, setMessages, updateMessageContent]);
 
   return {
     sendMessage,

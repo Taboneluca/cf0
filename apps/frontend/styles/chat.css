@@ -112,25 +112,42 @@
   word-break: break-word;
   white-space: pre-wrap !important;
   animation: fade-in 0.2s ease-out;
+  transition: all 0.1s ease-out;
+  will-change: contents; /* Hint to browser this content will change often */
 }
 
-/* Make streaming messages distinct so users can easily see updates */
-.message-streaming span {
-  display: inline;
-  animation: fade-in 0.3s ease-out;
-}
-
-/* Pulsing cursor for streaming */
-.message-streaming::after,
-.cursor-blink {
+/* Make the most recent character more visible with highlight */
+.message-streaming:not(:empty)::after {
   content: '';
   display: inline-block;
   width: 2px;
   height: 14px;
   background-color: theme('colors.blue.500');
-  margin-left: 2px;
+  margin-left: 1px;
   animation: cursor-blink 0.8s infinite;
   vertical-align: middle;
+}
+
+/* Highlight newly added text */
+@keyframes highlight-new-text {
+  0% { background-color: rgba(59, 130, 246, 0.2); } /* Light blue highlight */
+  100% { background-color: transparent; }
+}
+
+/* Apply animation to the streaming message */
+.message-streaming {
+  animation: highlight-new-text 1s ease-out;
+}
+
+/* Improve cursor blinking */
+.cursor-blink {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background-color: theme('colors.blue.500');
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: cursor-blink 0.8s infinite;
 }
 
 @keyframes cursor-blink {
@@ -141,4 +158,14 @@
 @keyframes fade-in {
   from { opacity: 0.7; }
   to { opacity: 1; }
+}
+
+/* Adding transition for smoothness */
+.message-streaming span {
+  transition: opacity 0.1s ease;
+}
+
+/* Force browser repaint to ensure streaming is visible */
+.message-streaming.force-repaint {
+  transform: translateZ(0);
 } 
