@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any, AsyncGenerator, List
 import time
 import json
 import os
@@ -130,9 +130,9 @@ class Orchestrator:
         return result
     
     async def stream_run(self, 
-                         mode: str, 
-                         message: str, 
-                         history: Optional[list] = None) -> AsyncGenerator[ChatStep, None]:
+                       mode: str, 
+                       message: str, 
+                       history: Optional[list] = None) -> AsyncGenerator[ChatStep, None]:
         """
         Streaming version of the orchestration process.
         
@@ -157,6 +157,26 @@ class Orchestrator:
         # For ask mode, add explicit instruction to not generate any financial templates
         if mode == "ask":
             agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
+        
+        # For llama-70b model specifically, filter out complex financial model tools
+        # unless they're explicitly requested in the user message
+        if hasattr(self.llm, 'model') and (
+            'llama-3-70b' in self.llm.model or 
+            'llama3-70b' in self.llm.model or
+            'llama-3.3-70b' in self.llm.model):
+            
+            financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
+            message_lower = message.lower()
+            
+            # Only provide financial model tools if explicitly mentioned
+            should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
+            
+            if not should_include_model_tools:
+                # Filter out financial model tools from agent's tools
+                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+                filtered_tools = {k: v for k, v in agent.tool_functions.items() if k not in financial_model_tools}
+                agent.tool_functions = filtered_tools
+                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
         
         # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
         agent_stream = agent.stream_run(message, history)
