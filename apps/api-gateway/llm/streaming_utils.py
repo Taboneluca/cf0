@@ -1,6 +1,10 @@
 import time
 import asyncio
+import os  # Add os import for environment variables
 from typing import AsyncGenerator, Any, List, Dict, Optional
+
+# Debug flag to enable detailed tracing of chunk flow
+DEBUG_CHUNKING = os.getenv("DEBUG_CHUNKING", "0") == "1"
 
 class StreamGuard:
     """
@@ -34,6 +38,9 @@ class StreamGuard:
         self.cumulative_content = ""  # Track all content to avoid double-counting
         self.repetition_count = 0
         self.last_content = None
+        
+        # For debugging purposes, track chunks
+        self.chunk_counter = 0
     
     def __aiter__(self):
         # Return self directly, not as a coroutine
@@ -55,6 +62,35 @@ class StreamGuard:
             # Get the next chunk from the stream
             chunk = await self.stream.__anext__()
             self.last_yield_time = time.time()
+            self.chunk_counter += 1
+            
+            if DEBUG_CHUNKING:
+                chunk_type = type(chunk).__name__
+                content_preview = ""
+                if isinstance(chunk, str):
+                    content_preview = chunk[:20]
+                elif hasattr(chunk, "content") and chunk.content:
+                    content_preview = str(chunk.content)[:20]
+                print(f"🔍 StreamGuard chunk #{self.chunk_counter}: {chunk_type}, preview: {content_preview}...")
+            
+            # Break down larger text chunks into smaller ones for smoother streaming
+            if isinstance(chunk, str) and len(chunk) > 20:
+                # Split long text into sentences or smaller chunks for smoother streaming
+                if '.' in chunk or '\n' in chunk:
+                    # Try to split on sentence boundaries or newlines
+                    parts = []
+                    for part in chunk.replace('\n', '.\n').split('.'):
+                        if part:
+                            parts.append(part + ('.' if not part.endswith('\n') else ''))
+                    
+                    if DEBUG_CHUNKING:
+                        print(f"🔍 Split chunk #{self.chunk_counter} into {len(parts)} smaller parts")
+                    
+                    # Return just the first part and queue the rest
+                    first_part = parts[0]
+                    # Store the remaining parts for later processing
+                    self._remainder = parts[1:]
+                    chunk = first_part
             
             # Count tokens only for text content
             content_to_count = None
@@ -113,7 +149,25 @@ async def wrap_stream_with_guard(stream: AsyncGenerator, max_tokens: Optional[in
     """
     guard = StreamGuard(stream, max_tokens=max_tokens)
     async for chunk in guard:
+        if DEBUG_CHUNKING:
+            chunk_type = type(chunk).__name__
+            content_preview = ""
+            if isinstance(chunk, str):
+                content_preview = chunk[:20]
+            elif hasattr(chunk, "content") and chunk.content:
+                content_preview = str(chunk.content)[:20]
+            print(f"🔄 wrap_stream_with_guard yielding: {chunk_type}, preview: {content_preview}...")
+            
         yield chunk
+
+        # If we have remainder chunks from splitting, yield them too
+        if hasattr(guard, '_remainder') and guard._remainder:
+            for remainder_chunk in guard._remainder:
+                if DEBUG_CHUNKING:
+                    print(f"🔄 Yielding remainder chunk: {remainder_chunk[:20]}...")
+                yield remainder_chunk
+            # Clear the remainder after yielding
+            guard._remainder = []
 
 # Ensure all exports are explicitly defined
 __all__ = ["StreamGuard", "wrap_stream_with_guard"] 
