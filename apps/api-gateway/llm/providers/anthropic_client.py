@@ -2,7 +2,7 @@ from anthropic import AsyncAnthropic
 import json
 from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 
 def _prune_none(d: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of d without keys whose value is None."""
@@ -128,12 +128,18 @@ class AnthropicClient(LLMClient):
             usage=None  # Anthropic doesn't provide usage info
         )
 
-    def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
-        """Send a chat request to Anthropic"""
+    def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params) -> Union[AsyncGenerator[AIResponse, None], AIResponse]:
+        """
+        Send a chat request to Anthropic.
+        
+        IMPORTANT: This is deliberately NOT async to avoid coroutine issue with async generators.
+        """
         if stream:
-            return self.stream_chat(messages, tools, **params)
-            
-        return self._chat_sync(messages, tools, **params)
+            # Return the async generator directly without being wrapped in a coroutine
+            return self._stream_chat_impl(messages, tools, **params)
+        else:
+            # For non-streaming, use async helper
+            return self._chat_sync(messages, tools, **params)
 
     async def _chat_sync(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params):
         """Internal async helper for non-streaming chat"""
@@ -167,32 +173,35 @@ class AnthropicClient(LLMClient):
         
         return self.from_provider_response(response)
 
-    async def stream_chat(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
-        """Stream a chat response from Anthropic"""
-        claude_messages, system_message = self.to_provider_messages(messages)
-        
-        # Convert tools to Anthropic tool format if provided
-        anthropic_tools = None
-        if tools:
-            anthropic_tools = []
-            for tool in tools:
-                anthropic_tool = {
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "input_schema": tool.get("parameters", {})
-                }
-                anthropic_tools.append(anthropic_tool)
-        
-        # Remove None values from parameters
-        params = _prune_none(params)
-        self.kw = _prune_none(self.kw)
-        
-        # CRITICAL FIX: Yield immediately to ensure this is an async generator
-        # This initial yield must happen before any awaits
+    async def _stream_chat_impl(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
+        """
+        Internal implementation for streaming chat.
+        This must be properly implemented as an async generator.
+        """
+        # CRITICAL: We must yield at least once before any await statements
+        # Otherwise, the function becomes a coroutine, not an async generator
         yield AIResponse(content="", tool_calls=[])
         
         try:
-            # Create the stream - awaiting happens after our first yield
+            claude_messages, system_message = self.to_provider_messages(messages)
+            
+            # Convert tools to Anthropic tool format if provided
+            anthropic_tools = None
+            if tools:
+                anthropic_tools = []
+                for tool in tools:
+                    anthropic_tool = {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "input_schema": tool.get("parameters", {})
+                    }
+                    anthropic_tools.append(anthropic_tool)
+            
+            # Remove None values from parameters
+            params = _prune_none(params)
+            self.kw = _prune_none(self.kw)
+            
+            # Now it's safe to await since we've already yielded once
             stream = await self.client.messages.stream(
                 model=self.model,
                 messages=claude_messages,
@@ -285,6 +294,27 @@ class AnthropicClient(LLMClient):
             # We already yielded at least once
             print(f"Error in anthropic stream processing: {str(e)}")
             yield AIResponse(content=f"Error: {str(e)}", tool_calls=[])
+
+    # Implement the required abstract method to meet the interface contract
+    async def stream_chat(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
+        """
+        Stream a chat response from Anthropic.
+        
+        IMPORTANT: This must be properly implemented as an async generator.
+        """
+        # Yield immediately to make this a proper async generator
+        yield AIResponse(content="", tool_calls=[])
+        
+        # Now delegate to the actual implementation
+        generator = self._stream_chat_impl(messages, tools, **params)
+        # Skip the first chunk since we've already yielded an empty one
+        first = True
+        
+        async for chunk in generator:
+            if first:
+                first = False
+                continue
+            yield chunk
 
     @property
     def supports_tool_calls(self) -> bool:
