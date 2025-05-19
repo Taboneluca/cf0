@@ -2,7 +2,7 @@ from groq import AsyncGroq
 import json
 from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 
 # Model alias mapping to normalize model names
 MODEL_ALIASES = {
@@ -138,18 +138,18 @@ class GroqClient(LLMClient):
             usage=usage
         )
 
-    # We need a non-async method to return an async generator without becoming a coroutine
-    def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params):
-        """Send a chat completion request to Groq"""
-        # CRITICAL FIX: This method is no longer async, so it won't turn into a coroutine
-        # when returning an async generator from stream_chat
+    def chat(self, messages: List[Message], stream: bool = False, tools: Optional[List[Dict[str, Any]]] = None, **params) -> Union[AsyncGenerator[AIResponse, None], AIResponse]:
+        """
+        Send a chat completion request to Groq.
         
+        IMPORTANT: This is deliberately NOT async to avoid coroutine issue with async generators.
+        """
         if stream:
-            # This now works correctly - returning an async generator from a non-async method
-            return self.stream_chat(messages, tools, **params)
-            
-        # For non-streaming, we use a special helper that runs the async code
-        return self._chat_sync(messages, tools, **params)
+            # Return the async generator directly without being wrapped in a coroutine
+            return self._stream_chat_impl(messages, tools, **params)
+        else:
+            # For non-streaming, use async helper
+            return self._chat_sync(messages, tools, **params)
     
     async def _chat_sync(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params):
         """Internal async helper for non-streaming chat"""
@@ -189,40 +189,44 @@ class GroqClient(LLMClient):
         
         return self.from_provider_response(response)
     
-    async def stream_chat(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
-        """Stream a chat completion from Groq"""
-        def _wrap_tools(tools):
-            if not tools:
-                return None
-            wrapped = []
-            for t in tools:
-                wrapped.append({
-                    "type": "function",
-                    "function": {
-                        "name":        t["name"],
-                        "description": t.get("description", ""),
-                        "parameters":  t.get("parameters", {})
-                    }
-                })
-            return wrapped
-            
-        groq_messages = self.to_provider_messages(messages)
-        
-        # Remove None values from parameters
-        params = _prune_none(params)
-        self.kw = _prune_none(self.kw)
-        
-        # Don't force JSON response format when streaming
-        # JSON format conflicts with streaming and causes errors
-        if "response_format" in params:
-            del params["response_format"]
-        
-        # CRITICAL FIX: Yield immediately to ensure this is an async generator
-        # This initial yield must happen before any awaits
+    # Renamed to _stream_chat_impl to avoid confusion with the abstract method
+    async def _stream_chat_impl(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
+        """
+        Internal implementation for streaming chat.
+        This must be properly implemented as an async generator.
+        """
+        # CRITICAL: We must yield at least once before any await statements
+        # Otherwise, the function becomes a coroutine, not an async generator
         yield AIResponse(content="", tool_calls=[])
-            
+        
         try:
-            # Create the stream - awaiting happens after our first yield
+            def _wrap_tools(tools):
+                if not tools:
+                    return None
+                wrapped = []
+                for t in tools:
+                    wrapped.append({
+                        "type": "function",
+                        "function": {
+                            "name":        t["name"],
+                            "description": t.get("description", ""),
+                            "parameters":  t.get("parameters", {})
+                        }
+                    })
+                return wrapped
+                
+            groq_messages = self.to_provider_messages(messages)
+            
+            # Remove None values from parameters
+            params = _prune_none(params)
+            self.kw = _prune_none(self.kw)
+            
+            # Don't force JSON response format when streaming
+            # JSON format conflicts with streaming and causes errors
+            if "response_format" in params:
+                del params["response_format"]
+                
+            # Now we can safely await since we've already yielded once
             stream = await self.client.chat.completions.create(
                 model=self.model,
                 messages=groq_messages,
@@ -290,6 +294,27 @@ class GroqClient(LLMClient):
             # We already yielded at least once
             print(f"Error in stream processing: {str(e)}")
             yield AIResponse(content=f"Error: {str(e)}", tool_calls=[])
+    
+    # Implement the required abstract method to meet the interface contract
+    async def stream_chat(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None, **params) -> AsyncGenerator[AIResponse, None]:
+        """
+        Stream a chat completion from Groq.
+        
+        IMPORTANT: This must be properly implemented as an async generator.
+        """
+        # Yield immediately to make this a proper async generator
+        yield AIResponse(content="", tool_calls=[])
+        
+        # Now delegate to the actual implementation
+        generator = self._stream_chat_impl(messages, tools, **params)
+        # Skip the first chunk since we've already yielded an empty one
+        first = True
+        
+        async for chunk in generator:
+            if first:
+                first = False
+                continue
+            yield chunk
             
     @property
     def supports_tool_calls(self) -> bool:
