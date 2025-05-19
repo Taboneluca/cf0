@@ -15,10 +15,10 @@ class StreamGuard:
     def __init__(
         self, 
         stream: AsyncGenerator,
-        max_tokens: Optional[int] = None,  # Changed default to None to disable token limit
+        max_tokens: Optional[int] = None,  # None disables token limit
         timeout_seconds: float = 120.0,
         repetition_threshold: int = 3,
-        stall_timeout_seconds: float = 10.0
+        stall_timeout_seconds: float = 60.0  # Increased from 10.0 to 60.0
     ):
         self.stream = stream
         # None == "no hard cap"
@@ -27,91 +27,92 @@ class StreamGuard:
         self.repetition_threshold = repetition_threshold
         self.stall_timeout_seconds = stall_timeout_seconds
         
-        # Internal state
-        self.token_count = 0
-        self.last_content = ""      # track cum-content to avoid double-counting
+        # Tracking state
         self.start_time = time.time()
-        self.last_content_time = time.time()
-        self.recent_chunks = []
+        self.last_yield_time = time.time()
+        self.token_count = 0
+        self.cumulative_content = ""  # Track all content to avoid double-counting
         self.repetition_count = 0
+        self.last_content = None
     
-    def __aiter__(self):
-        # Changed to a non-async version - this should return self, not a coroutine
+    async def __aiter__(self):
         return self
     
     async def __anext__(self):
-        # Check timeout
-        current_time = time.time()
-        if current_time - self.start_time > self.timeout_seconds:
-            print(f"⚠️ Stream timeout after {self.timeout_seconds}s")
-            raise StopAsyncIteration
-            
-        # Check stall timeout (no new content)
-        if current_time - self.last_content_time > self.stall_timeout_seconds:
-            print(f"⚠️ Stream stalled - no new content for {self.stall_timeout_seconds}s")
-            raise StopAsyncIteration
-            
-        # Check token limit (only if a limit was supplied)
-        if self.max_tokens and self.token_count >= self.max_tokens:
-            print(f"⚠️ Stream reached maximum token limit ({self.max_tokens})")
-            raise StopAsyncIteration
-        
         try:
-            # Get next chunk with timeout
-            chunk = await asyncio.wait_for(
-                self.stream.__anext__(), 
-                timeout=self.stall_timeout_seconds
-            )
+            # 1. Check if we've timed out
+            if time.time() - self.start_time > self.timeout_seconds:
+                print(f"⚠️ Stream reached maximum time limit of {self.timeout_seconds}s")
+                raise StopAsyncIteration
+                
+            # 2. Check if we've received no content for a while (stall detection)
+            stall_time = time.time() - self.last_yield_time
+            if stall_time > self.stall_timeout_seconds:
+                print(f"⚠️ Stream stalled - no new content for {stall_time:.1f}s")
+                raise StopAsyncIteration
             
-            # Extract content for analysis
-            content = ""
-            if hasattr(chunk, "content") and chunk.content:
-                content = chunk.content
-                
-            # Calculate rough token count (simple approximation)
-            if content:
-                # Reset stall timer
-                self.last_content_time = time.time()
-                
-                # Count ONLY the *new* chars (most providers resend the full
-                # buffer each step). 4 chars ≈ 1 token.
-                if content.startswith(self.last_content):
-                    new_chars = len(content) - len(self.last_content)
+            # Get the next chunk from the stream
+            chunk = await self.stream.__anext__()
+            self.last_yield_time = time.time()
+            
+            # Count tokens only for text content
+            content_to_count = None
+            if isinstance(chunk, str):
+                content_to_count = chunk
+            elif hasattr(chunk, "content") and chunk.content:
+                content_to_count = chunk.content
+            
+            # Process content for token counting and repetition detection
+            if content_to_count:
+                # Only count new content by tracking cumulative content
+                # This prevents double-counting when a provider repeats content
+                new_content_length = len(content_to_count)
+                if content_to_count in self.cumulative_content:
+                    # Content already seen, don't count again
+                    new_tokens = 0
                 else:
-                    new_chars = len(content)
-                self.last_content = content
-                self.token_count += max(new_chars, 0) // 4
+                    # For simplicity: approximate 1 token ≈ 4 chars
+                    new_tokens = (new_content_length + 3) // 4
+                    self.cumulative_content += content_to_count
                 
-                # Check for repetition
-                if content in self.recent_chunks:
+                self.token_count += new_tokens
+                
+                # 3. Check if we've reached the maximum token limit (if enabled)
+                if self.max_tokens is not None and self.token_count > self.max_tokens:
+                    print(f"⚠️ Stream reached maximum token limit of {self.max_tokens}")
+                    raise StopAsyncIteration
+                
+                # 4. Check for exact repetition (same content multiple times)
+                if content_to_count == self.last_content:
                     self.repetition_count += 1
                     if self.repetition_count >= self.repetition_threshold:
-                        print(f"⚠️ Detected content repetition in stream")
+                        print(f"⚠️ Stream repeated the same content {self.repetition_count} times")
                         raise StopAsyncIteration
                 else:
                     self.repetition_count = 0
-                    
-                # Update recent chunks (sliding window)
-                self.recent_chunks = (self.recent_chunks + [content])[-5:]
+                    self.last_content = content_to_count
             
             return chunk
             
-        except (StopAsyncIteration, asyncio.TimeoutError):
-            print(f"🏁 Stream completed or timed out after {time.time() - self.start_time:.2f}s")
-            raise StopAsyncIteration
+        except StopAsyncIteration:
+            elapsed = time.time() - self.start_time
+            print(f"⏹️ StreamGuard completed after {elapsed:.2f}s and ~{self.token_count} tokens")
+            raise
 
-def wrap_stream_with_guard(stream: AsyncGenerator, max_tokens: Optional[int] = None) -> AsyncGenerator:
+async def wrap_stream_with_guard(stream: AsyncGenerator, max_tokens: Optional[int] = None) -> AsyncGenerator:
     """
-    Wrap an async generator stream with protection against infinite loops.
+    Wrap a stream with guard rails to prevent infinite generation.
     
     Args:
-        stream: The original async generator stream
-        max_tokens: Optional token limit (None = no limit)
+        stream: The async generator to wrap
+        max_tokens: Optional maximum number of tokens to generate
         
     Returns:
-        Protected async generator with safeguards
+        A wrapped async generator with guard rails
     """
-    return StreamGuard(stream, max_tokens=max_tokens)
+    guard = StreamGuard(stream, max_tokens=max_tokens)
+    async for chunk in guard:
+        yield chunk
 
 # Ensure all exports are explicitly defined
 __all__ = ["StreamGuard", "wrap_stream_with_guard"] 
