@@ -31,6 +31,9 @@ from spreadsheet_engine.templates import dcf, fsm, loader as template_loader
 # Flag to control template tools
 ENABLE_TEMPLATES = os.getenv("ENABLE_TEMPLATE_TOOLS", "0") == "1"
 
+# Debug flags
+DEBUG_FORMULA_PARSING = os.getenv("DEBUG_FORMULA_PARSING", "0") == "1"
+
 # -------------------------------------------------------------------
 # Pending-changes cache  (wid,sid) ➜ Spreadsheet snapshot
 # -------------------------------------------------------------------
@@ -311,7 +314,17 @@ async def process_message(
                         return tool_fn(name=args[0])
                     elif name == "add_column" or name == "add_row":
                         # For add_column and add_row, use the header parameter for the string
-                        return tool_fn(header=args[0])
+                        # Make sure we're always using keyword arguments to avoid the ** mapping error
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as header.")
+                            
+                            # Always use as keyword argument
+                            return tool_fn(header=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
                     elif name == "set_cells":
                         # Special handling for set_cells with string argument
                         # Try to parse as JSON if it looks like a JSON string
@@ -329,14 +342,31 @@ async def process_message(
                                     return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
                             except json.JSONDecodeError:
                                 # Special case for LaTeX and formulas with braces
-                                if ('\\' in args[0] or '\\text{' in args[0] or '\\times' in args[0]) and '=' in args[0]:
+                                if ('\\' in args[0] or '\\text{' in args[0] or '\\times' in args[0] or '\\frac' in args[0]) and '=' in args[0]:
                                     try:
                                         # Simple splitting on first equals sign for formulas
                                         cell_ref, formula = args[0].split('=', 1)
+                                        # Debug the formula parsing
+                                        if DEBUG_FORMULA_PARSING:
+                                            print(f"[{request_id}] 📐 Parsing LaTeX formula: {formula.strip()}")
+                                            print(f"[{request_id}] 🔍 Raw formula: {repr(formula)}")
                                         return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
                                     except Exception as e:
                                         print(f"[{request_id}] ⚠️ LaTeX formula handling failed: {str(e)}")
-                                        return {"error": f"Failed to parse LaTeX formula: {str(e)}"}
+                                        # Try different parsing approach as fallback
+                                        try:
+                                            # Try to clean the formula by removing line breaks and extra spaces
+                                            clean_formula = ' '.join(args[0].split())
+                                            if '=' in clean_formula:
+                                                cell_ref, formula = clean_formula.split('=', 1)
+                                                if DEBUG_FORMULA_PARSING:
+                                                    print(f"[{request_id}] 🔍 Fallback clean formula: {repr(formula)}")
+                                                return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
+                                            else:
+                                                return {"error": f"Failed to parse formula: no equals sign found"}
+                                        except Exception as e2:
+                                            print(f"[{request_id}] ❌ Fallback LaTeX parsing failed: {str(e2)}")
+                                            return {"error": f"Failed to parse LaTeX formula: {str(e)}"}
                                 
                                 # Handle possible formula notation or special characters in single string
                                 elif '=' in args[0] and len(args[0].split('=', 1)) == 2:
@@ -357,8 +387,19 @@ async def process_message(
                                     # Preserve the entire string as a formula
                                     cell_ref, formula = args[0].split('=', 1)
                                     # When debugging, print raw formula to help diagnose issues
-                                    print(f"[{request_id}] 📐 LaTeX formula detected: {formula.strip()}")
-                                    return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
+                                    if DEBUG_FORMULA_PARSING:
+                                        print(f"[{request_id}] 📐 LaTeX formula detected: {formula.strip()}")
+                                        print(f"[{request_id}] 🔍 Formula contains backslashes: {repr(formula)}")
+                                    
+                                    # Try to clean the formula if there are issues with escaping
+                                    formula_to_use = formula.strip()
+                                    if '\\\\' in formula:
+                                        # Escape sequences might be doubled in some contexts
+                                        if DEBUG_FORMULA_PARSING:
+                                            print(f"[{request_id}] 🔧 Formula contains double backslashes, normalizing")
+                                        formula_to_use = formula.replace('\\\\', '\\')
+                                        
+                                    return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula_to_use}])
                                 
                                 # Standard A1=value format
                                 cell_ref, value = args[0].split("=", 1)
@@ -800,7 +841,17 @@ async def process_message_streaming(
                         return tool_fn(name=args[0])
                     elif name == "add_column" or name == "add_row":
                         # For add_column and add_row, use the header parameter for the string
-                        return tool_fn(header=args[0])
+                        # Make sure we're always using keyword arguments to avoid the ** mapping error
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as header.")
+                            
+                            # Always use as keyword argument
+                            return tool_fn(header=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
                     elif name == "set_cells":
                         # Special handling for set_cells with string argument
                         # Try to parse as JSON if it looks like a JSON string
@@ -818,14 +869,31 @@ async def process_message_streaming(
                                     return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
                             except json.JSONDecodeError:
                                 # Special case for LaTeX and formulas with braces
-                                if ('\\' in args[0] or '\\text{' in args[0] or '\\times' in args[0]) and '=' in args[0]:
+                                if ('\\' in args[0] or '\\text{' in args[0] or '\\times' in args[0] or '\\frac' in args[0]) and '=' in args[0]:
                                     try:
                                         # Simple splitting on first equals sign for formulas
                                         cell_ref, formula = args[0].split('=', 1)
+                                        # Debug the formula parsing
+                                        if DEBUG_FORMULA_PARSING:
+                                            print(f"[{request_id}] 📐 Parsing LaTeX formula: {formula.strip()}")
+                                            print(f"[{request_id}] 🔍 Raw formula: {repr(formula)}")
                                         return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
                                     except Exception as e:
                                         print(f"[{request_id}] ⚠️ LaTeX formula handling failed: {str(e)}")
-                                        return {"error": f"Failed to parse LaTeX formula: {str(e)}"}
+                                        # Try different parsing approach as fallback
+                                        try:
+                                            # Try to clean the formula by removing line breaks and extra spaces
+                                            clean_formula = ' '.join(args[0].split())
+                                            if '=' in clean_formula:
+                                                cell_ref, formula = clean_formula.split('=', 1)
+                                                if DEBUG_FORMULA_PARSING:
+                                                    print(f"[{request_id}] 🔍 Fallback clean formula: {repr(formula)}")
+                                                return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
+                                            else:
+                                                return {"error": f"Failed to parse formula: no equals sign found"}
+                                        except Exception as e2:
+                                            print(f"[{request_id}] ❌ Fallback LaTeX parsing failed: {str(e2)}")
+                                            return {"error": f"Failed to parse LaTeX formula: {str(e)}"}
                                 
                                 # Handle possible formula notation or special characters in single string
                                 elif '=' in args[0] and len(args[0].split('=', 1)) == 2:
@@ -846,8 +914,19 @@ async def process_message_streaming(
                                     # Preserve the entire string as a formula
                                     cell_ref, formula = args[0].split('=', 1)
                                     # When debugging, print raw formula to help diagnose issues
-                                    print(f"[{request_id}] 📐 LaTeX formula detected: {formula.strip()}")
-                                    return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
+                                    if DEBUG_FORMULA_PARSING:
+                                        print(f"[{request_id}] 📐 LaTeX formula detected: {formula.strip()}")
+                                        print(f"[{request_id}] 🔍 Formula contains backslashes: {repr(formula)}")
+                                    
+                                    # Try to clean the formula if there are issues with escaping
+                                    formula_to_use = formula.strip()
+                                    if '\\\\' in formula:
+                                        # Escape sequences might be doubled in some contexts
+                                        if DEBUG_FORMULA_PARSING:
+                                            print(f"[{request_id}] 🔧 Formula contains double backslashes, normalizing")
+                                        formula_to_use = formula.replace('\\\\', '\\')
+                                        
+                                    return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula_to_use}])
                                 
                                 # Standard A1=value format
                                 cell_ref, value = args[0].split("=", 1)
