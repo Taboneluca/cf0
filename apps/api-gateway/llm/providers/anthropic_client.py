@@ -1,5 +1,6 @@
 from anthropic import AsyncAnthropic
 import json
+import os
 from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union
@@ -42,57 +43,57 @@ class AnthropicClient(LLMClient):
         
         return new_client
 
-    def to_provider_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def to_provider_messages(self, messages: List[Message]) -> tuple[List[Dict[str, Any]], Optional[str]]:
         """Convert standard messages to Anthropic format"""
-        result = []
+        # Extract system message if present
         system_message = None
-        
         for msg in messages:
             if msg.role == "system":
                 system_message = msg.content
+                break
+        
+        # Handle all non-system messages
+        result = []
+        for msg in messages:
+            # Skip system messages as they're handled separately
+            if msg.role == "system":
                 continue
-            
-            # Handle tool messages from OpenAI/Groq format and convert to Anthropic format
+                
+            # Convert tool results to assistant responses with content
             if msg.role == "tool":
-                # Convert tool result to Anthropic format
+                # Tool results are mapped to assistant responses in Anthropic
                 result.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": msg.tool_call_id,
-                        "content": msg.content or ""
-                    }]
+                    "role": "assistant",
+                    "content": f"Tool result: {msg.content}"
                 })
                 continue
                 
-            anthropic_msg = {"role": msg.role}
-            
-            if msg.content is not None:
-                anthropic_msg["content"] = msg.content
-            
-            # Anthropic uses tool_use/tool_result instead of tool_calls
-            if msg.tool_calls and msg.role == "assistant":
-                anthropic_msg["content"] = []
+            # Map user/assistant directly
+            if msg.role in ["user", "assistant"]:
+                anthropic_msg = {"role": msg.role}
                 
-                if msg.content:
-                    anthropic_msg["content"].append({
-                        "type": "text",
-                        "text": msg.content
-                    })
-                    
-                for tc in msg.tool_calls:
-                    # Make sure input is always a dictionary (Claude requires this)
-                    input_obj = tc.args if isinstance(tc.args, dict) else {"value": tc.args}
-                    
-                    anthropic_msg["content"].append({
-                        "type": "tool_use",
-                        "id": tc.id or f"call_{len(anthropic_msg['content'])}",
-                        "name": tc.name,
-                        "input": input_obj
-                    })
-                    
-            result.append(anthropic_msg)
-            
+                # Handle content and tool calls
+                if msg.content is not None:
+                    # For Claude: content must be a list of blocks
+                    if msg.tool_calls:
+                        # Messages with tool calls need special structure
+                        anthropic_msg["content"] = [
+                            {"type": "text", "text": msg.content or ""}
+                        ]
+                        # Add tool_calls in proper format
+                        for tc in msg.tool_calls:
+                            anthropic_msg["content"].append({
+                                "type": "tool_use",
+                                "name": tc.name,
+                                "input": tc.args,
+                                "id": tc.id or f"call_{tc.name}"
+                            })
+                    else:
+                        # Simple text content
+                        anthropic_msg["content"] = msg.content
+                        
+                result.append(anthropic_msg)
+                
         return result, system_message
         
     def from_provider_response(self, response: Any) -> AIResponse:
@@ -202,11 +203,12 @@ class AnthropicClient(LLMClient):
             self.kw = _prune_none(self.kw)
             
             # Now it's safe to await since we've already yielded once
-            stream = await self.client.messages.stream(
+            with_stream = await self.client.messages.create(
                 model=self.model,
                 messages=claude_messages,
                 system=system_message,
                 tools=anthropic_tools,
+                stream=True,
                 **self.kw, 
                 **params,
             )
@@ -214,8 +216,8 @@ class AnthropicClient(LLMClient):
             current_content = ""
             current_tool_calls = {}  # id -> tool call
             
-            # Process each streaming event
-            async for event in stream:
+            # Process each streaming event by directly iterating the stream object
+            async for event in with_stream:
                 new_content = None
                 new_tool_data = None
                 
@@ -246,33 +248,19 @@ class AnthropicClient(LLMClient):
                     # Message completed
                     pass
                     
-                elif event.type == "content_block_delta" and hasattr(event, "delta") and hasattr(event.delta, "type") and event.delta.type == "tool_use":
-                    # Handle tool use delta
-                    tool_use = event.delta
+                elif event.type == "tool_use_block_start" and hasattr(event, "tool_use"):
+                    # Beginning of a tool call
+                    tool = event.tool_use
+                    tool_id = tool.id
                     
-                    if hasattr(tool_use, "id") and tool_use.id:
-                        tool_id = tool_use.id
-                        
-                        # Initialize tool call if it doesn't exist
-                        if tool_id not in current_tool_calls:
-                            current_tool_calls[tool_id] = {
-                                "id": tool_id,
-                                "name": getattr(tool_use, "name", "") if hasattr(tool_use, "name") else "",
-                                "input": {}
-                            }
-                        
-                        # Update tool data
-                        if hasattr(tool_use, "name") and tool_use.name:
-                            current_tool_calls[tool_id]["name"] = tool_use.name
-                            
-                        if hasattr(tool_use, "input") and tool_use.input:
-                            # Merge input dictionaries (Claude may stream tool input in parts)
-                            if isinstance(tool_use.input, dict):
-                                current_tool_calls[tool_id]["input"].update(tool_use.input)
-                            
-                        # Signal that we have new tool data
-                        new_tool_data = True
-                
+                    # Initialize the tool call data structure
+                    current_tool_calls[tool_id] = {
+                        "id": tool_id,
+                        "name": tool.name,
+                        "input": tool.input or {}
+                    }
+                    new_tool_data = True
+                    
                 # If we have new content or tool data, emit an AIResponse
                 if new_content or new_tool_data:
                     # Convert current state to AIResponse
@@ -315,7 +303,7 @@ class AnthropicClient(LLMClient):
                 first = False
                 continue
             yield chunk
-
+            
     @property
     def supports_tool_calls(self) -> bool:
         return True  # Claude 3.5+ supports tools 
