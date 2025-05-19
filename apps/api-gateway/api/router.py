@@ -609,6 +609,7 @@ async def process_message_streaming(
                 
                 # Financial model tools require special handling
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+                sheet_tools = ["create_new_sheet"]
                 
                 # Ensure that kwargs is always a dictionary
                 if len(args) == 1 and isinstance(args[0], str) and not kwargs:
@@ -620,6 +621,9 @@ async def process_message_streaming(
                         return tool_fn(cell_ref=args[0])
                     elif name == "get_range":
                         return tool_fn(range_ref=args[0])
+                    elif name == "create_new_sheet":
+                        # Handle create_new_sheet with a string argument as the name parameter
+                        return tool_fn(name=args[0])
                     elif name in financial_model_tools:
                         # Prevent financial model tools from being called with incorrect arguments
                         # or when not specifically requested
