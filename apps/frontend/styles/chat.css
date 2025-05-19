@@ -109,15 +109,25 @@
 /* Streaming message styling */
 .message-streaming {
   position: relative;
+  word-break: break-word;
+  white-space: pre-wrap !important;
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Make streaming messages distinct so users can easily see updates */
+.message-streaming span {
+  display: inline;
+  animation: fade-in 0.3s ease-out;
 }
 
 /* Pulsing cursor for streaming */
-.message-streaming::after {
+.message-streaming::after,
+.cursor-blink {
   content: '';
   display: inline-block;
   width: 2px;
   height: 14px;
-  background-color: theme('colors.blue.600');
+  background-color: theme('colors.blue.500');
   margin-left: 2px;
   animation: cursor-blink 0.8s infinite;
   vertical-align: middle;
@@ -128,7 +138,7 @@
   50% { opacity: 1; }
 }
 
-/* Ensure chunks are properly rendered */
-.message-streaming span {
-  display: inline;
+@keyframes fade-in {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
 } 

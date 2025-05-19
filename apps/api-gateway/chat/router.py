@@ -281,8 +281,99 @@ async def process_message(
             """Create a wrapper that logs the call"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
-                result = tool_fn(*args, **kwargs)
-                return result
+                
+                # Tools that need special handling
+                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+                sheet_tools = ["create_new_sheet"]
+                table_tools = ["add_column", "add_row", "delete_column", "delete_row", "sort_range", "find_replace"]
+                cell_tools = ["set_cell", "get_cell", "get_range"]
+                
+                # Ensure that kwargs is always a dictionary
+                if len(args) == 1 and isinstance(args[0], str) and not kwargs:
+                    # Handle the case where a single string argument is passed
+                    # This happens with some tools when called with just a string
+                    if name == "set_cell":
+                        # For set_cell, we need cell and value parameters
+                        # Check if the string is in "A1=value" format
+                        if "=" in args[0]:
+                            cell_ref, value = args[0].split("=", 1)
+                            return tool_fn(cell=cell_ref.strip(), value=value.strip())
+                        else:
+                            # If there's no equals sign, it might just be a cell reference
+                            # We'll set an empty string as the value
+                            return tool_fn(cell=args[0], value="")
+                    elif name == "get_cell":
+                        return tool_fn(cell_ref=args[0])
+                    elif name == "get_range":
+                        return tool_fn(range_ref=args[0])
+                    elif name == "create_new_sheet":
+                        # Handle create_new_sheet with a string argument as the name parameter
+                        return tool_fn(name=args[0])
+                    elif name == "add_column" or name == "add_row":
+                        # For add_column and add_row, use the header parameter for the string
+                        return tool_fn(header=args[0])
+                    elif name == "set_cells":
+                        # Special handling for set_cells with string argument
+                        # Try to parse as JSON if it looks like a JSON string
+                        if args[0].strip().startswith('{') or args[0].strip().startswith('['):
+                            try:
+                                import json
+                                data = json.loads(args[0])
+                                if isinstance(data, dict):
+                                    # Handle dict format (cells_dict)
+                                    return tool_fn(cells_dict=data)
+                                elif isinstance(data, list):
+                                    # Handle list format (updates)
+                                    return tool_fn(updates=data)
+                                else:
+                                    return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
+                            except json.JSONDecodeError:
+                                return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
+                        # If it's not JSON, try to interpret as a simple "A1=value" format
+                        elif "=" in args[0]:
+                            cell_ref, value = args[0].split("=", 1)
+                            update = [{"cell": cell_ref.strip(), "value": value.strip()}]
+                            return tool_fn(updates=update)
+                        else:
+                            return {"error": f"Invalid format for set_cells. Expected JSON or A1=value format, got: {args[0]}"}
+                    elif name in financial_model_tools:
+                        # Prevent financial model tools from being called with incorrect arguments
+                        # or when not specifically requested
+                        print(f"[{request_id}] ⚠️ Preventing inappropriate call to {name} with string argument")
+                        return {"error": f"The {name} tool requires specific parameters, not a string."}
+                    elif name in table_tools:
+                        # Handle other table manipulation tools safely
+                        print(f"[{request_id}] ⚠️ The {name} tool requires specific parameters, not a string.")
+                        return {"error": f"The {name} tool requires specific parameters. Please provide complete arguments."}
+                    else:
+                        # For other functions, pass through to parameter inspection
+                        try:
+                            # First, try to infer the parameter name based on function signature
+                            import inspect
+                            sig = inspect.signature(tool_fn)
+                            params = list(sig.parameters.keys())
+                            
+                            # If we have parameters, use the first one as the keyword
+                            if params:
+                                # Create a kwargs dict with the first parameter name
+                                param_kwargs = {params[0]: args[0]}
+                                return tool_fn(**param_kwargs)
+                            else:
+                                # Just try passing it through
+                                return tool_fn(args[0])
+                        except TypeError as e:
+                            print(f"[{request_id}] ⚠️ Error calling {name}: {str(e)}")
+                            return {"error": f"Invalid parameters for {name}: {str(e)}"}
+                elif name == "set_cell" and len(args) == 2:
+                    # Handle case where set_cell is called with (cell, value) positional args
+                    return tool_fn(cell=args[0], value=args[1])
+                else:
+                    # Normal case - keyword arguments
+                    try:
+                        return tool_fn(*args, **kwargs)
+                    except TypeError as e:
+                        print(f"[{request_id}] ⚠️ Error calling {name} with {args} and {kwargs}: {str(e)}")
+                        return {"error": f"Invalid parameters for {name}: {str(e)}"}
             return wrapper
             
         # Prepare all the tool functions with streaming wrappers
@@ -637,8 +728,99 @@ async def process_message_streaming(
             """Create a wrapper that logs the call"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
-                result = tool_fn(*args, **kwargs)
-                return result
+                
+                # Tools that need special handling
+                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+                sheet_tools = ["create_new_sheet"]
+                table_tools = ["add_column", "add_row", "delete_column", "delete_row", "sort_range", "find_replace"]
+                cell_tools = ["set_cell", "get_cell", "get_range"]
+                
+                # Ensure that kwargs is always a dictionary
+                if len(args) == 1 and isinstance(args[0], str) and not kwargs:
+                    # Handle the case where a single string argument is passed
+                    # This happens with some tools when called with just a string
+                    if name == "set_cell":
+                        # For set_cell, we need cell and value parameters
+                        # Check if the string is in "A1=value" format
+                        if "=" in args[0]:
+                            cell_ref, value = args[0].split("=", 1)
+                            return tool_fn(cell=cell_ref.strip(), value=value.strip())
+                        else:
+                            # If there's no equals sign, it might just be a cell reference
+                            # We'll set an empty string as the value
+                            return tool_fn(cell=args[0], value="")
+                    elif name == "get_cell":
+                        return tool_fn(cell_ref=args[0])
+                    elif name == "get_range":
+                        return tool_fn(range_ref=args[0])
+                    elif name == "create_new_sheet":
+                        # Handle create_new_sheet with a string argument as the name parameter
+                        return tool_fn(name=args[0])
+                    elif name == "add_column" or name == "add_row":
+                        # For add_column and add_row, use the header parameter for the string
+                        return tool_fn(header=args[0])
+                    elif name == "set_cells":
+                        # Special handling for set_cells with string argument
+                        # Try to parse as JSON if it looks like a JSON string
+                        if args[0].strip().startswith('{') or args[0].strip().startswith('['):
+                            try:
+                                import json
+                                data = json.loads(args[0])
+                                if isinstance(data, dict):
+                                    # Handle dict format (cells_dict)
+                                    return tool_fn(cells_dict=data)
+                                elif isinstance(data, list):
+                                    # Handle list format (updates)
+                                    return tool_fn(updates=data)
+                                else:
+                                    return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
+                            except json.JSONDecodeError:
+                                return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
+                        # If it's not JSON, try to interpret as a simple "A1=value" format
+                        elif "=" in args[0]:
+                            cell_ref, value = args[0].split("=", 1)
+                            update = [{"cell": cell_ref.strip(), "value": value.strip()}]
+                            return tool_fn(updates=update)
+                        else:
+                            return {"error": f"Invalid format for set_cells. Expected JSON or A1=value format, got: {args[0]}"}
+                    elif name in financial_model_tools:
+                        # Prevent financial model tools from being called with incorrect arguments
+                        # or when not specifically requested
+                        print(f"[{request_id}] ⚠️ Preventing inappropriate call to {name} with string argument")
+                        return {"error": f"The {name} tool requires specific parameters, not a string."}
+                    elif name in table_tools:
+                        # Handle other table manipulation tools safely
+                        print(f"[{request_id}] ⚠️ The {name} tool requires specific parameters, not a string.")
+                        return {"error": f"The {name} tool requires specific parameters. Please provide complete arguments."}
+                    else:
+                        # For other functions, pass through to parameter inspection
+                        try:
+                            # First, try to infer the parameter name based on function signature
+                            import inspect
+                            sig = inspect.signature(tool_fn)
+                            params = list(sig.parameters.keys())
+                            
+                            # If we have parameters, use the first one as the keyword
+                            if params:
+                                # Create a kwargs dict with the first parameter name
+                                param_kwargs = {params[0]: args[0]}
+                                return tool_fn(**param_kwargs)
+                            else:
+                                # Just try passing it through
+                                return tool_fn(args[0])
+                        except TypeError as e:
+                            print(f"[{request_id}] ⚠️ Error calling {name}: {str(e)}")
+                            return {"error": f"Invalid parameters for {name}: {str(e)}"}
+                elif name == "set_cell" and len(args) == 2:
+                    # Handle case where set_cell is called with (cell, value) positional args
+                    return tool_fn(cell=args[0], value=args[1])
+                else:
+                    # Normal case - keyword arguments
+                    try:
+                        return tool_fn(*args, **kwargs)
+                    except TypeError as e:
+                        print(f"[{request_id}] ⚠️ Error calling {name} with {args} and {kwargs}: {str(e)}")
+                        return {"error": f"Invalid parameters for {name}: {str(e)}"}
             return wrapper
             
         # Prepare all the tool functions with streaming wrappers

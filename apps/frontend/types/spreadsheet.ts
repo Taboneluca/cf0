@@ -52,4 +52,5 @@ export interface Message {
   status?: 'thinking' | 'streaming' | 'complete'
   lastAddedSection?: string  // Tracks the most recently added section header
   sectionStart?: boolean     // Flag when a new section is starting
+  timestamp?: number         // Used to force re-renders during streaming
 }
