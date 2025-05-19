@@ -108,6 +108,43 @@ class Orchestrator:
         # Add sheet context if not already there
         agent.add_system_message(self.sheet_context)
         
+        # For ask mode, add explicit instruction to not generate any financial templates
+        if mode == "ask":
+            agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
+        
+        # For analyst mode, add explicit instruction about financial model tools
+        elif mode == "analyst":
+            agent.add_system_message("""
+            IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
+            - DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:
+              * a financial statement model (FSM)
+              * a discounted cash flow model (DCF)
+              * a 3-statement model
+              * a financial projection model with multiple statements
+            - For simple financial tables (single income statement, single balance sheet, etc.), create them directly using set_cell, without using specialized model tools.
+            - When the user asks for a basic table, NEVER attempt to build a full financial model with multiple statements.
+            """)
+        
+        # For llama-70b model specifically, filter out complex financial model tools
+        # unless they're explicitly requested in the user message
+        if hasattr(self.llm, 'model') and (
+            'llama-3-70b' in self.llm.model or 
+            'llama3-70b' in self.llm.model or
+            'llama-3.3-70b' in self.llm.model):
+            
+            financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
+            message_lower = message.lower()
+            
+            # Only provide financial model tools if explicitly mentioned
+            should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
+            
+            if not should_include_model_tools:
+                # Filter out financial model tools from agent's tools
+                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+                filtered_tools = {k: v for k, v in agent.tool_functions.items() if k not in financial_model_tools}
+                agent.tool_functions = filtered_tools
+                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
+        
         # Run the agent
         result = await agent.run(message, history)
         
@@ -157,6 +194,19 @@ class Orchestrator:
         # For ask mode, add explicit instruction to not generate any financial templates
         if mode == "ask":
             agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
+        
+        # For analyst mode, add explicit instruction about financial model tools
+        elif mode == "analyst":
+            agent.add_system_message("""
+            IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
+            - DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:
+              * a financial statement model (FSM)
+              * a discounted cash flow model (DCF)
+              * a 3-statement model
+              * a financial projection model with multiple statements
+            - For simple financial tables (single income statement, single balance sheet, etc.), create them directly using set_cell, without using specialized model tools.
+            - When the user asks for a basic table, NEVER attempt to build a full financial model with multiple statements.
+            """)
         
         # For llama-70b model specifically, filter out complex financial model tools
         # unless they're explicitly requested in the user message
