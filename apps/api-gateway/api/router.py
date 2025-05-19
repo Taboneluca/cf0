@@ -606,8 +606,22 @@ async def process_message_streaming(
             """Create a wrapper that logs the call"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
-                result = tool_fn(*args, **kwargs)
-                return result
+                # Ensure that kwargs is always a dictionary
+                if len(args) == 1 and isinstance(args[0], str) and not kwargs:
+                    # Handle the case where a single string argument is passed
+                    # This happens with some tools when called with just a string
+                    if name == "set_cell":
+                        return tool_fn(cell=args[0])
+                    elif name == "get_cell":
+                        return tool_fn(cell_ref=args[0])
+                    elif name == "get_range":
+                        return tool_fn(range_ref=args[0])
+                    else:
+                        # For other functions, pass through to parameter inspection
+                        return tool_fn(args[0])
+                else:
+                    # Normal case - keyword arguments
+                    return tool_fn(*args, **kwargs)
             return wrapper
             
         # Prepare all the tool functions with streaming wrappers
