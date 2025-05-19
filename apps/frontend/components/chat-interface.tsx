@@ -67,9 +67,21 @@ export default function ChatInterface({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
+  // Ensure we scroll to bottom when messages change or during streaming
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+  
+  // Add auto-scroll during streaming with a more frequent check
+  useEffect(() => {
+    if (isStreaming) {
+      const intervalId = setInterval(() => {
+        scrollToBottom()
+      }, 100) // Check more frequently during streaming
+      
+      return () => clearInterval(intervalId)
+    }
+  }, [isStreaming])
 
   // Effect to handle live updating of range selection for @-context
   useEffect(() => {
