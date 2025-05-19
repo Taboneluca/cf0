@@ -73,11 +73,16 @@ const Message: React.FC<MessageProps> = ({ message }) => {
         {message.status === 'thinking' ? (
           <div className="message-thinking">Thinking...</div>
         ) : (
-          parts.map((part, i) => 
-            part.match(/^@[\w!:.]+$/) 
-              ? <span key={i} className="text-blue-600 font-semibold">{part}</span>
-              : <span key={i}>{part}</span>
-          )
+          <div className="message-streaming">
+            {parts.map((part, i) => 
+              part.match(/^@[\w!:.]+$/) 
+                ? <span key={i} className="text-blue-600 font-semibold">{part}</span>
+                : <span key={i}>{part}</span>
+            )}
+            {message.status === 'streaming' && (
+              <span className="animate-pulse inline-block ml-1 h-4 w-1 bg-gray-400 rounded"></span>
+            )}
+          </div>
         )}
       </div>
     );
