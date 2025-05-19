@@ -3,6 +3,7 @@ import json
 from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union
+import time
 
 # Model alias mapping to normalize model names
 MODEL_ALIASES = {
@@ -203,114 +204,102 @@ class GroqClient(LLMClient):
             def _wrap_tools(tools):
                 if not tools:
                     return None
-                wrapped = []
-                for t in tools:
-                    wrapped.append({
+                # Convert to Groq tool objects
+                return [
+                    {
                         "type": "function",
                         "function": {
-                            "name":        t["name"],
-                            "description": t.get("description", ""),
-                            "parameters":  t.get("parameters", {})
+                            "name": tool["function"]["name"],
+                            "description": tool["function"].get("description", ""),
+                            "parameters": tool["function"].get("parameters", {})
                         }
-                    })
-                return wrapped
-                
+                    }
+                    for tool in tools
+                ]
+            
+            # Prepare tools for Groq
+            wrapped_tools = _wrap_tools(tools)
+            
+            # Set JSON mode for responses with Llama models where it's needed
+            use_json_mode = "llama" in self.model.lower() or params.get("json_mode", False)
+            
+            # Convert messages to Groq format
             groq_messages = self.to_provider_messages(messages)
             
-            # Remove None values from parameters
-            params = _prune_none(params)
-            self.kw = _prune_none(self.kw)
+            # Add explicit debug print to track groq client streaming calls
+            print(f"[GROQ DEBUG] Starting stream for model: {self.model}")
             
-            # Don't force JSON response format when streaming
-            # JSON format conflicts with streaming and causes errors
-            if "response_format" in params:
-                del params["response_format"]
-            
-            # Set chunk size to smallest possible value for finer-grained streaming   
-            if "stream_options" not in params:
-                params["stream_options"] = {"chunk_size": 1}
-            
-            # Now we can safely await since we've already yielded once
-            stream = await self.client.chat.completions.create(
+            # Create stream with all parameters
+            stream = await self.client.achat.completions.create(
                 model=self.model,
                 messages=groq_messages,
-                stream=True, 
-                tools=_wrap_tools(tools),
-                **self.kw,
-                **params,
+                tools=wrapped_tools,
+                temperature=params.get("temperature", 0.7),
+                max_tokens=params.get("max_tokens", 1024),
+                stream=True,
+                top_p=params.get("top_p", 0.95),
+                response_format={"type": "json_object"} if use_json_mode else None
             )
             
-            current_content = ""
-            current_tool_calls = {}  # id -> tool call
+            # Tracking variables for chunk delivery metrics
+            chunk_counter = 0
+            last_chunk_time = time.time()
+            content_so_far = ""
             
-            # Now iterate on the response stream
+            # Initialize variables to accumulate the response
+            tool_calls = []
+            content = ""
+            
+            # Process the stream
             async for chunk in stream:
+                chunk_counter += 1
+                current_time = time.time()
+                chunk_interval = current_time - last_chunk_time
+                last_chunk_time = current_time
+                
                 delta = chunk.choices[0].delta
                 
-                # Handle new content
-                if delta.content is not None:  # Check for None explicitly, empty string is valid content
-                    current_content += delta.content
-                    # Yield immediately with each content update for more responsive streaming
-                    yield AIResponse(
-                        content=current_content,
-                        tool_calls=[
-                            ToolCall(
-                                name=tc_data["name"],
-                                args=tc_data.get("parsed_args", tc_data["arguments"]),
-                                id=tc_data["id"]
-                            )
-                            for tc_data in current_tool_calls.values()
-                            if tc_data["name"]  # Only include tool calls with names
-                        ]
-                    )
+                # Extract the content from the delta
+                if delta.content is not None:
+                    content += delta.content
+                    content_so_far += delta.content
+                    # Explicitly log every chunk to debug streaming issues
+                    print(f"[GROQ DEBUG] Chunk #{chunk_counter} after {chunk_interval:.4f}s - Content len: {len(delta.content)}")
+                    
+                    # Yield immediately for real-time streaming
+                    yield AIResponse(content=content, tool_calls=tool_calls)
                 
                 # Handle tool calls
-                if hasattr(delta, "tool_calls") and delta.tool_calls:
-                    has_tool_update = False
-                    for tc_delta in delta.tool_calls:
-                        tc_id = tc_delta.id
-                        
-                        # Initialize tool call if new
-                        if tc_id not in current_tool_calls:
-                            current_tool_calls[tc_id] = {
-                                "id": tc_id,
-                                "name": "",
-                                "arguments": ""
-                            }
-                        
-                        # Update tool call with new data
-                        if hasattr(tc_delta, "function"):
-                            if hasattr(tc_delta.function, "name") and tc_delta.function.name:
-                                current_tool_calls[tc_id]["name"] = tc_delta.function.name
-                                has_tool_update = True
-                                
-                            if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
-                                current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
-                                
-                                # Try to parse arguments after update
-                                try:
-                                    current_tool_calls[tc_id]["parsed_args"] = json.loads(current_tool_calls[tc_id]["arguments"])
-                                except:
-                                    pass  # Keep as string if not valid JSON
-                                has_tool_update = True
+                if delta.tool_calls:
+                    for tool_call_delta in delta.tool_calls:
+                        # Find or create the tool call
+                        tool_call_id = tool_call_delta.index
+                        if tool_call_id >= len(tool_calls):
+                            # Add new tool call
+                            tool_calls.append({
+                                "id": f"call_{len(tool_calls)}",
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call_delta.function.name or "",
+                                    "arguments": tool_call_delta.function.arguments or ""
+                                }
+                            })
+                        else:
+                            # Update existing tool call
+                            if tool_call_delta.function.name:
+                                tool_calls[tool_call_id]["function"]["name"] = tool_call_delta.function.name
+                            
+                            if tool_call_delta.function.arguments:
+                                tool_calls[tool_call_id]["function"]["arguments"] += tool_call_delta.function.arguments
                     
-                    # If tool call was updated, yield new state
-                    if has_tool_update:
-                        yield AIResponse(
-                            content=current_content,
-                            tool_calls=[
-                                ToolCall(
-                                    name=tc_data["name"],
-                                    args=tc_data.get("parsed_args", tc_data["arguments"]),
-                                    id=tc_data["id"]
-                                )
-                                for tc_data in current_tool_calls.values()
-                                if tc_data["name"]  # Only include tool calls with names
-                            ]
-                        )
+                    # Yield after each tool call update
+                    yield AIResponse(content=content, tool_calls=tool_calls)
+            
+            # Print final streaming stats
+            print(f"[GROQ DEBUG] Completed stream with {chunk_counter} chunks, total content: {len(content_so_far)} chars")
+            
         except Exception as e:
-            # We already yielded at least once
-            print(f"Error in stream processing: {str(e)}")
+            print(f"Error in Groq streaming: {str(e)}")
             yield AIResponse(content=f"Error: {str(e)}", tool_calls=[])
     
     # Implement the required abstract method to meet the interface contract

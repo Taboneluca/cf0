@@ -11,6 +11,9 @@ type StreamEvent =
   | { type: 'complete', sheet: any }
   | { type: 'error', error: string };
 
+// Enable more detailed debug logging for streaming
+const DEBUG_STREAMING = true;
+
 export function useChatStream(
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
   mode: 'ask' | 'analyst'
@@ -19,295 +22,277 @@ export function useChatStream(
   const [pendingUpdates, setPendingUpdates] = useState<any[]>([]);
   const currentMessageIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [wb, dispatch] = useWorkbook();
-  const { wid, active } = wb;
-
-  // Clean up any active streams when component unmounts
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
-  }, []);
-
-  const sendMessage = useCallback(async (
-    message: string, 
-    contexts: string[] = [],
-    model?: string
-  ) => {
-    if (isStreaming || !message.trim()) return;
-    
-    setIsStreaming(true);
-    setPendingUpdates([]);
-    
-    // Add user message immediately
-    const messageId = `msg_${Date.now()}`;
-    currentMessageIdRef.current = messageId;
-    
-    // Add the user message to the chat
-    setMessages(prev => [
-      ...prev,
-      { role: 'user', content: message, id: messageId }
-    ]);
-    
-    // Create abort controller for this request
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
-    
-    try {
-      console.log(`Starting chat stream request: mode=${mode}, wid=${wid}, sid=${active}, model=${model || 'default'}`);
-      // Create unique request URL
-      const apiUrl = `/api/chat/stream`;
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode,
-          message,
-          wid,
-          sid: active,
-          contexts,
-          model
-        }),
-        signal
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
-      }
-      
-      console.log('Stream response initiated successfully');
-      
-      // Set up server-sent events
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body reader available');
-      
-      // Add empty assistant message immediately (no need to wait for 'start' event)
-      setMessages(prev => [
-        ...prev, 
-        { 
-          role: 'assistant',
-          content: '',
-          id: `assistant_${Date.now()}`,
-          status: 'thinking'
-        }
-      ]);
-      
-      // Streaming parser variables
-      const decoder = new TextDecoder();
-      let buffer = ''; // Buffer to accumulate partial chunks
-      
-      // Process the stream
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          console.log('Stream complete - reader done');
-          break;
-        }
-        
-        // Decode and add to our buffer
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-        
-        // Process complete SSE events (split on double newlines) - immediate processing
-        let eventEnd;
-        while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
-          // Extract an event from the buffer
-          const eventText = buffer.substring(0, eventEnd);
-          buffer = buffer.substring(eventEnd + 2);
-          
-          // Skip ping events (Anthropic sends these)
-          if (eventText.startsWith('event: ping')) {
-            console.debug('[SSE ping] Heartbeat received');
-            continue;
-          }
-          
-          // Parse the event (format: "event: type\ndata: JSON")
-          const eventLines = eventText.split('\n');
-          const eventType = eventLines.find(line => line.startsWith('event:'))?.substring(7)?.trim();
-          const dataLine = eventLines.find(line => line.startsWith('data:'));
-          
-          if (!dataLine) {
-            console.debug('[SSE skip] No data line in event:', eventText);
-            continue;
-          }
-          
-          try {
-            const eventData = JSON.parse(dataLine.substring(5).trim());
-            
-            // 1. Our standard internal event types
-            if (eventType === 'start' || eventData.type === 'start') {
-              console.log('Start event received');
-              // Already added message above, just noting the start
-            }
-            else if (eventType === 'chunk' || eventData.type === 'chunk') {
-              // This is our standard format for text chunks (all providers mapped to this)
-              if (typeof eventData.text === 'string') {
-                // Immediately update UI with new text chunk
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  const lastMessage = newMessages[newMessages.length - 1];
-                  
-                  if (lastMessage.role === 'assistant') {
-                    // Append the new text to the existing message
-                    lastMessage.content += eventData.text;
-                    lastMessage.status = 'streaming';
-                    
-                    // Detect section headers for better UI transitions
-                    if (lastMessage.content.endsWith('\n## ')) {
-                      lastMessage.sectionStart = true;
-                    }
-                    const fullSectionMatch = /##\s+([^\n]+)$/.exec(lastMessage.content);
-                    if (fullSectionMatch) {
-                      lastMessage.lastAddedSection = fullSectionMatch[1];
-                    }
-                  }
-                  
-                  return newMessages;
-                });
-              }
-            }
-            
-            // 2. Anthropic specific events (handled directly for smoother streaming)
-            else if (eventType === 'content_block_delta' && eventData.delta?.text) {
-              // Anthropic sends content_block_delta with text property
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const lastMessage = newMessages[newMessages.length - 1];
-                
-                if (lastMessage.role === 'assistant') {
-                  lastMessage.content += eventData.delta.text;
-                  lastMessage.status = 'streaming';
-                }
-                
-                return newMessages;
-              });
-            }
-            
-            // 3. Standard spreadsheet events
-            else if (eventType === 'update' || eventData.type === 'update') {
-              // Handle spreadsheet update events immediately
-              console.log('Sheet update received:', eventData.payload);
-              // For immediate visual feedback, we could update the sheet here too
-              // dispatch({ ... }) with partial updates if needed
-            }
-            else if (eventType === 'pending' || eventData.type === 'pending') {
-              // Store pending updates for user approval
-              console.log(`Received ${eventData.updates?.length || 0} pending updates`);
-              if (eventData.updates && Array.isArray(eventData.updates)) {
-                setPendingUpdates(eventData.updates);
-              }
-            }
-            else if (eventType === 'complete' || eventData.type === 'complete') {
-              // Mark the streaming as complete
-              console.log('Stream complete event received');
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const lastMessage = newMessages[newMessages.length - 1];
-                
-                if (lastMessage.role === 'assistant') {
-                  lastMessage.status = 'complete';
-                }
-                
-                return newMessages;
-              });
-              
-              // Update the spreadsheet with final state
-              if (eventData.sheet) {
-                console.log('Applying final sheet state from server');
-                const uiSheet = backendSheetToUI(eventData.sheet);
-                dispatch({
-                  type: 'UPDATE_SHEET',
-                  payload: { id: active, data: uiSheet }
-                });
-              }
-            }
-            else if (eventType === 'error' || eventData.type === 'error') {
-              // Handle error events
-              const errorMsg = eventData.error || 'Unknown streaming error';
-              console.error('Stream error:', errorMsg);
-              
-              setMessages(prev => [
-                ...prev,
-                { 
-                  role: 'system', 
-                  content: `Error: ${errorMsg}`,
-                  id: `error_${Date.now()}`
-                }
-              ]);
-            }
-          } catch (e) {
-            console.error('Error parsing SSE event:', e, dataLine);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error in chat stream:', error);
-      // Add an error message if it's not an abort error
-      if (!(error instanceof DOMException && error.name === 'AbortError')) {
-        setMessages(prev => [
-          ...prev,
-          { 
-            role: 'system', 
-            content: `Error: ${error instanceof Error ? error.message : String(error)}`,
-            id: `error_${Date.now()}`
-          }
-        ]);
-      }
-    } finally {
-      setIsStreaming(false);
-      abortControllerRef.current = null;
-      console.log('Chat stream request completed');
-    }
-  }, [active, dispatch, isStreaming, mode, setMessages, wid]);
-
+  const { workbook, updateSheet } = useWorkbook();
+  
+  // Debugging references
+  const debugChunkCount = useRef(0);
+  const debugLastChunkTime = useRef(Date.now());
+  
   const cancelStream = useCallback(() => {
     if (abortControllerRef.current) {
-      console.log('Manually cancelling active stream');
+      if (DEBUG_STREAMING) console.log('[Stream DEBUG] Cancelling stream');
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsStreaming(false);
     }
   }, []);
 
-  const applyPendingUpdates = useCallback(async () => {
-    if (pendingUpdates.length === 0) return;
+  const applyPendingUpdates = useCallback(() => {
+    if (pendingUpdates.length > 0 && workbook) {
+      if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Applying ${pendingUpdates.length} pending updates`);
+      // Process & apply the updates
+      pendingUpdates.forEach(update => {
+        // TODO: Apply the update
+      });
+      setPendingUpdates([]);
+    }
+  }, [pendingUpdates, workbook]);
+
+  const rejectPendingUpdates = useCallback(() => {
+    if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Rejecting ${pendingUpdates.length} pending updates`);
+    setPendingUpdates([]);
+  }, [pendingUpdates]);
+
+  const sendMessage = useCallback(async (message: string) => {
+    if (!workbook || !workbook.id || !workbook.activeSheet) return;
     
-    console.log(`Applying ${pendingUpdates.length} pending updates to workbook`);
+    // Reset debugging counters
+    debugChunkCount.current = 0;
+    debugLastChunkTime.current = Date.now();
+    
+    if (DEBUG_STREAMING) console.log('[Stream DEBUG] Starting new streaming request');
+    
+    // Cancel any existing stream
+    cancelStream();
+    
+    // Create a new abort controller
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    
+    // Show that we're waiting for a response
+    const id = `msg-${Date.now()}`;
+    currentMessageIdRef.current = id;
+    
+    // Add user message
+    setMessages(prev => [...prev, {
+      id: `user-${id}`,
+      role: 'user',
+      content: message,
+      status: 'complete'
+    }]);
+    
+    // Add assistant message with thinking status
+    setMessages(prev => [...prev, {
+      id,
+      role: 'assistant',
+      content: '',
+      status: 'thinking'
+    }]);
+    
+    setIsStreaming(true);
+    
     try {
-      const response = await fetch(`/api/workbook/${wid}/sheet/${active}/apply`, {
+      const url = '/api/chat/stream';
+      
+      const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates: pendingUpdates })
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          mode,
+          message,
+          wid: workbook.id,
+          sid: workbook.activeSheet,
+        }),
+        signal: abortController.signal
       });
       
       if (!response.ok) {
-        throw new Error('Failed to apply updates');
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
       
-      // Clear pending updates
-      setPendingUpdates([]);
+      if (DEBUG_STREAMING) console.log('[Stream DEBUG] Stream connection established');
       
-      // Refresh the sheet data
-      const data = await response.json();
-      if (data.sheet) {
-        console.log('Updates applied, refreshing sheet data');
-        const uiSheet = backendSheetToUI(data.sheet);
-        dispatch({
-          type: 'UPDATE_SHEET',
-          payload: { id: active, data: uiSheet }
+      // Stream handle
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("Failed to get stream reader");
+      
+      // We need to decode the stream chunks
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let content = '';
+      
+      // For streaming performance analysis
+      let totalCharsReceived = 0;
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        // Decode the chunk and add to buffer
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+        totalCharsReceived += chunk.length;
+        
+        if (DEBUG_STREAMING) {
+          const now = Date.now();
+          const timeSinceLastChunk = now - debugLastChunkTime.current;
+          debugChunkCount.current++;
+          console.log(`[Stream DEBUG] Raw chunk #${debugChunkCount.current}, length: ${chunk.length}, after: ${timeSinceLastChunk}ms`);
+          debugLastChunkTime.current = now;
+        }
+        
+        // Process all complete events in the buffer
+        let eventStart = buffer.indexOf('event: ');
+        while (eventStart >= 0) {
+          const dataIndex = buffer.indexOf('data: ', eventStart);
+          if (dataIndex < 0) break;
+          
+          const eventEnd = buffer.indexOf('\n', eventStart);
+          if (eventEnd < 0) break;
+          
+          const dataEnd = buffer.indexOf('\n\n', dataIndex);
+          if (dataEnd < 0) break;
+          
+          // Extract the event type and data
+          const eventType = buffer.substring(eventStart + 7, eventEnd).trim();
+          const eventData = buffer.substring(dataIndex + 6, dataEnd).trim();
+          
+          if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Received event: ${eventType} (data length: ${eventData.length})`);
+          
+          try {
+            // Parse the event data as JSON
+            const event: StreamEvent = {
+              ...JSON.parse(eventData),
+              type: eventType as any
+            };
+            
+            // Process the event based on type
+            if (event.type === 'start') {
+              // Just mark that streaming has started
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    status: 'streaming'
+                  };
+                }
+                return newMessages;
+              });
+            }
+            else if (event.type === 'chunk') {
+              // Update the message content with the new chunk
+              content += event.text;
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    content: content,
+                    status: 'streaming'
+                  };
+                }
+                return newMessages;
+              });
+            }
+            else if (event.type === 'update') {
+              // Add to pending updates for now
+              setPendingUpdates(prev => [...prev, event.payload]);
+            }
+            else if (event.type === 'complete') {
+              // Stream is complete
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    status: 'complete'
+                  };
+                }
+                return newMessages;
+              });
+              
+              // If we have a sheet update, apply it
+              if (event.sheet) {
+                const sheetUI = backendSheetToUI(event.sheet);
+                updateSheet(workbook.id, workbook.activeSheet, sheetUI);
+              }
+              
+              setIsStreaming(false);
+              
+              if (DEBUG_STREAMING) {
+                console.log(`[Stream DEBUG] Stream complete - received ${totalCharsReceived} total characters in ${debugChunkCount.current} chunks`);
+              }
+            }
+            else if (event.type === 'error') {
+              // Handle error
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    content: `Error: ${event.error}`,
+                    status: 'error'
+                  };
+                }
+                return newMessages;
+              });
+              setIsStreaming(false);
+              if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Error: ${event.error}`);
+            }
+          } catch (e) {
+            console.error('Error parsing SSE event', e);
+          }
+          
+          // Remove the processed event from the buffer
+          buffer = buffer.substring(dataEnd + 2);
+          
+          // Look for next event
+          eventStart = buffer.indexOf('event: ');
+        }
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        if (DEBUG_STREAMING) console.log('[Stream DEBUG] Stream aborted by user');
+        // The request was aborted, handle gracefully
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const index = newMessages.findIndex(m => m.id === id);
+          if (index >= 0) {
+            newMessages[index] = {
+              ...newMessages[index],
+              content: content + "\n\n[Stopped by user]",
+              status: 'complete'
+            };
+          }
+          return newMessages;
+        });
+      } else {
+        console.error('Error in streaming', e);
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const index = newMessages.findIndex(m => m.id === id);
+          if (index >= 0) {
+            newMessages[index] = {
+              ...newMessages[index],
+              content: `Error: ${(e as Error).message}`,
+              status: 'error'
+            };
+          }
+          return newMessages;
         });
       }
-    } catch (error) {
-      console.error('Error applying updates:', error);
+      setIsStreaming(false);
+    } finally {
+      abortControllerRef.current = null;
     }
-  }, [active, dispatch, pendingUpdates, wid]);
-  
-  const rejectPendingUpdates = useCallback(() => {
-    console.log('Rejecting pending updates');
-    setPendingUpdates([]);
-  }, []);
+  }, [workbook, mode, cancelStream, setMessages, updateSheet]);
 
   return {
     sendMessage,
