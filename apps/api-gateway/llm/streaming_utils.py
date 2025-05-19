@@ -15,7 +15,7 @@ class StreamGuard:
     def __init__(
         self, 
         stream: AsyncGenerator,
-        max_tokens: int = 4000,
+        max_tokens: int = 10000,
         timeout_seconds: float = 60.0,
         repetition_threshold: int = 3,
         stall_timeout_seconds: float = 10.0
