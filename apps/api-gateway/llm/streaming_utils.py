@@ -35,7 +35,8 @@ class StreamGuard:
         self.repetition_count = 0
         self.last_content = None
     
-    async def __aiter__(self):
+    def __aiter__(self):
+        # Return self directly, not as a coroutine
         return self
     
     async def __anext__(self):
