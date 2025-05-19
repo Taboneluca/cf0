@@ -33,7 +33,8 @@ class StreamGuard:
         self.recent_chunks = []
         self.repetition_count = 0
     
-    async def __aiter__(self):
+    def __aiter__(self):
+        # Changed to a non-async version - this should return self, not a coroutine
         return self
     
     async def __anext__(self):
