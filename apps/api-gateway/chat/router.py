@@ -917,13 +917,11 @@ async def process_message_streaming(
             print(f"[{request_id}] 🔄 Starting streaming with orchestrator")
             content_buffer = ""
             
-            # Wrap the stream with our guard to protect against infinite loops
-            guarded_stream = wrap_stream_with_guard(
-                orchestrator.stream_run("analyst", message, history)
-            )
+            # The orchestrator already wraps its own guard – just iterate
+            agent_stream = orchestrator.stream_run(mode, message, history)
 
             # Stream the orchestrator's response
-            async for chunk in guarded_stream:
+            async for chunk in agent_stream:
                 # Guard for strings - handle both string content and ChatStep objects
                 if isinstance(chunk, str):
                     # Format the text chunk and stream it

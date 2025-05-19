@@ -15,12 +15,13 @@ class StreamGuard:
     def __init__(
         self, 
         stream: AsyncGenerator,
-        max_tokens: int = 20000,
+        max_tokens: Optional[int] = None,  # Changed default to None to disable token limit
         timeout_seconds: float = 120.0,
         repetition_threshold: int = 3,
         stall_timeout_seconds: float = 10.0
     ):
         self.stream = stream
+        # None == "no hard cap"
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
         self.repetition_threshold = repetition_threshold
@@ -28,6 +29,7 @@ class StreamGuard:
         
         # Internal state
         self.token_count = 0
+        self.last_content = ""      # track cum-content to avoid double-counting
         self.start_time = time.time()
         self.last_content_time = time.time()
         self.recent_chunks = []
@@ -49,8 +51,8 @@ class StreamGuard:
             print(f"⚠️ Stream stalled - no new content for {self.stall_timeout_seconds}s")
             raise StopAsyncIteration
             
-        # Check token limit
-        if self.token_count >= self.max_tokens:
+        # Check token limit (only if a limit was supplied)
+        if self.max_tokens and self.token_count >= self.max_tokens:
             print(f"⚠️ Stream reached maximum token limit ({self.max_tokens})")
             raise StopAsyncIteration
         
@@ -71,8 +73,14 @@ class StreamGuard:
                 # Reset stall timer
                 self.last_content_time = time.time()
                 
-                # Count tokens (rough approximation: 4 chars = 1 token)
-                self.token_count += len(content) // 4
+                # Count ONLY the *new* chars (most providers resend the full
+                # buffer each step). 4 chars ≈ 1 token.
+                if content.startswith(self.last_content):
+                    new_chars = len(content) - len(self.last_content)
+                else:
+                    new_chars = len(content)
+                self.last_content = content
+                self.token_count += max(new_chars, 0) // 4
                 
                 # Check for repetition
                 if content in self.recent_chunks:
@@ -92,17 +100,18 @@ class StreamGuard:
             print(f"🏁 Stream completed or timed out after {time.time() - self.start_time:.2f}s")
             raise StopAsyncIteration
 
-def wrap_stream_with_guard(stream: AsyncGenerator) -> AsyncGenerator:
+def wrap_stream_with_guard(stream: AsyncGenerator, max_tokens: Optional[int] = None) -> AsyncGenerator:
     """
     Wrap an async generator stream with protection against infinite loops.
     
     Args:
         stream: The original async generator stream
+        max_tokens: Optional token limit (None = no limit)
         
     Returns:
         Protected async generator with safeguards
     """
-    return StreamGuard(stream)
+    return StreamGuard(stream, max_tokens=max_tokens)
 
 # Ensure all exports are explicitly defined
 __all__ = ["StreamGuard", "wrap_stream_with_guard"] 
