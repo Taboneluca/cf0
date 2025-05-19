@@ -389,8 +389,9 @@ async def stream_chat(req: ChatRequest):
                 elif event_type == 'error':
                     print(f"[{request_id}] ❌ {provider} error event: {chunk.get('error', 'Unknown error')}")
                     
-                # Force flush to ensure token-by-token streaming
-                await asyncio.sleep(0)
+                # Add a small delay between chunks to ensure proper streaming
+                # This helps prevent buffering on the client side
+                await asyncio.sleep(0.02)  # 20ms delay between chunks
             
             print(f"[{request_id}] ✅ SSE stream completed for {provider}")
         
