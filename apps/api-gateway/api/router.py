@@ -606,6 +606,10 @@ async def process_message_streaming(
             """Create a wrapper that logs the call"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
+                
+                # Financial model tools require special handling
+                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+                
                 # Ensure that kwargs is always a dictionary
                 if len(args) == 1 and isinstance(args[0], str) and not kwargs:
                     # Handle the case where a single string argument is passed
@@ -616,6 +620,11 @@ async def process_message_streaming(
                         return tool_fn(cell_ref=args[0])
                     elif name == "get_range":
                         return tool_fn(range_ref=args[0])
+                    elif name in financial_model_tools:
+                        # Prevent financial model tools from being called with incorrect arguments
+                        # or when not specifically requested
+                        print(f"[{request_id}] ⚠️ Preventing inappropriate call to {name} with string argument")
+                        return {"error": f"The {name} tool requires specific parameters, not a string."}
                     else:
                         # For other functions, pass through to parameter inspection
                         return tool_fn(args[0])
