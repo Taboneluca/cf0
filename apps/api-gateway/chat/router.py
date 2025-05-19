@@ -328,12 +328,25 @@ async def process_message(
                                 else:
                                     return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
                             except json.JSONDecodeError:
-                                return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
+                                # Handle possible formula notation or special characters in single string
+                                if '=' in args[0] and len(args[0].split('=')) == 2:
+                                    # Process as A1=value format
+                                    try:
+                                        cell_ref, value = args[0].split('=', 1)
+                                        update = [{"cell": cell_ref.strip(), "value": value.strip()}]
+                                        return tool_fn(updates=update)
+                                    except Exception as e:
+                                        return {"error": f"Failed to parse formula input: {str(e)}"}
+                                else:
+                                    return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
                         # If it's not JSON, try to interpret as a simple "A1=value" format
                         elif "=" in args[0]:
-                            cell_ref, value = args[0].split("=", 1)
-                            update = [{"cell": cell_ref.strip(), "value": value.strip()}]
-                            return tool_fn(updates=update)
+                            try:
+                                cell_ref, value = args[0].split("=", 1)
+                                update = [{"cell": cell_ref.strip(), "value": value.strip()}]
+                                return tool_fn(updates=update)
+                            except Exception as e:
+                                return {"error": f"Failed to parse cell assignment: {str(e)}"}
                         else:
                             return {"error": f"Invalid format for set_cells. Expected JSON or A1=value format, got: {args[0]}"}
                     elif name in financial_model_tools:
@@ -775,12 +788,25 @@ async def process_message_streaming(
                                 else:
                                     return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
                             except json.JSONDecodeError:
-                                return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
+                                # Handle possible formula notation or special characters in single string
+                                if '=' in args[0] and len(args[0].split('=')) == 2:
+                                    # Process as A1=value format
+                                    try:
+                                        cell_ref, value = args[0].split('=', 1)
+                                        update = [{"cell": cell_ref.strip(), "value": value.strip()}]
+                                        return tool_fn(updates=update)
+                                    except Exception as e:
+                                        return {"error": f"Failed to parse formula input: {str(e)}"}
+                                else:
+                                    return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
                         # If it's not JSON, try to interpret as a simple "A1=value" format
                         elif "=" in args[0]:
-                            cell_ref, value = args[0].split("=", 1)
-                            update = [{"cell": cell_ref.strip(), "value": value.strip()}]
-                            return tool_fn(updates=update)
+                            try:
+                                cell_ref, value = args[0].split("=", 1)
+                                update = [{"cell": cell_ref.strip(), "value": value.strip()}]
+                                return tool_fn(updates=update)
+                            except Exception as e:
+                                return {"error": f"Failed to parse cell assignment: {str(e)}"}
                         else:
                             return {"error": f"Invalid format for set_cells. Expected JSON or A1=value format, got: {args[0]}"}
                     elif name in financial_model_tools:
