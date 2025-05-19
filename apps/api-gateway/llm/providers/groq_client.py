@@ -225,7 +225,11 @@ class GroqClient(LLMClient):
             # JSON format conflicts with streaming and causes errors
             if "response_format" in params:
                 del params["response_format"]
-                
+            
+            # Set chunk size to smallest possible value for finer-grained streaming   
+            if "stream_options" not in params:
+                params["stream_options"] = {"chunk_size": 1}
+            
             # Now we can safely await since we've already yielded once
             stream = await self.client.chat.completions.create(
                 model=self.model,
@@ -244,11 +248,25 @@ class GroqClient(LLMClient):
                 delta = chunk.choices[0].delta
                 
                 # Handle new content
-                if delta.content:
+                if delta.content is not None:  # Check for None explicitly, empty string is valid content
                     current_content += delta.content
+                    # Yield immediately with each content update for more responsive streaming
+                    yield AIResponse(
+                        content=current_content,
+                        tool_calls=[
+                            ToolCall(
+                                name=tc_data["name"],
+                                args=tc_data.get("parsed_args", tc_data["arguments"]),
+                                id=tc_data["id"]
+                            )
+                            for tc_data in current_tool_calls.values()
+                            if tc_data["name"]  # Only include tool calls with names
+                        ]
+                    )
                 
                 # Handle tool calls
                 if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    has_tool_update = False
                     for tc_delta in delta.tool_calls:
                         tc_id = tc_delta.id
                         
@@ -264,32 +282,32 @@ class GroqClient(LLMClient):
                         if hasattr(tc_delta, "function"):
                             if hasattr(tc_delta.function, "name") and tc_delta.function.name:
                                 current_tool_calls[tc_id]["name"] = tc_delta.function.name
+                                has_tool_update = True
                                 
                             if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
                                 current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
-                
-                # Convert current state to AIResponse
-                tool_calls = []
-                for tc_data in current_tool_calls.values():
-                    # Only add if we have a name
-                    if tc_data["name"]:
-                        # Try to parse arguments as JSON
-                        args = tc_data["arguments"]
-                        try:
-                            args = json.loads(args)
-                        except:
-                            pass  # Keep as string if not valid JSON
-                            
-                        tool_calls.append(ToolCall(
-                            name=tc_data["name"],
-                            args=args,
-                            id=tc_data["id"]
-                        ))
-                
-                yield AIResponse(
-                    content=current_content,
-                    tool_calls=tool_calls
-                )
+                                
+                                # Try to parse arguments after update
+                                try:
+                                    current_tool_calls[tc_id]["parsed_args"] = json.loads(current_tool_calls[tc_id]["arguments"])
+                                except:
+                                    pass  # Keep as string if not valid JSON
+                                has_tool_update = True
+                    
+                    # If tool call was updated, yield new state
+                    if has_tool_update:
+                        yield AIResponse(
+                            content=current_content,
+                            tool_calls=[
+                                ToolCall(
+                                    name=tc_data["name"],
+                                    args=tc_data.get("parsed_args", tc_data["arguments"]),
+                                    id=tc_data["id"]
+                                )
+                                for tc_data in current_tool_calls.values()
+                                if tc_data["name"]  # Only include tool calls with names
+                            ]
+                        )
         except Exception as e:
             # We already yielded at least once
             print(f"Error in stream processing: {str(e)}")
