@@ -751,12 +751,13 @@ class BaseAgent:
                 current_tool_calls = {}  # Track accumulating tool calls
                 
                 # Get the stream object from llm.chat
+                max_resp_tokens = int(os.getenv("MAX_RESPONSE_TOKENS", "4000"))
                 stream = self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=True,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
                     temperature=None,  # let the per-model filter decide
-                    max_tokens=400  # Limit response size while still allowing sufficient explanation
+                    max_tokens=max_resp_tokens
                 )
                 
                 # ――― guard rail ―――
