@@ -647,9 +647,21 @@ async def process_message_streaming(
                         print(f"[{request_id}] ⚠️ The {name} tool requires specific parameters, not a string.")
                         return {"error": f"The {name} tool requires specific parameters. Please provide complete arguments."}
                     else:
-                        # For other functions, pass through to parameter inspection
+                        # For other functions, pass as first argument if possible, otherwise try as a keyword arg
                         try:
-                            return tool_fn(args[0])
+                            # First, try to infer the parameter name based on function signature
+                            import inspect
+                            sig = inspect.signature(tool_fn)
+                            params = list(sig.parameters.keys())
+                            
+                            # If we have parameters, use the first one as the keyword
+                            if params:
+                                # Create a kwargs dict with the first parameter name
+                                param_kwargs = {params[0]: args[0]}
+                                return tool_fn(**param_kwargs)
+                            else:
+                                # Just try passing it through
+                                return tool_fn(args[0])
                         except TypeError as e:
                             print(f"[{request_id}] ⚠️ Error calling {name}: {str(e)}")
                             return {"error": f"Invalid parameters for {name}: {str(e)}"}
