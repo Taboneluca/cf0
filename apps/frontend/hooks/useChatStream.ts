@@ -14,6 +14,12 @@ type StreamEvent =
 // Enable more detailed debug logging for streaming
 const DEBUG_STREAMING = true;
 
+// Function to format time elapsed since last event
+const formatTimeSince = (lastEventTime: number): string => {
+  const elapsed = Date.now() - lastEventTime;
+  return `${elapsed}ms`;
+};
+
 export function useChatStream(
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
   mode: 'ask' | 'analyst'
@@ -169,7 +175,10 @@ export function useChatStream(
         
         // Process all complete events in the buffer
         let eventStart = buffer.indexOf('event: ');
+        let eventCount = 0; // Count events in this chunk
+        
         while (eventStart >= 0) {
+          eventCount++;
           const dataIndex = buffer.indexOf('data: ', eventStart);
           if (dataIndex < 0) break;
           
@@ -183,7 +192,11 @@ export function useChatStream(
           const eventType = buffer.substring(eventStart + 7, eventEnd).trim();
           const eventData = buffer.substring(dataIndex + 6, dataEnd).trim();
           
-          if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Received event: ${eventType} (data length: ${eventData.length})`);
+          if (DEBUG_STREAMING) {
+            const timeSinceLast = formatTimeSince(debugLastChunkTime.current);
+            console.log(`[Stream DEBUG] Received event: ${eventType} (data length: ${eventData.length}) after ${timeSinceLast}`);
+            debugLastChunkTime.current = Date.now();
+          }
           
           try {
             // Parse the event data as JSON
@@ -211,22 +224,30 @@ export function useChatStream(
               // Update the message content with the new chunk
               content += event.text;
               
-              // Create a completely new messages array to ensure React detects the change
+              // Force immediate update with each new chunk
               setMessages(prev => {
                 const newMessages = prev.map(m => 
                   m.id === id 
                     ? { 
                         ...m, 
                         content: content, 
-                        status: 'streaming' as const
+                        status: 'streaming' as const,
+                        // Add a timestamp to force React to see this as a new state value
+                        timestamp: Date.now()
                       } 
                     : m
                 );
+                
+                // Immediately scroll to show new content
+                setTimeout(scrollToBottom, 0);
+                
                 return newMessages;
               });
               
-              // Force scrolling after each chunk
-              setTimeout(scrollToBottom, 0);
+              // Add extra debug for the chunk content
+              if (DEBUG_STREAMING) {
+                console.log(`[Stream DEBUG] Chunk content: "${event.text.substring(0, 20).replace(/\n/g, "\\n")}..."`);
+              }
             }
             else if (event.type === 'update') {
               // Add to pending updates for now
@@ -259,7 +280,7 @@ export function useChatStream(
               setIsStreaming(false);
               
               if (DEBUG_STREAMING) {
-                console.log(`[Stream DEBUG] Stream complete - received ${totalCharsReceived} total characters in ${debugChunkCount.current} chunks`);
+                console.log(`[Stream DEBUG] Stream complete - received ${totalCharsReceived} total characters in ${debugChunkCount.current} chunks (${eventCount} events parsed in last chunk)`);
               }
             }
             else if (event.type === 'error') {

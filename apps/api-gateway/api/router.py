@@ -637,6 +637,30 @@ async def process_message_streaming(
                     elif name == "add_column" or name == "add_row":
                         # For add_column and add_row, use the header parameter for the string
                         return tool_fn(header=args[0])
+                    elif name == "set_cells":
+                        # Special handling for set_cells with string argument
+                        # Try to parse as JSON if it looks like a JSON string
+                        if args[0].strip().startswith('{') or args[0].strip().startswith('['):
+                            try:
+                                import json
+                                data = json.loads(args[0])
+                                if isinstance(data, dict):
+                                    # Handle dict format (cells_dict)
+                                    return tool_fn(cells_dict=data)
+                                elif isinstance(data, list):
+                                    # Handle list format (updates)
+                                    return tool_fn(updates=data)
+                                else:
+                                    return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
+                            except json.JSONDecodeError:
+                                return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
+                        # If it's not JSON, try to interpret as a simple "A1=value" format
+                        elif "=" in args[0]:
+                            cell_ref, value = args[0].split("=", 1)
+                            update = [{"cell": cell_ref.strip(), "value": value.strip()}]
+                            return tool_fn(updates=update)
+                        else:
+                            return {"error": f"Invalid format for set_cells. Expected JSON or A1=value format, got: {args[0]}"}
                     elif name in financial_model_tools:
                         # Prevent financial model tools from being called with incorrect arguments
                         # or when not specifically requested
