@@ -210,19 +210,19 @@ export function useChatStream(
             else if (event.type === 'chunk') {
               // Update the message content with the new chunk
               content += event.text;
+              
+              // Create a completely new messages array to ensure React detects the change
               setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  // Force a new object creation to ensure React detects the update
-                  newMessages[index] = {
-                    ...newMessages[index],
-                    content: content,
-                    status: 'streaming'
-                  };
-                }
-                // Immediately force a re-render by creating a new array
-                return [...newMessages];
+                const newMessages = prev.map(m => 
+                  m.id === id 
+                    ? { 
+                        ...m, 
+                        content: content, 
+                        status: 'streaming' as const
+                      } 
+                    : m
+                );
+                return newMessages;
               });
               
               // Force scrolling after each chunk
