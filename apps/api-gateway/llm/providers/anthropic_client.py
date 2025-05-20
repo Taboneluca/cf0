@@ -82,10 +82,20 @@ class AnthropicClient(LLMClient):
                         ]
                         # Add tool_calls in proper format
                         for tc in msg.tool_calls:
+                            args = tc.args
+                            # NEW – Claude needs a dict, never a list / str
+                            if not isinstance(args, dict):
+                                # let set_cell(x,y) → {"cell": x, "value": y}
+                                # let [ {...} , … ]  → {"updates": args}
+                                if isinstance(args, list):
+                                    args = {"updates": args}
+                                else:                     # string or other scalar
+                                    args = {"value": args}
+                            
                             anthropic_msg["content"].append({
                                 "type": "tool_use",
                                 "name": tc.name,
-                                "input": tc.args,
+                                "input": args,   # always a dict now ✅
                                 "id": tc.id or f"call_{tc.name}"
                             })
                     else:
