@@ -863,42 +863,44 @@ async def process_message_streaming(
             
             # Stream the orchestrator's response
             async for chunk in orchestrator.stream_run(mode, message, history):
-                # Guard for strings - handle both string content and ChatStep objects
+                # Convert string chunks to ChatStep for compatibility
                 if isinstance(chunk, str):
-                    # Format the text chunk and stream it
+                    # Convert string chunks to ChatStep for compatibility
                     content_buffer += chunk
                     yield {"type": "chunk", "text": chunk}
-                elif hasattr(chunk, "role") and chunk.role == "assistant" and hasattr(chunk, "content") and chunk.content:
-                    # Format the text chunk and stream it
-                    content_buffer += chunk.content
-                    yield {"type": "chunk", "text": chunk.content}
-                elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
-                    # For tool results, we stream an indicator and trigger UI update
-                    tool_result = chunk.toolResult
-                    
-                    # Check both toolCall and toolcall properties (case-sensitivity check)
-                    tool_call = None
-                    if hasattr(chunk, "toolCall"):
-                        tool_call = chunk.toolCall
-                    elif hasattr(chunk, "toolcall"):
-                        tool_call = chunk.toolcall
-                    
-                    # Get the tool name safely
-                    tool_name = "unknown-tool"
-                    if tool_call and hasattr(tool_call, "name"):
-                        tool_name = tool_call.name
-                    
-                    # Skip read-only operations
-                    if tool_name not in {"get_cell", "get_range"}:
-                        # If it's an update type tool, add it to collected updates
-                        if isinstance(tool_result, dict):
-                            if "updates" in tool_result:
-                                collected_updates.extend(tool_result["updates"])
-                            elif "cell" in tool_result:  # Single cell operation
-                                collected_updates.append(tool_result)
-                            
-                            # Stream the update info to client for live updates
-                            yield {"type": "update", "payload": tool_result}
+                else:
+                    # Handle ChatStep objects
+                    if hasattr(chunk, "role") and chunk.role == "assistant" and hasattr(chunk, "content") and chunk.content:
+                        # Format the text chunk and stream it
+                        content_buffer += chunk.content
+                        yield {"type": "chunk", "text": chunk.content}
+                    elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
+                        # For tool results, we stream an indicator and trigger UI update
+                        tool_result = chunk.toolResult
+                        
+                        # Check both toolCall and toolcall properties (case-sensitivity check)
+                        tool_call = None
+                        if hasattr(chunk, "toolCall"):
+                            tool_call = chunk.toolCall
+                        elif hasattr(chunk, "toolcall"):
+                            tool_call = chunk.toolcall
+                        
+                        # Get the tool name safely
+                        tool_name = "unknown-tool"
+                        if tool_call and hasattr(tool_call, "name"):
+                            tool_name = tool_call.name
+                        
+                        # Skip read-only operations
+                        if tool_name not in {"get_cell", "get_range"}:
+                            # If it's an update type tool, add it to collected updates
+                            if isinstance(tool_result, dict):
+                                if "updates" in tool_result:
+                                    collected_updates.extend(tool_result["updates"])
+                                elif "cell" in tool_result:  # Single cell operation
+                                    collected_updates.append(tool_result)
+                                
+                                # Stream the update info to client for live updates
+                                yield {"type": "update", "payload": tool_result}
             
             # Save conversation history (optimistic, we have a complete response)
             if content_buffer:
