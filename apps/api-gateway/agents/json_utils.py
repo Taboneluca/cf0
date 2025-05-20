@@ -88,7 +88,7 @@ def safe_json_loads(s: str) -> Dict[str, Any]:
                     if isinstance(result, dict):
                         return result
                     else:
-                        return {"value": result}
+                        return {"__arg": result}
                 except Exception as exc:
                     logging.error(f"JSON parse failure. Input: {s[:100]}{'...' if len(s) > 100 else ''}")
                     raise ValueError(f"Cannot parse JSON: {exc}") from exc 

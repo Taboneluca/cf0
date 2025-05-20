@@ -1046,7 +1046,11 @@ class BaseAgent:
                     
                     # Execute the function
                     fn_start = time.time()
-                    result = fn(**args)
+                    if isinstance(args, dict):
+                        result = fn(**args)
+                    else:
+                        # Allow single positional argument fall-back
+                        result = fn(args)
                     fn_time = time.time() - fn_start
                     print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
                     
