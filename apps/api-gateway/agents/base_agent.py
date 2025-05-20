@@ -678,16 +678,16 @@ class BaseAgent:
         """
         self.system_prompt = f"{self.system_prompt}\n\n{additional_message}"
 
-    async def stream_run(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[str, None]:
+    async def stream_run(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[ChatStep, None]:
         """
-        Execute the tool-loop in streaming mode, yielding text chunks as they are generated.
+        Execute the tool-loop in streaming mode, yielding ChatStep objects as they are generated.
         
         Args:
             user_message: The user message to process
             history: Optional conversation history
             
         Yields:
-            Text chunks of the assistant's response
+            ChatStep objects with the assistant's response
         """
         agent_id = f"stream-agent-{int(time.time()*1000)}"
         print(f"[{agent_id}] 🤖 Starting streaming agent run with message length: {len(user_message)}")
@@ -873,10 +873,10 @@ class BaseAgent:
                                 # Yield each part separately for smoother streaming
                                 for part in parts:
                                     if part.strip():  # Skip empty parts
-                                        yield part
+                                        yield ChatStep(role="assistant", content=part)
                             else:
                                 # Small enough to yield directly
-                                yield new_content
+                                yield ChatStep(role="assistant", content=new_content)
                     else:
                         # Handle AIResponse format
                         if hasattr(chunk, "content") and chunk.content:
@@ -986,10 +986,10 @@ class BaseAgent:
                                         # Yield each part separately for smoother streaming
                                         for part in parts:
                                             if part.strip():  # Skip empty parts
-                                                yield part
+                                                yield ChatStep(role="assistant", content=part)
                                     else:
                                         # Small enough to yield directly
-                                        yield new_content
+                                        yield ChatStep(role="assistant", content=new_content)
                             else:
                                 # Handle non-string content (log it but don't yield)
                                 print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
@@ -1031,7 +1031,7 @@ class BaseAgent:
             except Exception as e:
                 print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")
                 traceback.print_exc()  # Add stack trace for better debugging
-                yield f"\nError communicating with AI service: {str(e)}"
+                yield ChatStep(role="assistant", content=f"\nError communicating with AI service: {str(e)}")
                 return
             
             # If it's a function call, process it
@@ -1042,7 +1042,7 @@ class BaseAgent:
                         args = safe_json_loads(function_args)
                     except ValueError as e:
                         print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
-                        yield f"\nSorry, I encountered an error processing your request. Please try again with simpler instructions."
+                        yield ChatStep(role="assistant", content=f"\nSorry, I encountered an error processing your request. Please try again with simpler instructions.")
                         return
                     
                     # Check mutating call limits
@@ -1053,7 +1053,7 @@ class BaseAgent:
                         # If this is more than the first mutation and not a set_cells call, abort
                         if mutating_calls > 1 and function_name not in {"set_cells", "apply_updates_and_reply"}:
                             print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
-                            yield "\nError: You should use a single set_cells call to make multiple updates."
+                            yield ChatStep(role="assistant", content="\nError: You should use a single set_cells call to make multiple updates.")
                             return
                     
                     # Find the function
@@ -1093,9 +1093,9 @@ class BaseAgent:
                                 
                                 # Yield each part separately for smooth streaming
                                 for part in parts:
-                                    yield f"\n{part}"
+                                    yield ChatStep(role="assistant", content=f"\n{part}")
                             else:
-                                yield f"\n{reply}"
+                                yield ChatStep(role="assistant", content=f"\n{reply}")
                                 
                             return
                     
@@ -1122,7 +1122,7 @@ class BaseAgent:
                 except Exception as e:
                     print(f"[{agent_id}] ❌ Error executing function: {str(e)}")
                     traceback.print_exc()
-                    yield f"\nError executing {function_name}: {str(e)}"
+                    yield ChatStep(role="assistant", content=f"\nError executing {function_name}: {str(e)}")
                     return
             
             # If we got a final text answer not a function call, we're done
