@@ -994,15 +994,25 @@ class BaseAgent:
                             function_args = json.dumps(first_tool.args)
                             print(f"[{agent_id}] 🔧 Starting function call (AIResponse): {function_name}")
                 
-                # Construct the complete message from gathered chunks
+                                    # Construct the complete message from gathered chunks
                 if is_function_call:
+                    # Need to add a proper tool_calls entry for OpenAI to reference later
+                    tool_call_id = f"call_{int(time.time()*1000)}"
                     msg = {
                         "role": "assistant",
-                        "function_call": {
-                            "name": function_name,
-                            "arguments": function_args
-                        }
+                        "tool_calls": [
+                            {
+                                "id": tool_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": function_name,
+                                    "arguments": function_args
+                                }
+                            }
+                        ]
                     }
+                    # Store the tool call ID for later reference
+                    current_tool_calls = {tool_call_id: {"name": function_name, "id": tool_call_id}}
                 else:
                     msg = {"role": "assistant", "content": current_content}
                     final_text_buffer += current_content
@@ -1084,13 +1094,15 @@ class BaseAgent:
                             return
                     
                     # -------- NEW: add the required tool-result message --------
-                    call_id = f"call_{int(time.time()*1000)}"
+                    call_id = tool_call_id if 'tool_call_id' in locals() else f"call_{int(time.time()*1000)}"
                     if is_function_call and function_name:
-                        # Try to extract the tool call ID from function_call/delta
-                        for tc_data in current_tool_calls.values() if 'current_tool_calls' in locals() else []:
-                            if tc_data.get("name") == function_name:
-                                call_id = tc_data.get("id", call_id)
-                                break
+                        # Try to extract the tool call ID from the last assistant message
+                        if messages and messages[-1].get("role") == "assistant" and "tool_calls" in messages[-1]:
+                            tool_calls = messages[-1]["tool_calls"]
+                            for tool_call in tool_calls:
+                                if tool_call.get("function", {}).get("name") == function_name:
+                                    call_id = tool_call.get("id", call_id)
+                                    break
 
                     messages.append({
                         "role": "tool",
