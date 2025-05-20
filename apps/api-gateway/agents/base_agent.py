@@ -234,6 +234,9 @@ class BaseAgent:
         agent_id = f"agent-{int(start_time*1000)}"
         print(f"[{agent_id}] 🤖 Starting agent run with message length: {len(user_message)}")
         
+        # Add variable to track tool call ID for error handling
+        call_id = None
+        
         # Prepare the basic message structure with system prompt
         system_message = {"role": "system", "content": self.system_prompt}
         messages = [system_message]
@@ -331,44 +334,29 @@ class BaseAgent:
                 msg_dict["role"] = "assistant"
             messages.append(msg_dict)
             
-            # 1) Did the model pick a function?
-            if msg.function_call:
-                name = msg.function_call.name
+            # 1) Function call detected
+            if msg.tool_calls and len(msg.tool_calls) > 0:
+                tc = msg.tool_calls[0]
+                
+                # Get the name and arguments
+                name = tc.name
+                args = tc.args
+                
+                # Get the call ID for error handling
+                call_id = tc.id
+                if call_id is None:
+                    call_id = f"call_{int(time.time()*1000)}"
+                
+                # Make sure args is a dictionary before calling the function
+                if not isinstance(args, dict):
+                    if isinstance(args, list):
+                        args = {"updates": args}
+                    elif isinstance(args, str):
+                        args = {"value": args}
+                    else:
+                        args = {"value": args}
+                
                 try:
-                    # Guard against empty-dict / None
-                    raw = msg.function_call.arguments
-                    if raw in ("{}", "null", "", None):
-                        print(f"[{agent_id}] ❌ Empty arguments for function call: {name}")
-                        tool_id = (msg.tool_calls[0].id if hasattr(msg, "tool_calls") and msg.tool_calls else None)
-                        # 1) tell Claude why it failed, 2) satisfy the protocol
-                        messages.extend([
-                            {"role": "tool", "tool_call_id": tool_id,
-                            "content": json.dumps({"error": "empty-args"})},
-                            {"role": "assistant",
-                             "content": f"Function call `{name}` had empty arguments. "
-                                    "Please resend the call with valid JSON arguments."}
-                        ])
-                        continue        # go to next iteration instead of aborting
-                    
-                    try:
-                        # First try normal parsing
-                        args = safe_json_loads(raw)
-                    except ValueError as e:
-                        print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
-                        
-                        try:
-                            # lenient fallback: remove line-continuations and trailing commas
-                            cleaned = re.sub(r'\\\s*\n', '', raw)           # 1) unwrap "\\↵"
-                            cleaned = re.sub(r',\s*}', '}', cleaned)        # 2) strip ", }"
-                            args = safe_json_loads(cleaned)
-                        except ValueError:
-                            # If still fails, ask model to retry
-                            messages.append(
-                                {"role": "assistant",
-                                 "content": f"Function call `{name}` had invalid JSON arguments. "
-                                            "Please resend the call with valid JSON arguments."})
-                            continue        # go to next iteration instead of aborting
-                    
                     print(f"[{agent_id}] 🛠️ Tool call: {name}")
                     
                     # Yield a ChatStep for the function call
@@ -383,6 +371,12 @@ class BaseAgent:
                     
                 except ValueError as e:
                     print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
+                    # Add a compensating tool message with error
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": json.dumps({"error": str(e)})
+                    })
                     yield ChatStep(
                         role="assistant",
                         content=f"Sorry, I encountered an error while processing your request. Please try again with simpler instructions.",
@@ -411,50 +405,60 @@ class BaseAgent:
                 fn = next(t["func"] for t in self.tools if t["name"] == name)
                 print(f"[{agent_id}] 🧰 Executing {name} with args: {json.dumps(args)[:100]}...")
                 
-                fn_start = time.time()
-                result = fn(**args)
-                fn_time = time.time() - fn_start
-                
-                print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
-                
-                # Yield a ChatStep for the tool result
-                yield ChatStep(role="tool", toolResult=result)
-                
-                # Accumulate updates if provided
-                if isinstance(result, dict):
-                    if "updates" in result and isinstance(result["updates"], list):
-                        update_count = len(result["updates"])
-                        print(f"[{agent_id}] 📊 Collected {update_count} updates from function result")
-                        collected_updates.extend(result["updates"])
-                    # Normalise single-cell result (handles keys 'new', 'new_value' or 'value')
-                    elif "cell" in result:
-                        print(f"[{agent_id}] 📝 Added single cell update to collected updates")
-                        collected_updates.append(result)
+                try:
+                    fn_start = time.time()
+                    result = fn(**args)
+                    fn_time = time.time() - fn_start
+                    
+                    print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
+                    
+                    # Yield a ChatStep for the tool result
+                    yield ChatStep(role="tool", toolResult=result)
+                    
+                    # Add the required tool-result message
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": json.dumps(result)
+                    })
+                    
+                    # Accumulate updates if provided
+                    if isinstance(result, dict):
+                        if "updates" in result and isinstance(result["updates"], list):
+                            update_count = len(result["updates"])
+                            print(f"[{agent_id}] 📊 Collected {update_count} updates from function result")
+                            collected_updates.extend(result["updates"])
+                        # Normalise single-cell result (handles keys 'new', 'new_value' or 'value')
+                        elif "cell" in result:
+                            print(f"[{agent_id}] 📝 Added single cell update to collected updates")
+                            collected_updates.append(result)
 
-                    # ---------- EARLY EXIT for single-shot pattern ----------
-                    if "reply" in result:          # tool already returned the final answer
-                        total_time = time.time() - start_time
-                        print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply "
-                              f"in {total_time:.2f}s with {len(collected_updates)} updates")
-                        yield ChatStep(
-                            role="assistant",
-                            content=result["reply"],
-                            usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
-                        )
-                        return
-                
-                # -------- NEW: add the required tool-result message --------
-                call_id = None
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    call_id = getattr(msg.tool_calls[0], "id", None)
-                if call_id is None:                     # fallback
-                    call_id = f"call_{int(time.time()*1000)}"
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": json.dumps(result)
-                })
+                        # ---------- EARLY EXIT for single-shot pattern ----------
+                        if "reply" in result:          # tool already returned the final answer
+                            total_time = time.time() - start_time
+                            print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply "
+                                  f"in {total_time:.2f}s with {len(collected_updates)} updates")
+                            yield ChatStep(
+                                role="assistant",
+                                content=result["reply"],
+                                usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                            )
+                            return
+                    
+                except Exception as e:
+                    print(f"[{agent_id}] ❌ Error executing function {name}: {str(e)}")
+                    # Add a compensating tool message with error
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": json.dumps({"error": str(e)})
+                    })
+                    yield ChatStep(
+                        role="assistant",
+                        content=f"Sorry, I encountered an error: {e}",
+                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                    )
+                    return
                 
                 loop_time = time.time() - loop_start
                 print(f"[{agent_id}] ⏱️ Iteration {iterations} completed in {loop_time:.2f}s")
@@ -997,7 +1001,6 @@ class BaseAgent:
                             function_args = json.dumps(first_tool.args)
                             print(f"[{agent_id}] 🔧 Starting function call (AIResponse): {function_name}")
                 
-                                    # Construct the complete message from gathered chunks
                 if is_function_call:
                     # Need to add a proper tool_calls entry for OpenAI to reference later
                     tool_call_id = f"call_{int(time.time()*1000)}"
@@ -1137,5 +1140,8 @@ class BaseAgent:
                          "content": "Previous request exhausted tool iterations. "
                                     "Start a new plan from scratch."})
         
-        yield "\n[max-tool-iterations exceeded] I've reached the maximum number of operations allowed. Please simplify your request or break it into smaller steps."
+        yield ChatStep(
+            role="assistant",
+            content="[max-tool-iterations exceeded] I've reached the maximum number of operations allowed. Please simplify your request or break it into smaller steps."
+        )
         return
