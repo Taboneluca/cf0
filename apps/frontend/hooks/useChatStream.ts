@@ -73,13 +73,57 @@ export function useChatStream(
   const applyPendingUpdates = useCallback(() => {
     if (pendingUpdates.length > 0 && wb) {
       if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Applying ${pendingUpdates.length} pending updates`);
-      // Process & apply the updates
+      
+      // Make a local copy of the active sheet
+      const sheetId = wb.active;
+      const sheet = { ...wb.data[sheetId] };
+
       pendingUpdates.forEach(update => {
-        // TODO: Apply the update
+        if (!update || !update.cell) return;
+
+        const value = update.new_value ?? update.value ?? update.new;
+        if (value === undefined) return;
+
+        // Convert "B4" -> row 3, col 1 (zero-based)
+        const match = String(update.cell).match(/^([A-Za-z]+)(\d+)$/);
+        if (!match) return;
+        const [, colLetters, rowStr] = match;
+
+        const row = parseInt(rowStr, 10) - 1;
+        const col = colLetters
+          .toUpperCase()
+          .split('')
+          .reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+
+        // Ensure the sheet has necessary structures
+        if (!sheet.rows) sheet.rows = [];
+        if (!sheet.columns) sheet.columns = [];
+        if (!sheet.cells) sheet.cells = {};
+        
+        // Expand rows/columns arrays if needed
+        while (sheet.rows.length <= row) {
+          sheet.rows.push(sheet.rows.length + 1);
+        }
+        
+        while (sheet.columns.length <= col) {
+          const colNum = sheet.columns.length;
+          // Convert column index to letter (0=A, 1=B, etc.)
+          const colLetter = String.fromCharCode(65 + colNum);
+          sheet.columns.push(colLetter);
+        }
+
+        sheet.cells[`${row},${col}`] = value;
       });
+
+      // Push the new sheet back into context
+      dispatch({
+        type: "UPDATE_SHEET",
+        payload: { id: sheetId, data: sheet }
+      });
+
       setPendingUpdates([]);
     }
-  }, [pendingUpdates, wb]);
+  }, [pendingUpdates, wb, dispatch]);
 
   const rejectPendingUpdates = useCallback(() => {
     if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Rejecting ${pendingUpdates.length} pending updates`);
@@ -273,8 +317,62 @@ export function useChatStream(
               await yieldToDom();
             }
             else if (event.type === 'update') {
-              // Add to pending updates for now
-              setPendingUpdates(prev => [...prev, event.payload]);
+              // Add to pending updates and immediately apply the update
+              setPendingUpdates(prev => {
+                const newUpdates = [...prev, event.payload];
+                
+                // Auto-apply immediately - don't wait for user confirmation
+                if (wb && event.payload) {
+                  const sheetId = wb.active;
+                  const sheet = { ...wb.data[sheetId] };
+                  
+                  const update = event.payload;
+                  if (!update || !update.cell) return newUpdates;
+
+                  const value = update.new_value ?? update.value ?? update.new;
+                  if (value === undefined) return newUpdates;
+
+                  // Parse cell reference
+                  const match = String(update.cell).match(/^([A-Za-z]+)(\d+)$/);
+                  if (!match) return newUpdates;
+                  
+                  const [, colLetters, rowStr] = match;
+                  const row = parseInt(rowStr, 10) - 1;
+                  const col = colLetters
+                    .toUpperCase()
+                    .split('')
+                    .reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+
+                  // Ensure needed structures
+                  if (!sheet.rows) sheet.rows = [];
+                  if (!sheet.columns) sheet.columns = [];
+                  if (!sheet.cells) sheet.cells = {};
+                  
+                  // Expand as needed
+                  while (sheet.rows.length <= row) {
+                    sheet.rows.push(sheet.rows.length + 1);
+                  }
+                  
+                  while (sheet.columns.length <= col) {
+                    const colNum = sheet.columns.length;
+                    const colLetter = String.fromCharCode(65 + colNum);
+                    sheet.columns.push(colLetter);
+                  }
+
+                  // Update the cell
+                  sheet.cells[`${row},${col}`] = {value};
+                  
+                  // Apply the change immediately
+                  dispatch({
+                    type: "UPDATE_SHEET",
+                    payload: { id: sheetId, data: sheet }
+                  });
+                  
+                  if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Auto-applied streaming update to ${update.cell}`);
+                }
+                
+                return newUpdates;
+              });
             }
             else if (event.type === 'complete') {
               // Stream is complete

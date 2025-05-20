@@ -395,8 +395,11 @@ class BaseAgent:
                     mutating_calls += 1
                     print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
                     
-                    # If this is more than the first mutation and not a set_cells call, abort
-                    if mutating_calls > 1 and name not in {"set_cells", "apply_updates_and_reply"}:
+                    # If this is more than the first mutation and not in the allowed list, abort
+                    # allow row-by-row streaming via set_cell
+                    if mutating_calls > 1 and name not in {"set_cells", 
+                                                          "apply_updates_and_reply",
+                                                          "set_cell"}:
                         print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
                         yield ChatStep(
                             role="assistant",

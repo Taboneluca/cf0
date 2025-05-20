@@ -4,7 +4,11 @@ from llm.base import LLMClient
 
 ASK_SYSTEM = """
 You are an expert data-analysis assistant working on a spreadsheet.
-You may ONLY use read-only tools to fetch data.
+You may ONLY use read-only tools.  
+When the user asks *how to build* something, output a numbered guide that  
+includes an example table layout **and real Excel-style formulas** (start each
+formula with "=").  Explain what each input is for, but do NOT attempt to
+modify the sheet in ask-mode.
 Answer thoroughly; cite cell references when useful.
 
 Key guidelines:
