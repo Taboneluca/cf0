@@ -875,7 +875,18 @@ async def process_message_streaming(
                 elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
                     # For tool results, we stream an indicator and trigger UI update
                     tool_result = chunk.toolResult
-                    tool_name = getattr(chunk.toolCall, "name", "unknown-tool") if hasattr(chunk, "toolCall") else "unknown-tool"
+                    
+                    # Check both toolCall and toolcall properties (case-sensitivity check)
+                    tool_call = None
+                    if hasattr(chunk, "toolCall"):
+                        tool_call = chunk.toolCall
+                    elif hasattr(chunk, "toolcall"):
+                        tool_call = chunk.toolcall
+                    
+                    # Get the tool name safely
+                    tool_name = "unknown-tool"
+                    if tool_call and hasattr(tool_call, "name"):
+                        tool_name = tool_call.name
                     
                     # Skip read-only operations
                     if tool_name not in {"get_cell", "get_range"}:
