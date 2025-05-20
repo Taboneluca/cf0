@@ -174,7 +174,7 @@ async def process_message(
             return _f
         
         # Function to handle cross-sheet references in set_cell
-        def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, **kwargs):
+        def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, allow_formula: bool = False, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
             if ref is None:
@@ -196,10 +196,21 @@ async def process_message(
             
             # Regular cell reference
             print(f"[{request_id}] 📝 Setting cell {ref} = {value} in sheet {sid}")
-            return set_cell(ref, value, sheet=target_sheet)
+            
+            # Check if value is a formula and formulas are allowed
+            is_formula = isinstance(value, str) and value.strip().startswith('=')
+            if is_formula and not allow_formula:
+                print(f"[{request_id}] 🔄 Formula detected in {ref}: {value}")
+            
+            # Include formula flag if value is a formula
+            result = set_cell(ref, value, sheet=target_sheet)
+            if is_formula:
+                result['allow_formula'] = allow_formula
+            
+            return result
         
         # Function to handle set_cells with cross-sheet references
-        def set_cells_with_xref(updates: list[dict[str, Any]] = None, cells_dict: dict[str, Any] = None, **kwargs):
+        def set_cells_with_xref(updates: list[dict[str, Any]] = None, cells_dict: dict[str, Any] = None, allow_formulas: bool = False, **kwargs):
             from collections import defaultdict
             results = []
             
@@ -217,6 +228,16 @@ async def process_message(
             # Group updates by sheet
             sheet_updates = defaultdict(list)
             
+            # Check if any update contains a formula
+            has_formulas = False
+            for update in updates:
+                if isinstance(update, dict) and "cell" in update:
+                    value = update.get("value", update.get("new_value", update.get("new", None)))
+                    if isinstance(value, str) and value.strip().startswith('='):
+                        has_formulas = True
+                        # Add formula flag to the update
+                        update['allow_formula'] = allow_formulas
+            
             for update in updates:
                 # Skip invalid update objects
                 if not isinstance(update, dict) or "cell" not in update:
@@ -228,9 +249,9 @@ async def process_message(
                 # If the cell reference includes a sheet name (e.g., Sheet2!A1)
                 if "!" in cell_ref:
                     sheet_name, ref = cell_ref.split("!", 1)
-                    sheet_updates[sheet_name].append({"cell": ref, "value": value})
+                    sheet_updates[sheet_name].append(update)
                 else:
-                    sheet_updates[sid].append({"cell": cell_ref, "value": value})
+                    sheet_updates[sid].append(update)
             
             # Apply updates to each sheet
             for target_sid, sheet_updates_list in sheet_updates.items():
@@ -241,7 +262,20 @@ async def process_message(
                         continue
                         
                     for update in sheet_updates_list:
-                        result = set_cell(update["cell"], update["value"], sheet=target_sheet)
+                        cell_ref = update["cell"]
+                        if "!" in cell_ref:
+                            _, cell_ref = cell_ref.split("!", 1)
+                        
+                        value = update.get("value", update.get("new_value", update.get("new", None)))
+                        allow_formula = update.get("allow_formula", False)
+                        
+                        # Pass allow_formula flag if it exists
+                        if isinstance(value, str) and value.strip().startswith('='):
+                            result = set_cell(cell_ref, value, sheet=target_sheet)
+                            result['allow_formula'] = allow_formula
+                        else:
+                            result = set_cell(cell_ref, value, sheet=target_sheet)
+                        
                         # Add sheet information to the result
                         result["sheet_id"] = target_sid
                         results.append(result)
@@ -252,18 +286,22 @@ async def process_message(
             if not results:
                 results.append({"cell": "A1", "new_value": "", "kind": "no_change"})
                 
-            return {"updates": results}
+            return {"updates": results, "has_formulas": has_formulas}
         
         # Function to apply batch updates and generate a final reply in one step
-        def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
+        def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, allow_formulas: bool = False, **kwargs):
             if updates is None:
                 updates = []
                 
             if not reply:
                 reply = "Updates applied."
-                
-            # Apply the updates
-            result = set_cells_with_xref(updates=updates)
+            
+            # Check if the reply mentions formulas being added
+            formula_keywords = ["formula", "formulas", "calculation", "calculations", "= sign", "equals sign"]
+            formula_requested = allow_formulas or any(keyword.lower() in reply.lower() for keyword in formula_keywords)
+            
+            # Apply the updates with formula flag if formulas were requested
+            result = set_cells_with_xref(updates=updates, allow_formulas=formula_requested)
             
             # Add our reply
             result["reply"] = reply
@@ -505,7 +543,7 @@ async def process_message_streaming(
             return _f
         
         # Function to handle cross-sheet references - same as process_message
-        def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, **kwargs):
+        def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, allow_formula: bool = False, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
             if ref is None:
@@ -527,10 +565,21 @@ async def process_message_streaming(
             
             # Regular cell reference
             print(f"[{request_id}] 📝 Setting cell {ref} = {value} in sheet {sid}")
-            return set_cell(ref, value, sheet=target_sheet)
+            
+            # Check if value is a formula and formulas are allowed
+            is_formula = isinstance(value, str) and value.strip().startswith('=')
+            if is_formula and not allow_formula:
+                print(f"[{request_id}] 🔄 Formula detected in {ref}: {value}")
+            
+            # Include formula flag if value is a formula
+            result = set_cell(ref, value, sheet=target_sheet)
+            if is_formula:
+                result['allow_formula'] = allow_formula
+            
+            return result
         
         # Function to handle set_cells with cross-sheet references - same as process_message
-        def set_cells_with_xref(updates: list[dict[str, Any]] = None, cells_dict: dict[str, Any] = None, **kwargs):
+        def set_cells_with_xref(updates: list[dict[str, Any]] = None, cells_dict: dict[str, Any] = None, allow_formulas: bool = False, **kwargs):
             from collections import defaultdict
             results = []
             
@@ -548,6 +597,16 @@ async def process_message_streaming(
             # Group updates by sheet
             sheet_updates = defaultdict(list)
             
+            # Check if any update contains a formula
+            has_formulas = False
+            for update in updates:
+                if isinstance(update, dict) and "cell" in update:
+                    value = update.get("value", update.get("new_value", update.get("new", None)))
+                    if isinstance(value, str) and value.strip().startswith('='):
+                        has_formulas = True
+                        # Add formula flag to the update
+                        update['allow_formula'] = allow_formulas
+            
             for update in updates:
                 # Skip invalid update objects
                 if not isinstance(update, dict) or "cell" not in update:
@@ -559,9 +618,9 @@ async def process_message_streaming(
                 # If the cell reference includes a sheet name (e.g., Sheet2!A1)
                 if "!" in cell_ref:
                     sheet_name, ref = cell_ref.split("!", 1)
-                    sheet_updates[sheet_name].append({"cell": ref, "value": value})
+                    sheet_updates[sheet_name].append(update)
                 else:
-                    sheet_updates[sid].append({"cell": cell_ref, "value": value})
+                    sheet_updates[sid].append(update)
             
             # Apply updates to each sheet
             for target_sid, sheet_updates_list in sheet_updates.items():
@@ -572,7 +631,20 @@ async def process_message_streaming(
                         continue
                         
                     for update in sheet_updates_list:
-                        result = set_cell(update["cell"], update["value"], sheet=target_sheet)
+                        cell_ref = update["cell"]
+                        if "!" in cell_ref:
+                            _, cell_ref = cell_ref.split("!", 1)
+                        
+                        value = update.get("value", update.get("new_value", update.get("new", None)))
+                        allow_formula = update.get("allow_formula", False)
+                        
+                        # Pass allow_formula flag if it exists
+                        if isinstance(value, str) and value.strip().startswith('='):
+                            result = set_cell(cell_ref, value, sheet=target_sheet)
+                            result['allow_formula'] = allow_formula
+                        else:
+                            result = set_cell(cell_ref, value, sheet=target_sheet)
+                        
                         # Add sheet information to the result
                         result["sheet_id"] = target_sid
                         results.append(result)
@@ -583,18 +655,22 @@ async def process_message_streaming(
             if not results:
                 results.append({"cell": "A1", "new_value": "", "kind": "no_change"})
                 
-            return {"updates": results}
+            return {"updates": results, "has_formulas": has_formulas}
         
         # Function to apply batch updates and generate a final reply in one step
-        def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
+        def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, allow_formulas: bool = False, **kwargs):
             if updates is None:
                 updates = []
                 
             if not reply:
                 reply = "Updates applied."
-                
-            # Apply the updates
-            result = set_cells_with_xref(updates=updates)
+            
+            # Check if the reply mentions formulas being added
+            formula_keywords = ["formula", "formulas", "calculation", "calculations", "= sign", "equals sign"]
+            formula_requested = allow_formulas or any(keyword.lower() in reply.lower() for keyword in formula_keywords)
+            
+            # Apply the updates with formula flag if formulas were requested
+            result = set_cells_with_xref(updates=updates, allow_formulas=formula_requested)
             
             # Add our reply
             result["reply"] = reply
