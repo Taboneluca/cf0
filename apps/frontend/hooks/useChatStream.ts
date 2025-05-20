@@ -3,6 +3,11 @@ import { useWorkbook } from '@/context/workbook-context';
 import { Message } from '@/types/spreadsheet';
 import { backendSheetToUI } from '@/utils/transform';
 
+// Utility function to yield to the DOM
+const yieldToDom = (): Promise<void> => {
+  return new Promise(resolve => setTimeout(resolve, 0));
+};
+
 type StreamEvent = 
   | { type: 'start' }
   | { type: 'chunk', text: string }
@@ -262,6 +267,10 @@ export function useChatStream(
               if (DEBUG_STREAMING) {
                 console.log(`[Stream DEBUG] Chunk content: "${event.text}"`);
               }
+              
+              // Give React a chance to flush before parsing the next event
+              // eslint-disable-next-line no-await-in-loop
+              await yieldToDom();
             }
             else if (event.type === 'update') {
               // Add to pending updates for now

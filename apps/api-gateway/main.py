@@ -375,6 +375,9 @@ async def stream_chat(req: ChatRequest):
                 sse_payload = f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
                 yield sse_payload
                 
+                # Yield control to allow uvicorn to flush the response
+                await asyncio.sleep(0)
+                
                 # Print debug info about the event
                 if event_type == 'chunk' and 'text' in chunk:
                     # For text chunks, print a sample (useful for verifying token-by-token streaming)
