@@ -247,6 +247,10 @@ class Orchestrator:
         guarded_stream = wrap_stream_with_guard(agent_stream)
         
         async for step in guarded_stream:
-            yield step
+            # Convert string to ChatStep if needed for consistency
+            if isinstance(step, str):
+                yield ChatStep(role="assistant", content=step)
+            else:
+                yield step
         
         print(f"[{request_id}] ✅ Orchestrator stream completed in {time.time() - start_time:.2f}s") 
