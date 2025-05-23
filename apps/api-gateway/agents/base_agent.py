@@ -189,6 +189,9 @@ class BaseAgent:
         if sheet_ctx:
             self.system_prompt += f"\n\n{sheet_ctx.strip()}"
 
+        # Store the original prompt
+        self._original_prompt = self.system_prompt
+
     def clone_with_tools(self, tool_functions: dict[str, callable]) -> 'BaseAgent':
         """
         Create a new agent with the same system prompt but updated tool functions.
@@ -677,6 +680,23 @@ class BaseAgent:
             additional_message: The message to add to the system prompt
         """
         self.system_prompt = f"{self.system_prompt}\n\n{additional_message}"
+
+    def reset_system_prompt(self) -> None:
+        """
+        Reset the system prompt to its original state.
+        This is useful when switching between agent modes to avoid prompt pollution.
+        """
+        if hasattr(self, '_original_prompt'):
+            self.system_prompt = self._original_prompt
+        
+    def set_system_prompt(self, new_prompt: str) -> None:
+        """
+        Replace the current system prompt entirely.
+        
+        Args:
+            new_prompt: The new system prompt to use
+        """
+        self.system_prompt = new_prompt
 
     async def stream_run(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[ChatStep, None]:
         """
