@@ -69,12 +69,15 @@ export default function Waitlist() {
               >
                 <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl text-white mb-4">
                   Join the{" "}
-                  <span className="text-gradient">
-                    cf
-                    <span className="relative inline-block">
+                  <span className="font-bold">
+                    <span className="text-gradient">cf</span>
+                    <span className="relative inline-block text-gradient">
                       0
                       <span className="absolute inset-0 flex items-center justify-center">
-                        <span className="h-[2px] w-[140%] bg-white -rotate-15 transform-gpu"></span>
+                        <span 
+                          className="h-[2px] w-[140%] -rotate-15 transform-gpu" 
+                          style={{ backgroundColor: '#ffffff', opacity: 1 }}
+                        ></span>
                       </span>
                     </span>
                   </span>{" "}
