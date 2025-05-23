@@ -176,4 +176,4 @@ BEGIN
   
   RETURN updated_row;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER; 

@@ -216,4 +216,4 @@ export default function SpreadsheetInterface({
       </div>
     </EditingProvider>
   )
-}
+} 

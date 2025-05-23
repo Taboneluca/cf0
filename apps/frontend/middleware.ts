@@ -27,7 +27,8 @@ export async function middleware(req: NextRequest) {
   
   // Log auth state for all protected routes
   const isProtectedRoute = req.nextUrl.pathname.startsWith('/dashboard') || 
-                         req.nextUrl.pathname.startsWith('/workbook')
+                         req.nextUrl.pathname.startsWith('/workbook') ||
+                         req.nextUrl.pathname.startsWith('/admin')
   
   if (isProtectedRoute) {
     console.log(`Auth middleware for ${req.nextUrl.pathname}:`, { 
@@ -72,5 +73,6 @@ export const config = {
     '/((?!_next/static|_next/image|favicon.ico|public|api/auth).*)',
     '/dashboard/:path*', // Explicitly match dashboard routes
     '/workbook/:path*',  // Explicitly match workbook routes
+    '/admin/:path*',     // Explicitly match admin routes
   ],
 } 

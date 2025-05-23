@@ -224,4 +224,4 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
       <SpreadsheetInterface onDataChange={() => {}} readOnly={!isOwner} />
     </div>
   )
-}
+} 

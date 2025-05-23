@@ -27,4 +27,4 @@ export interface WaitlistEntry {
   invite_code: string | null
   invited_at: string | null
   created_at: string
-}
+} 

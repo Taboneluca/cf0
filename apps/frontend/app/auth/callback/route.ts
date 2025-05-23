@@ -23,4 +23,4 @@ export async function GET(request: NextRequest) {
 
   // Default redirect for regular sign-ins
   return NextResponse.redirect(new URL("/dashboard", request.url))
-}
+} 
