@@ -105,6 +105,9 @@ class Orchestrator:
         # Get the appropriate agent
         agent = self.get_agent(mode)
         
+        # Reset system prompt to prevent accumulation from previous mode switches
+        agent.reset_system_prompt()
+        
         # Add sheet context if not already there
         agent.add_system_message(self.sheet_context)
         
@@ -187,6 +190,9 @@ class Orchestrator:
         
         # Get the appropriate agent
         agent = self.get_agent(mode)
+        
+        # Reset system prompt to prevent accumulation from previous mode switches
+        agent.reset_system_prompt()
         
         # Add sheet context if not already there
         agent.add_system_message(self.sheet_context)
