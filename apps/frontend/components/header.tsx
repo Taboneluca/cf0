@@ -5,7 +5,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { motion } from "framer-motion"
 import { Logo } from "./logo"
-import { LayoutDashboard } from "lucide-react"
+import { LogIn } from "lucide-react"
 
 export function Header() {
   const [scrolled, setScrolled] = useState(false)
@@ -72,9 +72,9 @@ export function Header() {
             className="border-blue-500 text-blue-400 hover:bg-blue-950 animated-button text-xs h-8 px-2"
             asChild
           >
-            <Link href="/dashboard">
-              <LayoutDashboard className="mr-1 h-3 w-3" />
-              <span className="text-xs">Dashboard</span>
+            <Link href="/login">
+              <LogIn className="mr-1 h-3 w-3" />
+              <span className="text-xs">Log In</span>
             </Link>
           </Button>
           <Button

@@ -14,13 +14,38 @@ export default function Waitlist() {
   const [email, setEmail] = useState("")
   const [name, setName] = useState("")
   const [company, setCompany] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (email) {
+    if (!email) return
+    
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      const response = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name, company }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to join waitlist")
+      }
+
+      // Store email for confirmation page
       localStorage.setItem("waitlistEmail", email)
       router.push("/waitlist-confirmation")
+    } catch (err: any) {
+      console.error("Error submitting to waitlist:", err)
+      setError(err.message || "An error occurred. Please try again.")
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -144,10 +169,14 @@ export default function Waitlist() {
                     </div>
                     <Button
                       type="submit"
+                      disabled={isSubmitting}
                       className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium text-xs h-8 animated-filled-button"
                     >
-                      Join Waitlist
+                      {isSubmitting ? "Joining..." : "Join Waitlist"}
                     </Button>
+                    {error && (
+                      <p className="text-sm text-red-400 text-center mt-2">{error}</p>
+                    )}
                     <p className="text-xs text-blue-300 text-center mt-4">
                       By joining, you agree to our Terms of Service and Privacy Policy.
                     </p>

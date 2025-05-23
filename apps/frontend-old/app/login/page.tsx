@@ -33,12 +33,12 @@ export default function LoginPage() {
           </Suspense>
           <div className="text-center text-sm">
             Don&apos;t have an account?{" "}
-            <Link href="/register" className="underline">
-              Sign up
+            <Link href="/waitlist-status" className="underline">
+              Check waitlist status
             </Link>
           </div>
         </div>
       </div>
     </div>
   )
-} 
+}

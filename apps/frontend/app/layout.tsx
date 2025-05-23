@@ -13,7 +13,12 @@ export const metadata: Metadata = {
   title: "cf0 - Spreadsheets Powered by AI",
   description:
     "cf0 combines the power of spreadsheets with AI to help you analyze and manipulate your data more efficiently.",
-    generator: 'v0.dev'
+  generator: 'v0.dev',
+  icons: {
+    icon: '/new-logo.png',
+    shortcut: '/new-logo.png',
+    apple: '/new-logo.png',
+  },
 }
 
 export default function RootLayout({
