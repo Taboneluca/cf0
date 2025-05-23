@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
 import { DashboardFooter } from "@/components/dashboard-footer"
 import { Button } from "@/components/ui/button"
@@ -12,47 +13,22 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input"
 import { supabase } from "@/lib/supabase/client"
 
-// Sample data for workbooks
-const createdWorkbooks = [
-  {
-    id: 1,
-    name: "Q1 Financial Report",
-    createdAt: "2023-03-15T10:30:00Z",
-    updatedAt: "2023-03-20T14:45:00Z",
-    color: "blue",
-  },
-  {
-    id: 2,
-    name: "Marketing Campaign Analysis",
-    createdAt: "2023-04-02T09:15:00Z",
-    updatedAt: "2023-04-10T16:20:00Z",
-    color: "green",
-  },
-  {
-    id: 3,
-    name: "Product Launch Metrics",
-    createdAt: "2023-05-18T11:45:00Z",
-    updatedAt: "2023-05-22T13:10:00Z",
-    color: "purple",
-  },
-]
+// Sample data for workbooks - now empty for new users
+const createdWorkbooks: Array<{
+  id: number
+  name: string
+  createdAt: string
+  updatedAt: string
+  color: string
+}> = []
 
-const importedWorkbooks = [
-  {
-    id: 4,
-    name: "Customer Survey Results",
-    createdAt: "2023-02-10T08:20:00Z",
-    updatedAt: "2023-02-12T15:30:00Z",
-    color: "orange",
-  },
-  {
-    id: 5,
-    name: "Inventory Analysis",
-    createdAt: "2023-04-25T13:40:00Z",
-    updatedAt: "2023-04-28T10:15:00Z",
-    color: "pink",
-  },
-]
+const importedWorkbooks: Array<{
+  id: number
+  name: string
+  createdAt: string
+  updatedAt: string
+  color: string
+}> = []
 
 // Helper function to format dates
 const formatDate = (dateString: string) => {
@@ -65,6 +41,7 @@ const formatDate = (dateString: string) => {
 }
 
 export default function Dashboard() {
+  const router = useRouter()
   const [workbooks, setWorkbooks] = useState({
     created: [...createdWorkbooks],
     imported: [...importedWorkbooks],
@@ -75,6 +52,7 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState("all")
   const [isAdmin, setIsAdmin] = useState(false)
   const [isLoadingAdmin, setIsLoadingAdmin] = useState(true)
+  const [isCreatingWorkbook, setIsCreatingWorkbook] = useState(false)
 
   // Check if user is admin
   useEffect(() => {
@@ -99,6 +77,35 @@ export default function Dashboard() {
 
     checkAdminStatus()
   }, [])
+
+  // Create new workbook function
+  const createNewWorkbook = async () => {
+    setIsCreatingWorkbook(true)
+    try {
+      const response = await fetch("/api/workbooks/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          title: `Workbook ${new Date().toLocaleDateString()}`,
+          description: "Created with cf0" 
+        }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to create workbook")
+      }
+      
+      // Redirect to the new workbook
+      router.push(`/workbook/${result.workbook.id}`)
+    } catch (error: any) {
+      console.error("Error creating workbook:", error)
+      alert("Failed to create workbook. Please try again.")
+    } finally {
+      setIsCreatingWorkbook(false)
+    }
+  }
 
   const handleDelete = (id: number, type: "created" | "imported") => {
     setWorkbooks((prev) => ({
@@ -132,22 +139,21 @@ export default function Dashboard() {
     workbook: (typeof createdWorkbooks)[0]
     type: "created" | "imported"
   }) {
+    // Updated color scheme: blue glow for created, green for imported
     const colorMap = {
-      blue: "bg-blue-500/20 border-blue-500/30 text-blue-400",
-      green: "bg-emerald-500/20 border-emerald-500/30 text-emerald-400",
-      purple: "bg-violet-500/20 border-violet-500/30 text-violet-400",
-      orange: "bg-orange-500/20 border-orange-500/30 text-orange-400",
-      pink: "bg-pink-500/20 border-pink-500/30 text-pink-400",
+      created: "bg-blue-500/20 border-blue-500/50 text-blue-400 shadow-lg shadow-blue-500/20",
+      imported: "bg-emerald-500/20 border-emerald-500/50 text-emerald-400 shadow-lg shadow-emerald-500/20",
     }
 
-    const colorClass = colorMap[workbook.color as keyof typeof colorMap] || colorMap.blue
+    const colorClass = colorMap[type]
 
     return (
       <motion.div
-        className={`workbook-card rounded-lg border ${colorClass} bg-black/40 p-4 backdrop-blur-sm`}
+        className={`workbook-card rounded-lg border ${colorClass} bg-black/40 p-4 backdrop-blur-sm hover:shadow-xl transition-all duration-300`}
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
+        whileHover={{ scale: 1.02, y: -5 }}
       >
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -322,9 +328,13 @@ export default function Dashboard() {
             </Tabs>
 
             <div className="flex gap-2 w-full sm:w-auto">
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white animated-filled-button text-xs h-8">
+              <Button 
+                className="bg-blue-600 hover:bg-blue-700 text-white animated-filled-button text-xs h-8"
+                onClick={createNewWorkbook}
+                disabled={isCreatingWorkbook}
+              >
                 <PlusCircle className="mr-1 h-3 w-3" />
-                New Workbook
+                {isCreatingWorkbook ? "Creating..." : "Create New Workbook"}
               </Button>
               <Button
                 variant="outline"
@@ -369,9 +379,13 @@ export default function Dashboard() {
                   Create your first workbook or import an existing spreadsheet to get started.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Button className="bg-blue-600 hover:bg-blue-700 text-white animated-filled-button text-xs h-8">
+                  <Button 
+                    className="bg-blue-600 hover:bg-blue-700 text-white animated-filled-button text-xs h-8"
+                    onClick={createNewWorkbook}
+                    disabled={isCreatingWorkbook}
+                  >
                     <PlusCircle className="mr-2 h-3 w-3" />
-                    Create New Workbook
+                    {isCreatingWorkbook ? "Creating..." : "Create New Workbook"}
                   </Button>
                   <Button
                     variant="outline"

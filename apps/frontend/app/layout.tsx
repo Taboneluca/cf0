@@ -15,9 +15,14 @@ export const metadata: Metadata = {
     "cf0 combines the power of spreadsheets with AI to help you analyze and manipulate your data more efficiently.",
   generator: 'v0.dev',
   icons: {
-    icon: '/new-logo.png',
+    icon: [
+      { url: '/new-logo.png', sizes: '32x32', type: 'image/png' },
+      { url: '/new-logo.png', sizes: '16x16', type: 'image/png' },
+    ],
     shortcut: '/new-logo.png',
-    apple: '/new-logo.png',
+    apple: [
+      { url: '/new-logo.png', sizes: '180x180', type: 'image/png' },
+    ],
   },
 }
 

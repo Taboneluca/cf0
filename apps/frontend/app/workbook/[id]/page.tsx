@@ -18,13 +18,13 @@ export default async function WorkbookPage({
     redirect("/login")
   }
 
-  const { data: workbook, error } = await supabase.from("workbooks").select("*").eq("id", wid).single()
+  const { data: workbook, error } = await supabase.from("spreadsheet_workbooks").select("*").eq("id", wid).single()
 
   if (error || !workbook) {
     redirect("/dashboard")
   }
 
-  if (workbook.user_id !== session.user.id && !workbook.is_public) {
+  if (workbook.user_id !== session.user.id) {
     redirect("/dashboard")
   }
 

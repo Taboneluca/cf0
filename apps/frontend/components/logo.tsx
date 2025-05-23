@@ -28,6 +28,7 @@ export function Logo({ className, size = "md", clickable = true }: LogoProps) {
         width={logoSizes[size].width}
         height={logoSizes[size].height}
         className="object-contain"
+        priority={size === "lg"}
       />
       <span className={`font-bold text-white ${sizes[size]}`}>
         cf
