@@ -740,4 +740,4 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
       </div>
     </div>
   )
-}
+} 

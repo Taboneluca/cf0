@@ -64,4 +64,4 @@ ENV/
 *.swo
 
 # local template compiler
-/scripts/compile_templates.py 
+/scripts/compile_templates.py apps/frontend-old/

@@ -33,4 +33,4 @@ export default async function WorkbookPage({
       <WorkbookEditor workbook={workbook} userId={session.user.id} />
     </WorkbookProvider>
   )
-}
+} 
