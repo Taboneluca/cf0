@@ -1,14 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import Link from "next/link"
 import { Header } from "@/components/header"
 import { DashboardFooter } from "@/components/dashboard-footer"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { PlusCircle, FileSpreadsheet, Upload, Download, Clock, Calendar, MoreHorizontal } from "lucide-react"
+import { PlusCircle, FileSpreadsheet, Upload, Download, Clock, Calendar, MoreHorizontal, Settings, Users } from "lucide-react"
 import { motion } from "framer-motion"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { supabase } from "@/lib/supabase/client"
 
 // Sample data for workbooks
 const createdWorkbooks = [
@@ -70,6 +72,33 @@ export default function Dashboard() {
   const [isRenaming, setIsRenaming] = useState<{ id: number; type: "created" | "imported" } | null>(null)
   const [newName, setNewName] = useState("")
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ id: number; type: "created" | "imported" } | null>(null)
+  const [activeTab, setActiveTab] = useState("all")
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [isLoadingAdmin, setIsLoadingAdmin] = useState(true)
+
+  // Check if user is admin
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("is_admin")
+            .eq("id", session.user.id)
+            .single()
+          
+          setIsAdmin(profile?.is_admin || false)
+        }
+      } catch (error) {
+        console.error("Error checking admin status:", error)
+      } finally {
+        setIsLoadingAdmin(false)
+      }
+    }
+
+    checkAdminStatus()
+  }, [])
 
   const handleDelete = (id: number, type: "created" | "imported") => {
     setWorkbooks((prev) => ({
@@ -233,8 +262,6 @@ export default function Dashboard() {
     )
   }
 
-  const [activeTab, setActiveTab] = useState("all")
-
   return (
     <div className="flex min-h-screen flex-col bg-black">
       <Header />
@@ -244,6 +271,37 @@ export default function Dashboard() {
             <h1 className="text-3xl font-bold text-white mb-2">Your Workbooks</h1>
             <p className="text-blue-200">Manage and organize all your spreadsheets in one place.</p>
           </div>
+
+          {/* Admin Section */}
+          {isAdmin && !isLoadingAdmin && (
+            <motion.div
+              className="mb-8 rounded-lg border border-orange-500/30 bg-orange-500/10 p-6"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-orange-500/20 border border-orange-500/30">
+                    <Settings className="h-5 w-5 text-orange-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">Admin Panel</h2>
+                    <p className="text-orange-200 text-sm">Manage waitlist and system settings</p>
+                  </div>
+                </div>
+                <Button
+                  asChild
+                  className="bg-orange-600 hover:bg-orange-700 text-white animated-filled-button text-xs h-8"
+                >
+                  <Link href="/admin/waitlist">
+                    <Users className="mr-2 h-3 w-3" />
+                    Manage Waitlist
+                  </Link>
+                </Button>
+              </div>
+            </motion.div>
+          )}
 
           <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <Tabs defaultValue="all" className="w-full sm:w-auto" onValueChange={setActiveTab}>

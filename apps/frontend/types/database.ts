@@ -7,6 +7,7 @@ export interface Profile {
   is_verified: boolean
   created_at: string
   updated_at: string
+  is_admin: boolean
 }
 
 export interface Workbook {
@@ -23,7 +24,7 @@ export interface Workbook {
 export interface WaitlistEntry {
   id: string
   email: string
-  status: "pending" | "approved" | "rejected" | "converted"
+  status: "pending" | "approved" | "invited" | "rejected" | "converted"
   invite_code: string | null
   invited_at: string | null
   created_at: string
