@@ -77,6 +77,8 @@ export function HowItWorksSection() {
 
   // Handle keyboard navigation
   useEffect(() => {
+    if (typeof window === "undefined") return
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") {
         handleNextStep()

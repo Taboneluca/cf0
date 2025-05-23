@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { HeroSection } from "@/components/hero-section"
 import { FeaturesSection } from "@/components/features-section"
 import { FinancialModelSection } from "@/components/financial-model-section"
@@ -12,15 +12,25 @@ import { Header } from "@/components/header"
 import { motion, useScroll, useSpring } from "framer-motion"
 
 export default function Home() {
-  const { scrollYProgress } = useScroll()
-  const scaleX = useSpring(scrollYProgress, {
+  const [mounted, setMounted] = useState(false)
+  
+  // Only initialize framer-motion hooks on the client
+  const { scrollYProgress } = typeof window !== "undefined" ? useScroll() : { scrollYProgress: { get: () => 0 } as any }
+  const scaleX = typeof window !== "undefined" ? useSpring(scrollYProgress, {
     stiffness: 100,
     damping: 30,
     restDelta: 0.001,
-  })
+  }) : { get: () => 0 } as any
 
-  // Add smooth scrolling for anchor links
+  // Ensure component only hydrates on client
   useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Add smooth scrolling for anchor links - only on client
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return
+
     const handleAnchorClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       const anchor = target.closest('a[href^="#"]')
@@ -41,7 +51,25 @@ export default function Home() {
 
     document.addEventListener("click", handleAnchorClick)
     return () => document.removeEventListener("click", handleAnchorClick)
-  }, [])
+  }, [mounted])
+
+  // Prevent hydration mismatch
+  if (!mounted) {
+    return (
+      <div className="flex min-h-screen flex-col bg-black">
+        <Header />
+        <main className="flex-1">
+          <HeroSection />
+          <FeaturesSection />
+          <FinancialModelSection />
+          <HowItWorksSection />
+          <PricingSection />
+          <FaqSection />
+        </main>
+        <Footer />
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-black">

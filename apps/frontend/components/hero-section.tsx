@@ -8,25 +8,36 @@ import { GraduationCap } from "lucide-react"
 
 export function HeroSection() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
-  const { scrollY } = useScroll()
-
-  // Parallax effect values
-  const y1 = useTransform(scrollY, [0, 500], [0, 100])
-  const y2 = useTransform(scrollY, [0, 500], [0, -100])
-  const opacity = useTransform(scrollY, [0, 300], [1, 0])
+  const [mounted, setMounted] = useState(false)
+  
+  // Only initialize scroll hooks on client
+  const { scrollY } = typeof window !== "undefined" ? useScroll() : { scrollY: { get: () => 0 } as any }
+  
+  // Parallax effect values - only on client
+  const y1 = typeof window !== "undefined" ? useTransform(scrollY, [0, 500], [0, 100]) : { get: () => 0 } as any
+  const y2 = typeof window !== "undefined" ? useTransform(scrollY, [0, 500], [0, -100]) : { get: () => 0 } as any
+  const opacity = typeof window !== "undefined" ? useTransform(scrollY, [0, 300], [1, 0]) : { get: () => 1 } as any
 
   useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return
+
     const handleMouseMove = (e: MouseEvent) => {
       setMousePosition({ x: e.clientX, y: e.clientY })
     }
 
     window.addEventListener("mousemove", handleMouseMove)
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove)
-    }
-  }, [])
+    return () => window.removeEventListener("mousemove", handleMouseMove)
+  }, [mounted])
 
   const calculateTransform = (depth = 1) => {
+    if (!mounted || typeof window === "undefined") {
+      return "translate(0px, 0px)"
+    }
+
     const x = ((window.innerWidth / 2 - mousePosition.x) / 50) * depth
     const y = ((window.innerHeight / 2 - mousePosition.y) / 50) * depth
     return `translate(${x}px, ${y}px)`
@@ -34,24 +45,28 @@ export function HeroSection() {
 
   return (
     <section className="relative w-full py-16 md:py-20 lg:py-24 overflow-hidden bg-black">
-      {/* Background elements with parallax effect */}
-      <motion.div className="absolute inset-0 bg-grid opacity-30" style={{ y: y1 }}></motion.div>
-      <motion.div
-        className="absolute top-20 left-10 w-72 h-72 bg-blue-500/20 rounded-full blur-3xl"
-        style={{
-          transform: calculateTransform(0.5),
-          y: y2,
-          opacity,
-        }}
-      ></motion.div>
-      <motion.div
-        className="absolute bottom-20 right-10 w-96 h-96 bg-cyan-400/20 rounded-full blur-3xl"
-        style={{
-          transform: calculateTransform(0.3),
-          y: y1,
-          opacity,
-        }}
-      ></motion.div>
+      {/* Background elements with parallax effect - only render on client */}
+      {mounted && (
+        <>
+          <motion.div className="absolute inset-0 bg-grid opacity-30" style={{ y: y1 }}></motion.div>
+          <motion.div
+            className="absolute top-20 left-10 w-72 h-72 bg-blue-500/20 rounded-full blur-3xl"
+            style={{
+              transform: calculateTransform(0.5),
+              y: y2,
+              opacity,
+            }}
+          ></motion.div>
+          <motion.div
+            className="absolute bottom-20 right-10 w-96 h-96 bg-cyan-400/20 rounded-full blur-3xl"
+            style={{
+              transform: calculateTransform(0.3),
+              y: y1,
+              opacity,
+            }}
+          ></motion.div>
+        </>
+      )}
 
       <div className="container relative z-10 px-4 md:px-6">
         <div className="grid gap-6 lg:grid-cols-[1fr_400px] lg:gap-12 xl:grid-cols-[1fr_600px]">
