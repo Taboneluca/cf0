@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@supabase/supabase-js"
 import { cookies } from "next/headers"
 
 export async function POST(request: Request) {
@@ -31,8 +32,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 })
     }
 
+    // Create service role client for admin operations
+    const serviceSupabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
     // Check if waitlist entry exists
-    const { data: waitlistEntry, error: waitlistError } = await supabase
+    const { data: waitlistEntry, error: waitlistError } = await serviceSupabase
       .from("waitlist")
       .select("*")
       .eq("email", email)
@@ -49,7 +56,7 @@ export async function POST(request: Request) {
     }
 
     // Use the invite_waitlist_user function to update status and get invite code
-    const { data: inviteResult, error: inviteError } = await supabase
+    const { data: inviteResult, error: inviteError } = await serviceSupabase
       .rpc("invite_waitlist_user", { user_email: email })
 
     if (inviteError) {
@@ -58,7 +65,7 @@ export async function POST(request: Request) {
     }
 
     // Get the updated waitlist entry with invite code
-    const { data: updatedEntry, error: fetchError } = await supabase
+    const { data: updatedEntry, error: fetchError } = await serviceSupabase
       .from("waitlist")
       .select("*")
       .eq("email", email)
@@ -69,10 +76,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Failed to fetch updated entry" }, { status: 500 })
     }
 
-    // Send invite email via Supabase Auth
+    // Send invite email via Supabase Auth using service role
     const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback?invite_code=${updatedEntry.invite_code}`
 
-    const { error: authError } = await supabase.auth.admin.inviteUserByEmail(email, {
+    const { error: authError } = await serviceSupabase.auth.admin.inviteUserByEmail(email, {
       redirectTo,
       data: { 
         waitlist: true, 
@@ -83,7 +90,7 @@ export async function POST(request: Request) {
     if (authError) {
       console.error("Auth invite error:", authError)
       // Revert the waitlist status change
-      await supabase
+      await serviceSupabase
         .from("waitlist")
         .update({ status: "pending", invited_at: null })
         .eq("email", email)

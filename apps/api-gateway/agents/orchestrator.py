@@ -144,8 +144,19 @@ class Orchestrator:
             if not should_include_model_tools:
                 # Filter out financial model tools from agent's tools
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
-                filtered_tools = {k: v for k, v in agent.tool_functions.items() if k not in financial_model_tools}
-                agent.tool_functions = filtered_tools
+                
+                # Create a new tools list without the financial model tools
+                filtered_tools = []
+                for tool in agent.tools:
+                    if tool["name"] not in financial_model_tools:
+                        filtered_tools.append(tool)
+                
+                # Create a new agent with filtered tools
+                agent = agent.__class__(
+                    llm=agent.llm,
+                    fallback_prompt=agent.system_prompt,
+                    tools=filtered_tools
+                )
                 print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
         
         # Run the agent
@@ -230,8 +241,19 @@ class Orchestrator:
             if not should_include_model_tools:
                 # Filter out financial model tools from agent's tools
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
-                filtered_tools = {k: v for k, v in agent.tool_functions.items() if k not in financial_model_tools}
-                agent.tool_functions = filtered_tools
+                
+                # Create a new tools list without the financial model tools
+                filtered_tools = []
+                for tool in agent.tools:
+                    if tool["name"] not in financial_model_tools:
+                        filtered_tools.append(tool)
+                
+                # Create a new agent with filtered tools
+                agent = agent.__class__(
+                    llm=agent.llm,
+                    fallback_prompt=agent.system_prompt,
+                    tools=filtered_tools
+                )
                 print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
         
         # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
