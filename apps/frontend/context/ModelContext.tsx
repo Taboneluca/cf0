@@ -23,6 +23,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   
   // Function to set model and also persist to Supabase if possible
   const setModel = async (newModel: string) => {
+    console.log('ModelContext: Setting model to', newModel);
     setModelState(newModel)
     
     // Optional: save to user's profile in Supabase
@@ -37,11 +38,12 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   // Initialize model 
   useEffect(() => {
     const init = async () => {
+      console.log('ModelContext: Initialized with model', model);
       setIsLoading(false)
     }
     
     init()
-  }, [])
+  }, [model])
   
   return (
     <ModelContext.Provider value={{ model, setModel, isLoading }}>
@@ -50,4 +52,10 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   )
 }
 
-export const useModel = () => useContext(ModelContext) 
+export const useModel = () => {
+  const context = useContext(ModelContext);
+  if (!context) {
+    throw new Error('useModel must be used within a ModelProvider');
+  }
+  return context;
+} 

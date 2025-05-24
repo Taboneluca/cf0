@@ -1,6 +1,7 @@
 import type React from "react"
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
+import { ModelProvider } from "@/context/ModelContext"
 import "./globals.css"
 
 const inter = Inter({
@@ -33,7 +34,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={inter.variable}>
-      <body className="font-inter">{children}</body>
+      <body className="font-inter">
+        <ModelProvider>
+          {children}
+        </ModelProvider>
+      </body>
     </html>
   )
 }

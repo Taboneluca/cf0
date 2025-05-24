@@ -3,9 +3,11 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Loader2, X, Sparkles, BarChart3, Minimize2, Maximize2 } from "lucide-react"
+import { Send, Loader2, X, Sparkles, BarChart3, Minimize2, Maximize2, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import Image from "next/image"
 import type { Message as MessageType } from "@/types/spreadsheet"
 import { chatBackend } from "@/utils/backend"
 import { backendSheetToUI, backendSheetToUIMap } from "@/utils/transform"
@@ -178,35 +180,40 @@ export default function ChatInterface({
   }
 
   return (
-    <div className="flex flex-col h-full bg-gradient-to-b from-gray-50 to-white border-l border-gray-200">
+    <div className="flex flex-col h-full bg-gradient-to-b from-blue-50/50 to-white border-l border-blue-200">
       {isMinimized ? (
         <div
-          className="h-full flex items-center justify-center cursor-pointer hover:bg-blue-50 transition-colors border-l border-gray-200 bg-gradient-to-b from-blue-50 to-white"
+          className="h-full flex items-center justify-center cursor-pointer hover:bg-blue-100 transition-colors border-l border-blue-200 bg-gradient-to-b from-blue-50 to-blue-25 group"
           onClick={toggleMinimize}
         >
-          <div className="flex flex-col items-center gap-2">
-            <Maximize2 className="text-blue-600" size={16} />
-            <div className="rotate-90 text-blue-600 font-medium text-sm whitespace-nowrap">AI Assistant</div>
+          <div className="flex flex-col items-center gap-3 px-2">
+            <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+              <Image src="/logo.png" alt="cf0" width={20} height={20} className="rounded-sm" />
+            </div>
+            <Maximize2 className="text-blue-600 group-hover:text-blue-700 transition-colors" size={16} />
+            <div className="rotate-90 text-blue-600 group-hover:text-blue-700 font-semibold text-xs whitespace-nowrap tracking-wide">
+              AI Assistant
+            </div>
           </div>
         </div>
       ) : (
         <div className="flex flex-col h-full">
           {/* Header */}
-          <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-white">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <Sparkles className="text-white" size={16} />
+          <div className="flex items-center justify-between p-4 border-b border-blue-200 bg-gradient-to-r from-blue-50 to-blue-25">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl flex items-center justify-center shadow-md">
+                <Image src="/logo.png" alt="cf0" width={24} height={24} className="rounded-sm" />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900 text-sm">AI Assistant</h3>
-                <p className="text-xs text-gray-500">Powered by cf0</p>
+                <h3 className="font-bold text-blue-900 text-sm">AI Assistant</h3>
+                <p className="text-xs text-blue-600">Powered by cf0</p>
               </div>
             </div>
             <Button
               variant="ghost"
               size="sm"
               onClick={toggleMinimize}
-              className="text-gray-400 hover:text-gray-600 p-1"
+              className="text-blue-400 hover:text-blue-600 hover:bg-blue-100 p-2 rounded-lg transition-colors"
             >
               <Minimize2 size={16} />
             </Button>
@@ -221,9 +228,9 @@ export default function ChatInterface({
             ))}
             {isStreaming && (
               <div className="flex justify-start">
-                <div className="flex items-center gap-2 text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">
+                <div className="flex items-center gap-2 text-blue-700 bg-blue-50 px-4 py-3 rounded-xl border border-blue-200 shadow-sm">
                   <Loader2 className="animate-spin" size={14} />
-                  <span className="text-sm">Thinking...</span>
+                  <span className="text-sm font-medium">Thinking...</span>
                 </div>
               </div>
             )}
@@ -231,35 +238,33 @@ export default function ChatInterface({
           </div>
 
           {/* Input Area */}
-          <div className="border-t border-gray-200 bg-white p-4">
-            {/* Mode Toggle */}
+          <div className="border-t border-blue-200 bg-gradient-to-r from-blue-50/30 to-white p-4">
+            {/* Mode Selector - Smaller Dropdown */}
             <div className="mb-3">
-              <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                <button
-                  onClick={() => handleModeChange("ask")}
-                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
-                    mode === "ask" 
-                      ? "bg-white text-blue-600 shadow-sm" 
-                      : "text-gray-600 hover:text-gray-900"
-                  }`}
-                >
-                  <Sparkles size={14} />
-                  Ask
-                </button>
-                {!readOnly && (
-                  <button
-                    onClick={() => handleModeChange("analyst")}
-                    className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
-                      mode === "analyst" 
-                        ? "bg-white text-blue-600 shadow-sm" 
-                        : "text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    <BarChart3 size={14} />
-                    Analyst
-                  </button>
-                )}
-              </div>
+              <Select value={mode} onValueChange={handleModeChange}>
+                <SelectTrigger className="w-32 h-8 border-blue-300 text-blue-700 bg-white hover:bg-blue-50 transition-colors">
+                  <div className="flex items-center gap-2">
+                    {mode === "ask" ? <Sparkles size={12} /> : <BarChart3 size={12} />}
+                    <SelectValue />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ask" className="text-sm">
+                    <div className="flex items-center gap-2">
+                      <Sparkles size={12} />
+                      Ask
+                    </div>
+                  </SelectItem>
+                  {!readOnly && (
+                    <SelectItem value="analyst" className="text-sm">
+                      <div className="flex items-center gap-2">
+                        <BarChart3 size={12} />
+                        Analyst
+                      </div>
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
             
             {/* PendingBar for showing updates */}
@@ -279,11 +284,11 @@ export default function ChatInterface({
             {contexts.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-3">
                 {contexts.map(ctx => (
-                  <div key={ctx.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full border border-blue-200">
+                  <div key={ctx.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-3 py-1.5 rounded-full border border-blue-300 shadow-sm">
                     <span className="font-medium">{ctx.text}</span>
                     <button 
                       onClick={() => handleRemoveContext(ctx.id)}
-                      className="ml-1 text-blue-600 hover:text-blue-800 transition-colors"
+                      className="ml-2 text-blue-600 hover:text-blue-800 transition-colors"
                     >
                       <X size={12} />
                     </button>
@@ -294,13 +299,13 @@ export default function ChatInterface({
             
             {/* @-context notification */}
             {waitingForContext && (
-              <div className="flex items-center gap-2 text-blue-600 bg-blue-50 px-3 py-2 rounded-lg mb-3">
+              <div className="flex items-center gap-2 text-blue-700 bg-blue-50 px-4 py-3 rounded-xl mb-3 border border-blue-200 shadow-sm">
                 <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" />
                 <span className="text-sm font-medium">Select cells to add as context...</span>
               </div>
             )}
             
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <div className="flex-1 relative">
                 <Textarea
                   ref={textareaRef}
@@ -312,15 +317,15 @@ export default function ChatInterface({
                       ? "Ask about your data... (Type @ to select cell range)"
                       : "Tell me what to change in your spreadsheet..."
                   }`}
-                  className="resize-none border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent rounded-lg text-sm p-3 min-h-[44px] pr-12"
+                  className="resize-none border-blue-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 rounded-xl text-sm p-4 min-h-[48px] pr-14 bg-white shadow-sm font-['Inter',_system-ui,_sans-serif] placeholder:text-blue-400"
                   rows={2}
                 />
                 <Button
                   onClick={handleSendMessage}
                   disabled={isStreaming || !input.trim()}
-                  className="absolute right-2 bottom-2 bg-blue-600 hover:bg-blue-700 text-white transition-colors h-8 w-8 p-0 rounded-md"
+                  className="absolute right-2 bottom-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white transition-all h-10 w-10 p-0 rounded-lg shadow-md hover:shadow-lg transform hover:scale-105"
                 >
-                  {isStreaming ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
+                  {isStreaming ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
                 </Button>
               </div>
             </div>
