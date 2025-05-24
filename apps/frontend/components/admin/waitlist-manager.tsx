@@ -114,6 +114,43 @@ export function WaitlistManager() {
     }
   }
 
+  // Resend invite to a user
+  const handleResendInvite = async (email: string) => {
+    setActioningEmail(email)
+    setError(null)
+    setSuccessMessage(null)
+    
+    try {
+      const response = await fetch("/api/admin/resend-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to resend invite")
+      }
+      
+      // Update local state with new invited_at timestamp
+      setWaitlistEntries(prev => 
+        prev.map(entry => 
+          entry.email === email 
+            ? { ...entry, invited_at: result.data.invited_at } 
+            : entry
+        )
+      )
+      
+      setSuccessMessage(`Successfully resent invite to ${email}`)
+    } catch (err: any) {
+      console.error("Error resending invite:", err)
+      setError(err.message || "An error occurred while resending the invite")
+    } finally {
+      setActioningEmail(null)
+    }
+  }
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending":
@@ -249,7 +286,21 @@ export function WaitlistManager() {
                       </Button>
                     )}
                     {entry.status === "invited" && (
-                      <span className="text-blue-300 text-sm">Invitation sent</span>
+                      <Button
+                        onClick={() => handleResendInvite(entry.email)}
+                        disabled={actioningEmail === entry.email}
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        {actioningEmail === entry.email ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <Mail className="h-3 w-3 mr-1" />
+                            Resend Invite
+                          </>
+                        )}
+                      </Button>
                     )}
                     {entry.status === "converted" && (
                       <span className="text-purple-300 text-sm">User registered</span>
