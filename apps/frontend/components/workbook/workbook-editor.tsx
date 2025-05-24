@@ -206,7 +206,12 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
             <h1 className="text-lg font-medium">{workbook.title}</h1>
             {!isOwner && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-600">View Only</span>}
           </div>
-          <div className="flex items-center gap-4">
+        </div>
+      </header>
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-col flex-1">
+          {/* Save controls above spreadsheet */}
+          <div className="flex justify-end items-center gap-4 px-4 py-2 bg-gray-50 border-b">
             {isOwner && (
               <button
                 onClick={handleManualSave}
@@ -219,9 +224,9 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
             )}
             {lastSaved && <span className="text-xs text-gray-500">Last saved: {lastSaved.toLocaleTimeString()}</span>}
           </div>
+          <SpreadsheetInterface onDataChange={() => {}} readOnly={!isOwner} />
         </div>
-      </header>
-      <SpreadsheetInterface onDataChange={() => {}} readOnly={!isOwner} />
+      </div>
     </div>
   )
 } 

@@ -228,10 +228,10 @@ export default function ChatInterface({
 
           {/* Input Area */}
           <div className="border-t border-gray-800 bg-[#1a1a1a] p-3 space-y-2">
-            {/* Mode and Model Selectors - Inline and Compact */}
-            <div className="flex items-center gap-2">
+            {/* Mode and Model Selectors - Much smaller and compact */}
+            <div className="flex items-center gap-1">
               <Select value={mode} onValueChange={handleModeChange}>
-                <SelectTrigger className="w-20 h-6 border-gray-700 text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors text-xs">
+                <SelectTrigger className="w-14 h-4 border-gray-700 text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors text-xs">
                   <SelectValue>
                     {mode === "ask" ? "Ask" : "Analyst"}
                   </SelectValue>
@@ -300,15 +300,15 @@ export default function ChatInterface({
                       ? "Ask about your data... (Type @ to select cell range)"
                       : "Tell me what to change in your spreadsheet..."
                   }`}
-                  className="resize-none border-gray-700 focus:ring-1 focus:ring-gray-600 focus:border-gray-600 rounded text-xs p-3 min-h-[32px] pr-10 bg-gray-800 text-gray-300 font-mono placeholder:text-gray-500"
+                  className="resize-none border-gray-700 focus:ring-1 focus:ring-gray-600 focus:border-gray-600 rounded text-xs p-2 min-h-[24px] pr-8 bg-gray-800 text-gray-300 font-mono placeholder:text-gray-500"
                   rows={1}
                 />
                 <Button
                   onClick={handleSendMessage}
                   disabled={isStreaming || !input.trim()}
-                  className="absolute right-1 bottom-1 bg-gray-700 hover:bg-gray-600 text-gray-300 transition-all h-6 w-6 p-0 rounded"
+                  className="absolute right-1 bottom-1 bg-gray-700 hover:bg-gray-600 text-gray-300 transition-all h-5 w-5 p-0 rounded"
                 >
-                  {isStreaming ? <Loader2 className="animate-spin" size={12} /> : <Send size={12} />}
+                  {isStreaming ? <Loader2 className="animate-spin" size={10} /> : <Send size={10} />}
                 </Button>
               </div>
             </div>
