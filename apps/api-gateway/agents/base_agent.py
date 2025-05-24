@@ -157,40 +157,17 @@ class BaseAgent:
         **kwargs
     ):
         """
-        Parameters
-        ----------
-        fallback_prompt :
-            Hard-coded constant kept as last-resort safety valve.
-        agent_mode :
-            When provided we fetch the *active* prompt for that mode
-            from Supabase with a 60 s TTL LRU cache.
-        kwargs :
-            Additional parameters that can be passed to the agent.
-            sheet_context: Optional runtime sheet context to append to the prompt.
+        Lightweight BaseAgent constructor.
+        Accepts a fallback prompt directly rather than querying the database,
+        since the database query is already done in orchestrator.
         """
         self.llm = llm
-        self.tools = tools
-
-        if agent_mode:
-            try:
-                base_prompt = get_active_prompt(agent_mode)
-            except Exception as e:
-                # Don't crash the session – fall back silently and log.
-                print(f"⚠️  Prompt DB lookup failed for mode={agent_mode}: {e}")
-                base_prompt = fallback_prompt
-        else:
-            base_prompt = fallback_prompt
-
-        # Allow caller to pass an optional runtime context.
-        sheet_ctx: str | None = kwargs.pop('sheet_context', None)
-
-        # Concatenate keeping a blank line separator so formatting is stable.
-        self.system_prompt = base_prompt.strip()
-        if sheet_ctx:
-            self.system_prompt += f"\n\n{sheet_ctx.strip()}"
-
-        # Store the original prompt
-        self._original_prompt = self.system_prompt
+        
+        # Set the system prompt
+        self.system_prompt = fallback_prompt
+        # Store the original prompt for reset functionality
+        self._original_prompt = fallback_prompt
+        self.tools = tools or []
 
     def clone_with_tools(self, tool_functions: dict[str, callable]) -> 'BaseAgent':
         """
