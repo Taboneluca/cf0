@@ -694,9 +694,12 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                     fontWeight: cellStyle.bold ? 'bold' : 'normal',
                     fontStyle: cellStyle.italic ? 'italic' : 'normal',
                     textDecoration: cellStyle.underline ? 'underline' : 'none',
-                    color: cellStyle.color || 'inherit',
+                    color: cellStyle.color || '#000000',
                     backgroundColor: cellStyle.backgroundColor || 'inherit',
                     textAlign: cellStyle.textAlign || 'left',
+                    fontFamily: '"Calibri", "Segoe UI", "Arial", sans-serif',
+                    fontSize: '12px',
+                    lineHeight: '1.2',
                   }
 
                   return (
@@ -724,7 +727,13 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                           onChange={handleInputChange}
                           onSelect={handleInputSelect}
                           onKeyDown={handleEditKeyDown}
-                          className="w-full h-full outline-none"
+                          className="w-full h-full outline-none bg-white"
+                          style={{
+                            fontFamily: '"Calibri", "Segoe UI", "Arial", sans-serif',
+                            fontSize: '12px',
+                            color: '#000000',
+                            lineHeight: '1.2',
+                          }}
                           autoFocus
                         />
                       ) : (

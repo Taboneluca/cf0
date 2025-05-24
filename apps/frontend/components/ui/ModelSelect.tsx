@@ -87,12 +87,12 @@ export default function ModelSelect({ value, onChange, disabled }: ModelSelectPr
 
   return (
     <Select value={clientValue} onValueChange={handleModelChange} disabled={disabled || loading}>
-      <SelectTrigger className="h-8 w-[11rem] border-blue-300 text-blue-700 bg-white hover:bg-blue-50 transition-colors shadow-sm">
-        <SelectValue placeholder={loading ? "Loading models..." : "Select model"} />
+      <SelectTrigger className="h-6 w-full border-gray-700 text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors text-xs font-mono">
+        <SelectValue placeholder={loading ? "Loading..." : "Select model"} />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent className="bg-gray-800 border-gray-700">
         {models.map(m => (
-          <SelectItem key={m.value} value={m.value} className="text-sm text-blue-700 hover:bg-blue-50">
+          <SelectItem key={m.value} value={m.value} className="text-xs text-gray-300 hover:bg-gray-700 font-mono">
             {m.label}
           </SelectItem>
         ))}
