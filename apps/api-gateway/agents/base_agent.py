@@ -382,7 +382,27 @@ class BaseAgent:
                         return
 
                 # Invoke the Python function
-                fn = next(t["func"] for t in self.tools if t["name"] == name)
+                fn = None
+                for t in self.tools:
+                    if t["name"] == name:
+                        fn = t["func"]
+                        break
+                
+                if fn is None:
+                    print(f"[{agent_id}] ❌ Function {name} not found in available tools")
+                    # Add a compensating tool message with error
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": json.dumps({"error": f"Function '{name}' is not available"})
+                    })
+                    yield ChatStep(
+                        role="assistant",
+                        content=f"Sorry, the function '{name}' is not available.",
+                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                    )
+                    return
+                
                 print(f"[{agent_id}] 🧰 Executing {name} with args: {json.dumps(args)[:100]}...")
                 
                 try:
@@ -502,6 +522,14 @@ class BaseAgent:
                                 
                                 # Continue the loop to get a final answer
                                 continue
+                            else:
+                                print(f"[{agent_id}] ❌ Function {function_name} not found in available tools")
+                                yield ChatStep(
+                                    role="assistant",
+                                    content=f"Sorry, the function '{function_name}' is not available.",
+                                    usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                )
+                                return
                         except (json.JSONDecodeError, Exception) as e:
                             print(f"[{agent_id}] ⚠️ Error processing function call string: {e}")
                             # Fall through to treat as regular text
@@ -1054,7 +1082,17 @@ class BaseAgent:
                             return
                     
                     # Find the function
-                    fn = next(t["func"] for t in self.tools if t["name"] == function_name)
+                    fn = None
+                    for t in self.tools:
+                        if t["name"] == function_name:
+                            fn = t["func"]
+                            break
+                    
+                    if fn is None:
+                        print(f"[{agent_id}] ❌ Function {function_name} not found in available tools")
+                        yield ChatStep(role="assistant", content=f"\nError: Function '{function_name}' is not available.")
+                        return
+                    
                     print(f"[{agent_id}] 🧰 Executing {function_name}")
                     
                     # Execute the function
