@@ -133,16 +133,28 @@ export function WaitlistManager() {
         throw new Error(result.error || "Failed to resend invite")
       }
       
-      // Update local state with new invited_at timestamp
-      setWaitlistEntries(prev => 
-        prev.map(entry => 
-          entry.email === email 
-            ? { ...entry, invited_at: result.data.invited_at } 
-            : entry
+      // Update local state based on the response
+      if (result.data.status === "converted") {
+        // User was already registered, update status to converted
+        setWaitlistEntries(prev => 
+          prev.map(entry => 
+            entry.email === email 
+              ? { ...entry, status: "converted" } 
+              : entry
+          )
         )
-      )
-      
-      setSuccessMessage(`Successfully resent invite to ${email}`)
+        setSuccessMessage(`${email} was already registered - status updated to converted`)
+      } else {
+        // Normal resend, update invited_at timestamp
+        setWaitlistEntries(prev => 
+          prev.map(entry => 
+            entry.email === email 
+              ? { ...entry, invited_at: result.data.invited_at } 
+              : entry
+          )
+        )
+        setSuccessMessage(`Successfully resent invite to ${email}`)
+      }
     } catch (err: any) {
       console.error("Error resending invite:", err)
       setError(err.message || "An error occurred while resending the invite")

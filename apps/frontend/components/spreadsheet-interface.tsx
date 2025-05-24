@@ -19,12 +19,18 @@ interface SpreadsheetInterfaceProps {
   initialData?: SpreadsheetData
   onDataChange?: (data: SpreadsheetData) => void
   readOnly?: boolean
+  workbookControls?: {
+    onSave: () => void
+    isSaving: boolean
+    lastSaved: Date | null
+  }
 }
 
 export default function SpreadsheetInterface({
   initialData,
   onDataChange,
   readOnly = false,
+  workbookControls,
 }: SpreadsheetInterfaceProps) {
   const router = useRouter();
   // Get workbook state from context
@@ -210,6 +216,7 @@ export default function SpreadsheetInterface({
               isMinimized={isMinimized}
               toggleMinimize={toggleMinimize}
               readOnly={readOnly}
+              workbookControls={workbookControls}
             />
           </div>
         </div>

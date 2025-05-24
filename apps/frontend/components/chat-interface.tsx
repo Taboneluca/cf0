@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Loader2, X, Sparkles, BarChart3, Minimize2, Maximize2, ChevronDown } from "lucide-react"
+import { Send, Loader2, X, Sparkles, BarChart3, Minimize2, Maximize2, ChevronDown, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -26,6 +26,11 @@ interface ChatInterfaceProps {
   isMinimized: boolean
   toggleMinimize: () => void
   readOnly?: boolean
+  workbookControls?: {
+    onSave: () => void
+    isSaving: boolean
+    lastSaved: Date | null
+  }
 }
 
 // Define interface for context ranges
@@ -43,6 +48,7 @@ export default function ChatInterface({
   isMinimized,
   toggleMinimize,
   readOnly = false,
+  workbookControls,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState("")
   const [waitingForContext, setWaitingForContext] = useState(false)
@@ -216,6 +222,25 @@ export default function ChatInterface({
             </Button>
           </div>
 
+          {/* Workbook Controls - only show if provided */}
+          {workbookControls && (
+            <div className="px-3 py-2 border-b border-gray-800 bg-[#1a1a1a] space-y-2">
+              <button
+                onClick={workbookControls.onSave}
+                disabled={workbookControls.isSaving}
+                className="flex items-center gap-2 rounded-md bg-blue-600 hover:bg-blue-700 px-3 py-1.5 text-xs text-white disabled:opacity-50 w-full justify-center transition-colors"
+              >
+                <Save size={12} />
+                {workbookControls.isSaving ? "Saving..." : "Save"}
+              </button>
+              {workbookControls.lastSaved && (
+                <div className="text-xs text-gray-400 text-center">
+                  Last saved: {workbookControls.lastSaved.toLocaleTimeString()}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-[#1a1a1a]">
             {messages.map((message, index) => (
@@ -231,7 +256,7 @@ export default function ChatInterface({
             {/* Mode and Model Selectors - Much smaller and compact */}
             <div className="flex items-center gap-1">
               <Select value={mode} onValueChange={handleModeChange}>
-                <SelectTrigger className="w-14 h-4 border-gray-700 text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors text-xs">
+                <SelectTrigger className="w-auto min-w-[60px] h-4 border-gray-700 text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors text-xs">
                   <SelectValue>
                     {mode === "ask" ? "Ask" : "Analyst"}
                   </SelectValue>
@@ -250,7 +275,7 @@ export default function ChatInterface({
               
               <div className="text-xs text-gray-500">|</div>
               
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <ModelSelect value={model} onChange={setModel} disabled={isStreaming} />
               </div>
             </div>

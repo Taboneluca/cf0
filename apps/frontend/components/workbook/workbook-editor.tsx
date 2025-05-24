@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Save } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
 import type { Workbook } from "@/types/database"
 import SpreadsheetInterface from "../spreadsheet-interface"
@@ -209,23 +209,15 @@ export default function WorkbookEditor({ workbook, userId }: WorkbookEditorProps
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex flex-col flex-1">
-          {/* Save controls above spreadsheet */}
-          <div className="flex justify-end items-center gap-4 px-4 py-2 bg-gray-50 border-b">
-            {isOwner && (
-              <button
-                onClick={handleManualSave}
-                disabled={isSaving}
-                className="flex items-center gap-1 rounded-md bg-blue-500 px-3 py-1 text-sm text-white hover:bg-blue-600 disabled:opacity-50"
-              >
-                <Save size={16} />
-                {isSaving ? "Saving..." : "Save"}
-              </button>
-            )}
-            {lastSaved && <span className="text-xs text-gray-500">Last saved: {lastSaved.toLocaleTimeString()}</span>}
-          </div>
-          <SpreadsheetInterface onDataChange={() => {}} readOnly={!isOwner} />
-        </div>
+        <SpreadsheetInterface 
+          onDataChange={() => {}} 
+          readOnly={!isOwner}
+          workbookControls={isOwner ? {
+            onSave: handleManualSave,
+            isSaving,
+            lastSaved
+          } : undefined}
+        />
       </div>
     </div>
   )
