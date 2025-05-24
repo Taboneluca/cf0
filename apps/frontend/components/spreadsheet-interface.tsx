@@ -120,7 +120,7 @@ export default function SpreadsheetInterface({
   }, [sheetData, onDataChange])
 
   // Add these new state variables and functions at the top of the component
-  const [chatWidth, setChatWidth] = useState(300)
+  const [chatWidth, setChatWidth] = useState(400)
   const [isResizing, setIsResizing] = useState(false)
   const [isMinimized, setIsMinimized] = useState(false)
 
@@ -148,7 +148,7 @@ export default function SpreadsheetInterface({
   const toggleMinimize = () => {
     setIsMinimized(!isMinimized)
     if (isMinimized) {
-      setChatWidth(300) // Reduced from 400px to 300px
+      setChatWidth(400) // Increased from 300px to 400px
     } else {
       setChatWidth(40)
     }
