@@ -68,17 +68,31 @@ export default function ModelSelect({ value, onChange, disabled }: ModelSelectPr
     setClientValue(value)
   }, [value, session])
   
+  // Function to set model and also persist to Supabase if possible
+  const handleModelChange = async (newModel: string) => {
+    console.log('Model changed from', clientValue, 'to', newModel);
+    onChange(newModel);
+    
+    // Optional: save to user's profile in Supabase
+    try {
+      // This would be the place to save the user preference to a backend
+      // const { data, error } = await supabase.from('profiles').update({ default_model: newModel })
+    } catch (error) {
+      console.error('Error saving model preference:', error)
+    }
+  }
+
   // Don't render anything during SSR to prevent hydration mismatch
   if (clientValue === null) return null
 
   return (
-    <Select value={clientValue} onValueChange={onChange} disabled={disabled || loading}>
-      <SelectTrigger className="h-8 w-[11rem] border-gray-300 text-xs">
+    <Select value={clientValue} onValueChange={handleModelChange} disabled={disabled || loading}>
+      <SelectTrigger className="h-8 w-[11rem] border-blue-300 text-blue-700 bg-white hover:bg-blue-50 transition-colors shadow-sm">
         <SelectValue placeholder={loading ? "Loading models..." : "Select model"} />
       </SelectTrigger>
       <SelectContent>
         {models.map(m => (
-          <SelectItem key={m.value} value={m.value} className="text-xs">
+          <SelectItem key={m.value} value={m.value} className="text-sm text-blue-700 hover:bg-blue-50">
             {m.label}
           </SelectItem>
         ))}

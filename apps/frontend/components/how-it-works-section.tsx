@@ -317,10 +317,6 @@ export function HowItWorksSection() {
             ))}
           </div>
         </div>
-
-        <div className="text-center mt-4 text-blue-300 text-sm">
-          <p>Use keyboard arrows (← →) or swipe to navigate</p>
-        </div>
       </div>
     </section>
   )
