@@ -78,6 +78,30 @@ export async function POST(request: Request) {
 
     if (authError) {
       console.error("Auth resend error:", authError)
+      
+      // Handle case where user has already registered
+      if (authError.message?.includes('already been registered') || authError.code === 'email_exists') {
+        // User already registered! Update their waitlist status to converted
+        const { error: updateError } = await serviceSupabase
+          .from("waitlist")
+          .update({ status: "converted" })
+          .eq("email", email)
+
+        if (updateError) {
+          console.error("Error updating status to converted:", updateError)
+        }
+
+        return NextResponse.json({ 
+          success: true,
+          message: "User has already registered - status updated",
+          data: { 
+            email,
+            status: "converted",
+            note: "User was already registered, waitlist status updated to converted"
+          }
+        })
+      }
+      
       return NextResponse.json({ error: authError.message }, { status: 400 })
     }
 
