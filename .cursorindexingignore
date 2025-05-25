@@ -45,4 +45,124 @@ supabase/.temp/**
 **/.vscode
 
 # Project specific
-apps/workers/data/** 
+apps/workers/data/**
+
+# Lock files (large and not needed for coding)
+**/package-lock.json
+**/pnpm-lock.yaml
+**/yarn.lock
+
+# OS specific files
+**/.DS_Store
+**/.DS_Store?
+**/._*
+**/.Spotlight-V100
+**/.Trashes
+**/ehthumbs.db
+**/Thumbs.db
+
+# Test results and coverage
+**/test-results/**
+**/coverage/**
+**/.nyc_output
+**/junit.xml
+
+# Compiled templates and generated files
+apps/api-gateway/assets/templates_compiled/**
+**/templates_compiled/**
+
+# Source maps and minified files
+**/*.map
+**/*.min.js
+**/*.min.css
+
+# Documentation that's auto-generated
+**/docs/api/**
+**/docs/generated/**
+
+# Backup and temporary files
+**/*.bak
+**/*.backup
+**/*.tmp
+**/*.temp
+**/*~
+
+# Archive files
+**/*.zip
+**/*.tar.gz
+**/*.tgz
+**/*.rar
+**/*.7z
+
+# Binary files that don't need indexing
+**/*.exe
+**/*.dmg
+**/*.pkg
+**/*.deb
+**/*.rpm
+
+# Image optimization cache
+**/.image-cache/**
+
+# Legacy/Migration files
+apps/frontend-old/**
+MIGRATION_COMPLETED.md
+frontend-migration-plan.md
+
+# Large text files that don't need indexing
+a-practical-guide-to-building-agents.txt
+
+# Cache directories
+**/.cache/**
+**/cache/**
+**/.parcel-cache/**
+**/.sass-cache/**
+
+# Database files
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# Temporary editor files
+**/*.swp
+**/*.swo
+
+# Runtime data
+**/pids/**
+**/*.pid
+**/*.seed
+**/*.pid.lock
+
+# Optional npm cache directory
+**/.npm
+
+# Optional REPL history
+**/.node_repl_history
+
+# Yarn Integrity file
+**/.yarn-integrity
+
+# Microbundle cache
+**/.rpt2_cache/
+**/.rts2_cache_cjs/
+**/.rts2_cache_es/
+**/.rts2_cache_umd/
+
+# Serverless directories
+**/.serverless/
+
+# FuseBox cache
+**/.fusebox/
+
+# DynamoDB Local files
+**/.dynamodb/
+
+# TernJS port file
+**/.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+**/.vscode-test
+
+# Temporary folders
+tmp/
+temp/ 

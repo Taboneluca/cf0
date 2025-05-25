@@ -126,7 +126,7 @@ export default function SpreadsheetInterface({
   }, [sheetData, onDataChange])
 
   // Add these new state variables and functions at the top of the component
-  const [chatWidth, setChatWidth] = useState(400)
+  const [chatWidth, setChatWidth] = useState(450)
   const [isResizing, setIsResizing] = useState(false)
   const [isMinimized, setIsMinimized] = useState(false)
 
@@ -140,8 +140,8 @@ export default function SpreadsheetInterface({
   const handleMouseMove = (e: MouseEvent) => {
     if (isResizing) {
       const newWidth = window.innerWidth - e.clientX
-      // Allow the chat to be much smaller, down to 40px minimum
-      setChatWidth(Math.max(40, Math.min(newWidth, window.innerWidth * 0.7)))
+      // Allow the chat to be much smaller, down to 40px minimum, but ensure better maximum
+      setChatWidth(Math.max(40, Math.min(newWidth, window.innerWidth * 0.8)))
     }
   }
 
@@ -154,7 +154,7 @@ export default function SpreadsheetInterface({
   const toggleMinimize = () => {
     setIsMinimized(!isMinimized)
     if (isMinimized) {
-      setChatWidth(400) // Increased from 300px to 400px
+      setChatWidth(450)
     } else {
       setChatWidth(40)
     }
@@ -205,7 +205,7 @@ export default function SpreadsheetInterface({
 
           {/* Chat panel */}
           <div
-            className="flex flex-col border-l border-gray-200 max-w-[40vw]"
+            className="flex flex-col border-l border-gray-200 max-w-[40vw] min-w-[40px]"
             style={{ width: isMinimized ? "40px" : `${chatWidth}px`, flexShrink: 0 }}
           >
             <ChatInterface

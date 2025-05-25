@@ -207,8 +207,8 @@ export default function ChatInterface({
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 bg-[#1a1a1a]">
             <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded flex items-center justify-center">
-                <Image src="/logo.png" alt="cf0" width={14} height={14} className="rounded-sm" />
+              <div className="w-6 h-6 rounded flex items-center justify-center">
+                <Image src="/logo.png" alt="cf0" width={16} height={16} className="rounded-sm" />
               </div>
               <span className="font-mono text-gray-300 text-sm">cf0</span>
             </div>
