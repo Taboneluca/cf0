@@ -694,7 +694,13 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                     fontWeight: cellStyle.bold ? 'bold' : 'normal',
                     fontStyle: cellStyle.italic ? 'italic' : 'normal',
                     textDecoration: cellStyle.underline ? 'underline' : 'none',
-                    color: cellStyle.color || '#000000',
+                    color: cellStyle.color && 
+                           cellStyle.color !== '#ffffff' && 
+                           cellStyle.color !== '#FFFFFF' && 
+                           cellStyle.color !== 'white' && 
+                           cellStyle.color !== '#fff' && 
+                           cellStyle.color !== '#FFF' 
+                           ? cellStyle.color : '#000000',
                     backgroundColor: cellStyle.backgroundColor || 'inherit',
                     textAlign: cellStyle.textAlign || 'left',
                     fontFamily: '"Calibri", "Segoe UI", "Arial", sans-serif',
@@ -706,7 +712,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                     <td
                       key={cellId}
                       ref={(el) => setCellRef(cellId, el)}
-                      className={`h-[24px] px-1 border border-gray-300 text-sm whitespace-nowrap overflow-hidden ${
+                      className={`h-[24px] px-1 border border-gray-300 text-sm whitespace-nowrap overflow-hidden text-black ${
                         isSelected
                           ? "bg-blue-100 outline outline-1 outline-blue-500"
                           : isInSelectedRange
@@ -727,7 +733,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                           onChange={handleInputChange}
                           onSelect={handleInputSelect}
                           onKeyDown={handleEditKeyDown}
-                          className="w-full h-full outline-none bg-white"
+                          className="w-full h-full outline-none bg-white text-black"
                           style={{
                             fontFamily: '"Calibri", "Segoe UI", "Arial", sans-serif',
                             fontSize: '12px',
@@ -737,7 +743,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                           autoFocus
                         />
                       ) : (
-                        displayValue
+                        <span className="text-black">{displayValue}</span>
                       )}
                     </td>
                   )

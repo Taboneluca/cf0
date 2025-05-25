@@ -23,7 +23,7 @@ export function Logo({ className, size = "md", clickable = true }: LogoProps) {
   const logoContent = (
     <>
       <Image
-        src="/new-logo.png"
+        src="/logo.png"
         alt="cf0 Logo"
         width={logoSizes[size].width}
         height={logoSizes[size].height}
