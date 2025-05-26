@@ -3,20 +3,30 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables')
-}
+// Handle missing environment variables gracefully during build time
+let supabase: ReturnType<typeof createClient>
 
-// Create client with improved session handling
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    // Always use localStorage - sessionStorage clears on refresh
-    storage: typeof window !== 'undefined' ? localStorage : undefined
+if (!supabaseUrl || !supabaseAnonKey) {
+  if (typeof window === 'undefined') {
+    // During build time, create a dummy client
+    console.warn('Missing Supabase environment variables during build time - using fallback')
+    supabase = createClient('https://placeholder.supabase.co', 'placeholder-key')
+  } else {
+    // At runtime, throw error
+    throw new Error('Missing Supabase environment variables')
   }
-})
+} else {
+  // Create client with improved session handling
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      // Always use localStorage - sessionStorage clears on refresh
+      storage: typeof window !== 'undefined' ? localStorage : undefined
+    }
+  })
+}
 
 // Create function to get the current user ID that ensures we have a valid session
 export async function getCurrentUserId() {
@@ -75,4 +85,6 @@ if (typeof window !== 'undefined') {
       }
     }
   })
-} 
+}
+
+export { supabase } 
