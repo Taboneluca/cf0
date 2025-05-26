@@ -4,6 +4,14 @@
   "devCommand": "next dev",
   "installCommand": "npm install --legacy-peer-deps",
   "outputDirectory": ".next",
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "build": {
+    "env": {
+      "NODE_ENV": "production"
+    }
+  },
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://api.cf0.ai/:path*" }
   ]
