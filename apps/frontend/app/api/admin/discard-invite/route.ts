@@ -55,11 +55,11 @@ export async function POST(request: Request) {
       }, { status: 400 })
     }
 
-    // Reset the waitlist entry to pending status
+    // Reset the waitlist entry to rejected status (better than pending for re-invites)
     const { error: updateError } = await serviceSupabase
       .from("waitlist")
       .update({ 
-        status: "pending", 
+        status: "rejected", 
         invited_at: null,
         invite_code: null
       })
@@ -73,18 +73,13 @@ export async function POST(request: Request) {
     // Also delete the user from auth.users if they were created by the invite
     // This prevents "user already exists" errors when re-inviting
     try {
-      const { error: deleteUserError } = await serviceSupabase.auth.admin.deleteUser(
-        waitlistEntry.invite_code || '' // Use invite_code as temporary identifier
-      )
+      // Find and delete by email (more reliable than using invite_code as ID)
+      const { data: authUsers } = await serviceSupabase.auth.admin.listUsers()
+      const userToDelete = authUsers.users?.find(u => u.email === email)
       
-      // If that doesn't work, try to find and delete by email
-      if (deleteUserError) {
-        const { data: authUsers } = await serviceSupabase.auth.admin.listUsers()
-        const userToDelete = authUsers.users?.find(u => u.email === email)
-        
-        if (userToDelete) {
-          await serviceSupabase.auth.admin.deleteUser(userToDelete.id)
-        }
+      if (userToDelete) {
+        console.log(`Deleting auth user for discarded invite: ${email}`)
+        await serviceSupabase.auth.admin.deleteUser(userToDelete.id)
       }
     } catch (authError) {
       // Don't fail the discard if we can't delete the auth user
@@ -96,7 +91,7 @@ export async function POST(request: Request) {
       message: "Invite discarded successfully",
       data: { 
         email,
-        status: "pending"
+        status: "rejected"
       }
     })
   } catch (error) {

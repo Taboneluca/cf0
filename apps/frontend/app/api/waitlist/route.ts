@@ -37,6 +37,26 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "This email has already been approved. Please check your inbox for the invite." }, { status: 400 })
       } else if (existingEntries.status === "converted") {
         return NextResponse.json({ error: "This email is already registered. Please sign in." }, { status: 400 })
+      } else if (existingEntries.status === "rejected") {
+        // Allow rejected users to rejoin by updating their status back to pending
+        const { error: updateError } = await supabase
+          .from("waitlist")
+          .update({ 
+            status: "pending",
+            invited_at: null,
+            invite_code: null,
+            created_at: new Date().toISOString() // Update timestamp to show fresh request
+          })
+          .eq("email", email)
+
+        if (updateError) {
+          return NextResponse.json({ error: updateError.message }, { status: 500 })
+        }
+
+        return NextResponse.json({ 
+          success: true,
+          message: "You have been re-added to our waitlist." 
+        })
       }
     }
 

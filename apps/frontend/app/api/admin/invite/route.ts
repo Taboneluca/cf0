@@ -78,7 +78,7 @@ export async function POST(request: Request) {
 
     // Send invite email via Supabase Auth using service role
     const baseUrl = process.env.NODE_ENV === 'production' 
-      ? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cf0.ai')
+      ? 'https://cf0.ai'
       : (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000')
     
     const redirectTo = `${baseUrl}/auth/callback?invite_code=${updatedEntry.invite_code}`
@@ -102,10 +102,11 @@ export async function POST(request: Request) {
           const existingUser = authUsers.users?.find(u => u.email === email)
           
           if (existingUser) {
+            console.log(`Deleting existing auth user for ${email}`)
             await serviceSupabase.auth.admin.deleteUser(existingUser.id)
             
-            // Wait a moment for the deletion to process
-            await new Promise(resolve => setTimeout(resolve, 1000))
+            // Wait longer for the deletion to process
+            await new Promise(resolve => setTimeout(resolve, 2000))
             
             // Try inviting again
             const { error: retryError } = await serviceSupabase.auth.admin.inviteUserByEmail(email, {
@@ -117,6 +118,7 @@ export async function POST(request: Request) {
             })
             
             if (retryError) {
+              console.error("Retry invite error:", retryError)
               throw retryError
             }
             
@@ -125,23 +127,29 @@ export async function POST(request: Request) {
               data: updatedEntry,
               message: "Invite sent successfully (existing auth user was reset)"
             })
+          } else {
+            // No existing user found, but still got email_exists error
+            throw new Error("Email exists in auth but user not found. Please try again in a few minutes.")
           }
         } catch (retryAuthError: any) {
-          console.error("Retry auth invite error:", retryAuthError)
+          console.error("Failed to handle existing auth user:", retryAuthError)
           // Revert the waitlist status change
           await serviceSupabase
             .from("waitlist")
-            .update({ status: "pending", invited_at: null })
+            .update({ status: "pending", invited_at: null, invite_code: null })
             .eq("email", email)
           
-          return NextResponse.json({ error: retryAuthError.message }, { status: 400 })
+          return NextResponse.json({ 
+            error: `Failed to send invite: ${retryAuthError.message}. Please try discarding any existing invite first.`,
+            details: "There may be a conflicting auth user that needs to be cleaned up."
+          }, { status: 400 })
         }
       }
       
       // Revert the waitlist status change for other errors
       await serviceSupabase
         .from("waitlist")
-        .update({ status: "pending", invited_at: null })
+        .update({ status: "pending", invited_at: null, invite_code: null })
         .eq("email", email)
       
       return NextResponse.json({ error: authError.message }, { status: 400 })
