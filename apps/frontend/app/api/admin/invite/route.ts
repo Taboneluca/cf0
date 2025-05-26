@@ -93,7 +93,52 @@ export async function POST(request: Request) {
 
     if (authError) {
       console.error("Auth invite error:", authError)
-      // Revert the waitlist status change
+      
+      // Handle case where user already exists from a previous invite
+      if (authError.code === 'email_exists' || authError.message?.includes('already been registered')) {
+        try {
+          // Find and delete the existing auth user
+          const { data: authUsers } = await serviceSupabase.auth.admin.listUsers()
+          const existingUser = authUsers.users?.find(u => u.email === email)
+          
+          if (existingUser) {
+            await serviceSupabase.auth.admin.deleteUser(existingUser.id)
+            
+            // Wait a moment for the deletion to process
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            
+            // Try inviting again
+            const { error: retryError } = await serviceSupabase.auth.admin.inviteUserByEmail(email, {
+              redirectTo,
+              data: { 
+                waitlist: true, 
+                invite_code: updatedEntry.invite_code 
+              }
+            })
+            
+            if (retryError) {
+              throw retryError
+            }
+            
+            return NextResponse.json({ 
+              success: true,
+              data: updatedEntry,
+              message: "Invite sent successfully (existing auth user was reset)"
+            })
+          }
+        } catch (retryAuthError: any) {
+          console.error("Retry auth invite error:", retryAuthError)
+          // Revert the waitlist status change
+          await serviceSupabase
+            .from("waitlist")
+            .update({ status: "pending", invited_at: null })
+            .eq("email", email)
+          
+          return NextResponse.json({ error: retryAuthError.message }, { status: 400 })
+        }
+      }
+      
+      // Revert the waitlist status change for other errors
       await serviceSupabase
         .from("waitlist")
         .update({ status: "pending", invited_at: null })
