@@ -12,7 +12,7 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table"
-import { Check, X, RefreshCw, Mail } from "lucide-react"
+import { Check, X, RefreshCw, Mail, Trash2 } from "lucide-react"
 import type { WaitlistEntry } from "@/types/database"
 
 export function WaitlistManager() {
@@ -163,6 +163,43 @@ export function WaitlistManager() {
     }
   }
 
+  // Discard an invite (reset to pending)
+  const handleDiscardInvite = async (email: string) => {
+    setActioningEmail(email)
+    setError(null)
+    setSuccessMessage(null)
+    
+    try {
+      const response = await fetch("/api/admin/discard-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to discard invite")
+      }
+      
+      // Update local state
+      setWaitlistEntries(prev => 
+        prev.map(entry => 
+          entry.email === email 
+            ? { ...entry, status: "pending", invited_at: null } 
+            : entry
+        )
+      )
+      
+      setSuccessMessage(`Successfully discarded invite for ${email}`)
+    } catch (err: any) {
+      console.error("Error discarding invite:", err)
+      setError(err.message || "An error occurred while discarding the invite")
+    } finally {
+      setActioningEmail(null)
+    }
+  }
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending":
@@ -298,21 +335,38 @@ export function WaitlistManager() {
                       </Button>
                     )}
                     {entry.status === "invited" && (
-                      <Button
-                        onClick={() => handleResendInvite(entry.email)}
-                        disabled={actioningEmail === entry.email}
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700 text-white"
-                      >
-                        {actioningEmail === entry.email ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <>
-                            <Mail className="h-3 w-3 mr-1" />
-                            Resend Invite
-                          </>
-                        )}
-                      </Button>
+                      <>
+                        <Button
+                          onClick={() => handleResendInvite(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700 text-white"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Mail className="h-3 w-3 mr-1" />
+                              Resend Invite
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          onClick={() => handleDiscardInvite(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          variant="destructive"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Trash2 className="h-3 w-3 mr-1" />
+                              Discard
+                            </>
+                          )}
+                        </Button>
+                      </>
                     )}
                     {entry.status === "converted" && (
                       <span className="text-purple-300 text-sm">User registered</span>
