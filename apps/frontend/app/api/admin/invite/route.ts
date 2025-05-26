@@ -76,10 +76,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Failed to fetch updated entry" }, { status: 500 })
     }
 
-    // Send invite email via Supabase Auth using service role
-    const baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://cf0.ai'
-      : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    // Send invite email via Supabase Auth using service role with proper URL handling
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 
+      (process.env.NODE_ENV === 'production' ? 'https://www.cf0.ai' : 'http://localhost:3000')
     
     const redirectTo = `${baseUrl}/auth/callback?invite_code=${updatedEntry.invite_code}`
 

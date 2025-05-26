@@ -13,11 +13,12 @@ export async function POST(request: Request) {
     const cookieStore = cookies()
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
 
-    const { error } = await supabase.auth.signInWithOtp({
+    const { data, error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback`,
-      }
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 
+          (process.env.NODE_ENV === 'production' ? 'https://www.cf0.ai' : 'http://localhost:3000')}/auth/callback`,
+      },
     })
 
     if (error) {

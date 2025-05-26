@@ -61,10 +61,9 @@ export async function POST(request: Request) {
       }, { status: 400 })
     }
 
-    // Resend invite email via Supabase Auth using service role with correct URL
-    const baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://cf0.ai'
-      : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    // Resend invite email via Supabase Auth using service role with proper URL handling
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 
+      (process.env.NODE_ENV === 'production' ? 'https://www.cf0.ai' : 'http://localhost:3000')
     
     const redirectTo = `${baseUrl}/auth/callback?invite_code=${waitlistEntry.invite_code}`
 
