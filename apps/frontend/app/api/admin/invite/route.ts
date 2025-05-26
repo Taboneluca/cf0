@@ -78,8 +78,8 @@ export async function POST(request: Request) {
 
     // Send invite email via Supabase Auth using service role
     const baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://cf0.ai'
-      : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+      ? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cf0.ai')
+      : (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000')
     
     const redirectTo = `${baseUrl}/auth/callback?invite_code=${updatedEntry.invite_code}`
 
