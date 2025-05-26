@@ -70,6 +70,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: updateError.message }, { status: 500 })
     }
 
+    // Also delete the user from auth.users if they were created by the invite
+    // This prevents "user already exists" errors when re-inviting
+    try {
+      const { error: deleteUserError } = await serviceSupabase.auth.admin.deleteUser(
+        waitlistEntry.invite_code || '' // Use invite_code as temporary identifier
+      )
+      
+      // If that doesn't work, try to find and delete by email
+      if (deleteUserError) {
+        const { data: authUsers } = await serviceSupabase.auth.admin.listUsers()
+        const userToDelete = authUsers.users?.find(u => u.email === email)
+        
+        if (userToDelete) {
+          await serviceSupabase.auth.admin.deleteUser(userToDelete.id)
+        }
+      }
+    } catch (authError) {
+      // Don't fail the discard if we can't delete the auth user
+      console.warn("Could not delete auth user (may not exist):", authError)
+    }
+
     return NextResponse.json({ 
       success: true,
       message: "Invite discarded successfully",

@@ -81,7 +81,52 @@ export async function POST(request: Request) {
       
       // Handle case where user has already registered
       if (authError.message?.includes('already been registered') || authError.code === 'email_exists') {
-        // User already registered! Update their waitlist status to converted
+        try {
+          // Find and delete the existing auth user, then retry
+          const { data: authUsers } = await serviceSupabase.auth.admin.listUsers()
+          const existingUser = authUsers.users?.find(u => u.email === email)
+          
+          if (existingUser) {
+            await serviceSupabase.auth.admin.deleteUser(existingUser.id)
+            
+            // Wait a moment for the deletion to process
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            
+            // Try resending the invite
+            const { error: retryError } = await serviceSupabase.auth.admin.inviteUserByEmail(email, {
+              redirectTo,
+              data: { 
+                waitlist: true, 
+                invite_code: waitlistEntry.invite_code 
+              }
+            })
+            
+            if (retryError) {
+              throw retryError
+            }
+            
+            // Update the invited_at timestamp to reflect the resend
+            const { error: updateError } = await serviceSupabase
+              .from("waitlist")
+              .update({ invited_at: new Date().toISOString() })
+              .eq("email", email)
+
+            return NextResponse.json({ 
+              success: true,
+              message: "Invite resent successfully (existing auth user was reset)",
+              data: { 
+                email,
+                redirectTo,
+                invited_at: new Date().toISOString()
+              }
+            })
+          }
+        } catch (retryError: any) {
+          console.error("Retry resend error:", retryError)
+          return NextResponse.json({ error: retryError.message }, { status: 400 })
+        }
+        
+        // If we couldn't find/delete the user, treat as converted
         const { error: updateError } = await serviceSupabase
           .from("waitlist")
           .update({ status: "converted" })
