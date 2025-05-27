@@ -30,13 +30,17 @@ export function WaitlistManager() {
   const loadWaitlist = async () => {
     try {
       setIsLoading(true)
-      const { data, error } = await supabase
-        .from("waitlist")
-        .select("*")
-        .order("created_at", { ascending: false })
       
-      if (error) throw error
-      setWaitlistEntries(data || [])
+      // Use admin API endpoint instead of direct client query
+      const response = await fetch("/api/admin/get-waitlist")
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load waitlist data")
+      }
+      
+      setWaitlistEntries(result.data || [])
+      console.log(`Loaded ${result.total} waitlist entries`)
     } catch (err: any) {
       console.error("Error loading waitlist:", err)
       setError("Failed to load waitlist data")
