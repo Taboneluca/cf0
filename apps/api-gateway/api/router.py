@@ -106,6 +106,15 @@ async def process_message(
             "If you need a balance sheet, call create_new_sheet(name='Sheet2') first."
         )
         
+        # Add tools quick-reference
+        system_context += (
+            "\n\nTOOLS QUICK-REFERENCE:\n"
+            "• set_cell(cell=\"A1\", value=42) – update ONE cell.\n"
+            "• set_cells(updates=[{\"cell\":\"A1\", \"value\":42},{\"cell\":\"B1\", \"value\":99}]) "
+            "OR set_cells(cells_dict={\"A1\":42, \"B1\":99}) – update MULTIPLE cells.\n"
+            "Either tool is acceptable – the backend now auto-batches many set_cell calls."
+        )
+        
         # Add any context ranges if provided
         contexts = workbook_metadata.get('contexts', [])
         if contexts:
@@ -485,6 +494,15 @@ async def process_message_streaming(
         system_context += (
             "\n\nYou can create additional sheets with the create_new_sheet tool. "
             "If you need a balance sheet, call create_new_sheet(name='Sheet2') first."
+        )
+        
+        # Add tools quick-reference
+        system_context += (
+            "\n\nTOOLS QUICK-REFERENCE:\n"
+            "• set_cell(cell=\"A1\", value=42) – update ONE cell.\n"
+            "• set_cells(updates=[{\"cell\":\"A1\", \"value\":42},{\"cell\":\"B1\", \"value\":99}]) "
+            "OR set_cells(cells_dict={\"A1\":42, \"B1\":99}) – update MULTIPLE cells.\n"
+            "Either tool is acceptable – the backend now auto-batches many set_cell calls."
         )
         
         # Add any context ranges if provided

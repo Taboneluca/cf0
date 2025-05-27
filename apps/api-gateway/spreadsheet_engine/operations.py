@@ -450,17 +450,56 @@ def list_sheets(wid: str) -> List[str]:
     return get_workbook(wid).list_sheets()
 
 def get_sheet_summary(sid: str, wid: str) -> Dict[str, Any]:
+    """Get summary info for a specific sheet in a workbook"""
+    from ..workbook_store import get_sheet as get_workbook_sheet  # Import here to avoid circular import
+    try:
+        sheet = get_workbook_sheet(wid, sid)
+        if sheet:
+            return {
+                "name": sheet.name,
+                "rows": sheet.n_rows,
+                "columns": sheet.n_cols,
+                "headers": sheet.headers,
+                "non_empty_cells": sum(1 for row in sheet.cells for cell in row if cell is not None)
+            }
+        else:
+            return {"error": f"Sheet {sid} not found in workbook {wid}"}
+    except Exception as e:
+        print(f"Error getting sheet summary: {e}")
+        return {"error": str(e)}
+
+def batch_updates_from_single_calls(updates: list[dict[str, Any]], sheet=None):
     """
-    Return rows, columns, headers & non-empty-cell count for a given sheet.
+    Accept a list of individual set_cell results and re-apply them in one
+    set_cells() call. This is useful when the LLM spammed many set_cell calls.
     
     Args:
-        sid: The sheet ID
-        wid: The workbook ID
-    
+        updates: List of set_cell results from individual calls
+        sheet: The sheet to apply updates to
+        
     Returns:
-        Dictionary with sheet information
+        Result from set_cells() with all updates applied
     """
-    # Import within function to avoid circular imports
-    from workbook_store import get_workbook
-    sheet = get_workbook(wid).sheet(sid)
-    return summarize_sheet(sheet=sheet) 
+    updates_payload = []
+    
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+            
+        cell = update.get("cell")
+        if not cell:
+            continue
+            
+        # Extract value from various possible keys
+        value = (update.get("new_value") or 
+                update.get("value") or 
+                update.get("new"))
+        
+        if cell and value is not None:
+            updates_payload.append({"cell": cell, "value": value})
+    
+    if not updates_payload:
+        return {"updates": []}
+
+    # Use existing set_cells helper
+    return set_cells(updates_payload, sheet=sheet) 

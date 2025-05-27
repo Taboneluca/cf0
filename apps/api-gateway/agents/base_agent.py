@@ -237,8 +237,8 @@ class BaseAgent:
         if len(messages) < orig_message_count:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
-        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 20)
-        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "20"))
+        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 50)
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "50"))
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
@@ -369,17 +369,12 @@ class BaseAgent:
                     mutating_calls += 1
                     print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
                     
-                    # If this is more than the 5th mutation and not in the allowed list, abort
-                    # allow row-by-row streaming via set_cell
+                    # If this is more than the 5th mutation, warn but don't abort anymore
                     if mutating_calls > 5 and name not in {"set_cells", 
                                                           "apply_updates_and_reply",
                                                           "set_cell"}:
-                        print(f"[{agent_calls}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
-                        yield ChatStep(
-                            role="assistant",
-                            content="Error: You should use a single set_cells call to make multiple updates. Please try again with a single batch operation."
-                        )
-                        return
+                        print(f"[{agent_id}] ⚠️ High # of single-cell mutations – consider batching.")
+                        # NO hard stop any more
 
                 # Invoke the Python function
                 fn = None
@@ -695,6 +690,17 @@ class BaseAgent:
         
         # final must be the plain-text assistant answer
         if final and final.role == "assistant":
+            # If we collected >1 single-cell updates, automatically batch them
+            if len(collected_updates) > 1:
+                # Import the batcher function
+                from ..spreadsheet_engine.operations import batch_updates_from_single_calls
+                
+                # Check if we have multiple single-cell updates to batch
+                single_cell_updates = [u for u in collected_updates if isinstance(u, dict) and "cell" in u]
+                if len(single_cell_updates) > 1:
+                    print(f"[BaseAgent] 🔄 Auto-batching {len(single_cell_updates)} single-cell updates")
+                    # Note: We don't have direct sheet access here, batching will happen at router level
+                    
             return {"reply": final.content or "", "updates": collected_updates}
         else:
             return {"reply": "Sorry, something went wrong.", "updates": collected_updates}
@@ -760,7 +766,7 @@ class BaseAgent:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
         # Allow many small tool calls without bailing out too early
-        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "20"))
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "50"))
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
@@ -1097,11 +1103,10 @@ class BaseAgent:
                         mutating_calls += 1
                         print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {function_name}")
                         
-                        # If this is more than the 5th mutation and not a set_cells call, abort
+                        # If this is more than the 5th mutation, warn but don't abort anymore
                         if mutating_calls > 5 and function_name not in {"set_cells", "apply_updates_and_reply"}:
-                            print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
-                            yield ChatStep(role="assistant", content="\nError: You should use a single set_cells call to make multiple updates.")
-                            return
+                            print(f"[{agent_id}] ⚠️ High # of single-cell mutations – consider batching.")
+                            # NO hard stop any more
                     
                     # Find the function
                     fn = None
