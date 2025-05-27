@@ -12,7 +12,7 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table"
-import { Check, X, RefreshCw, Mail } from "lucide-react"
+import { Check, X, RefreshCw, Mail, Trash2, UserX, Ban } from "lucide-react"
 import type { WaitlistEntry } from "@/types/database"
 
 export function WaitlistManager() {
@@ -82,33 +82,114 @@ export function WaitlistManager() {
     }
   }
 
-  // Reject a user
+  // Reject a user (enhanced with API call)
   const handleReject = async (email: string) => {
     setActioningEmail(email)
     setError(null)
     setSuccessMessage(null)
     
     try {
-      const { error } = await supabase
-        .from("waitlist")
-        .update({ status: "rejected" })
-        .eq("email", email)
+      const response = await fetch("/api/admin/reject-waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      })
       
-      if (error) throw error
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to reject user")
+      }
       
       // Update local state
       setWaitlistEntries(prev => 
         prev.map(entry => 
           entry.email === email 
-            ? { ...entry, status: "rejected" } 
+            ? { ...entry, status: "rejected", invited_at: null, invite_code: null } 
             : entry
         )
       )
       
-      setSuccessMessage(`Rejected ${email}`)
+      setSuccessMessage(`Successfully rejected ${email}`)
     } catch (err: any) {
       console.error("Error rejecting user:", err)
       setError(err.message || "An error occurred while rejecting the user")
+    } finally {
+      setActioningEmail(null)
+    }
+  }
+
+  // Delete user completely
+  const handleDeleteUser = async (email: string) => {
+    if (!confirm(`Are you sure you want to completely delete ${email} from the system? This action cannot be undone.`)) {
+      return
+    }
+
+    setActioningEmail(email)
+    setError(null)
+    setSuccessMessage(null)
+    
+    try {
+      const response = await fetch("/api/admin/delete-waitlist-user", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete user")
+      }
+      
+      // Remove from local state
+      setWaitlistEntries(prev => prev.filter(entry => entry.email !== email))
+      
+      setSuccessMessage(`Successfully deleted ${email} from the system`)
+    } catch (err: any) {
+      console.error("Error deleting user:", err)
+      setError(err.message || "An error occurred while deleting the user")
+    } finally {
+      setActioningEmail(null)
+    }
+  }
+
+  // Withdraw invite (set back to pending)
+  const handleWithdrawInvite = async (email: string) => {
+    if (!confirm(`Are you sure you want to withdraw the invite for ${email}? They will be set back to pending status.`)) {
+      return
+    }
+
+    setActioningEmail(email)
+    setError(null)
+    setSuccessMessage(null)
+    
+    try {
+      const response = await fetch("/api/admin/discard-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to withdraw invite")
+      }
+      
+      // Update local state
+      setWaitlistEntries(prev => 
+        prev.map(entry => 
+          entry.email === email 
+            ? { ...entry, status: "pending", invited_at: null, invite_code: null } 
+            : entry
+        )
+      )
+      
+      setSuccessMessage(`Successfully withdrew invite for ${email}`)
+    } catch (err: any) {
+      console.error("Error withdrawing invite:", err)
+      setError(err.message || "An error occurred while withdrawing the invite")
     } finally {
       setActioningEmail(null)
     }
@@ -251,7 +332,7 @@ export function WaitlistManager() {
                 <TableCell className="text-blue-200">{formatDate(entry.created_at)}</TableCell>
                 <TableCell className="text-blue-200">{formatDate(entry.invited_at)}</TableCell>
                 <TableCell className="text-right">
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-1 flex-wrap">
                     {entry.status === "pending" && (
                       <>
                         <Button
@@ -275,50 +356,159 @@ export function WaitlistManager() {
                           size="sm"
                           variant="destructive"
                         >
-                          <X className="h-3 w-3 mr-1" />
-                          Reject
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <X className="h-3 w-3 mr-1" />
+                              Reject
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          onClick={() => handleDeleteUser(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          variant="outline"
+                          className="border-red-500 text-red-400 hover:bg-red-950"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
                         </Button>
                       </>
                     )}
                     {entry.status === "approved" && (
-                      <Button
-                        onClick={() => handleApprove(entry.email)}
-                        disabled={actioningEmail === entry.email}
-                        size="sm"
-                        className="bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        {actioningEmail === entry.email ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <>
-                            <Mail className="h-3 w-3 mr-1" />
-                            Send Invite
-                          </>
-                        )}
-                      </Button>
+                      <>
+                        <Button
+                          onClick={() => handleApprove(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Mail className="h-3 w-3 mr-1" />
+                              Send Invite
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          onClick={() => handleDeleteUser(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          variant="outline"
+                          className="border-red-500 text-red-400 hover:bg-red-950"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
+                        </Button>
+                      </>
                     )}
                     {entry.status === "invited" && (
-                      <Button
-                        onClick={() => handleResendInvite(entry.email)}
-                        disabled={actioningEmail === entry.email}
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700 text-white"
-                      >
-                        {actioningEmail === entry.email ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <>
-                            <Mail className="h-3 w-3 mr-1" />
-                            Resend Invite
-                          </>
-                        )}
-                      </Button>
-                    )}
-                    {entry.status === "converted" && (
-                      <span className="text-purple-300 text-sm">User registered</span>
+                      <>
+                        <Button
+                          onClick={() => handleResendInvite(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700 text-white"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Mail className="h-3 w-3 mr-1" />
+                              Resend
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          onClick={() => handleWithdrawInvite(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          variant="outline"
+                          className="border-yellow-500 text-yellow-400 hover:bg-yellow-950"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Ban className="h-3 w-3 mr-1" />
+                              Withdraw
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          onClick={() => handleDeleteUser(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          variant="outline"
+                          className="border-red-500 text-red-400 hover:bg-red-950"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
+                        </Button>
+                      </>
                     )}
                     {entry.status === "rejected" && (
-                      <span className="text-red-300 text-sm">Rejected</span>
+                      <>
+                        <Button
+                          onClick={() => handleApprove(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700 text-white"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Check className="h-3 w-3 mr-1" />
+                              Approve
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          onClick={() => handleDeleteUser(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          variant="outline"
+                          className="border-red-500 text-red-400 hover:bg-red-950"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
+                        </Button>
+                      </>
+                    )}
+                    {entry.status === "converted" && (
+                      <>
+                        <span className="text-purple-300 text-sm mr-2">User registered</span>
+                        <Button
+                          onClick={() => handleDeleteUser(entry.email)}
+                          disabled={actioningEmail === entry.email}
+                          size="sm"
+                          variant="outline"
+                          className="border-red-500 text-red-400 hover:bg-red-950"
+                        >
+                          {actioningEmail === entry.email ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
+                        </Button>
+                      </>
                     )}
                   </div>
                 </TableCell>

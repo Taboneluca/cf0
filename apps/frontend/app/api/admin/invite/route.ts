@@ -80,7 +80,16 @@ export async function POST(request: Request) {
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 
       (process.env.NODE_ENV === 'production' ? 'https://www.cf0.ai' : 'http://localhost:3000')
     
+    console.log('DEBUG - Environment check:', {
+      NODE_ENV: process.env.NODE_ENV,
+      NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
+      baseUrl: baseUrl,
+      timestamp: new Date().toISOString()
+    })
+    
     const redirectTo = `${baseUrl}/auth/callback?invite_code=${updatedEntry.invite_code}`
+    
+    console.log('DEBUG - Full redirectTo URL:', redirectTo)
 
     const { error: authError } = await serviceSupabase.auth.admin.inviteUserByEmail(email, {
       redirectTo,

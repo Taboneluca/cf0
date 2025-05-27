@@ -17,13 +17,13 @@ export const metadata: Metadata = {
   generator: 'v0.dev',
   icons: {
     icon: [
-      { url: '/logo.png?v=1', sizes: '64x64', type: 'image/png' },
-      { url: '/logo.png?v=1', sizes: '32x32', type: 'image/png' },
-      { url: '/logo.png?v=1', sizes: '16x16', type: 'image/png' },
+      { url: '/transparent_image_v2.png?v=1', sizes: '64x64', type: 'image/png' },
+      { url: '/transparent_image_v2.png?v=1', sizes: '32x32', type: 'image/png' },
+      { url: '/transparent_image_v2.png?v=1', sizes: '16x16', type: 'image/png' },
     ],
-    shortcut: '/logo.png?v=1',
+    shortcut: '/transparent_image_v2.png?v=1',
     apple: [
-      { url: '/logo.png?v=1', sizes: '180x180', type: 'image/png' },
+      { url: '/transparent_image_v2.png?v=1', sizes: '180x180', type: 'image/png' },
     ],
   },
 }
