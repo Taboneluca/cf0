@@ -60,74 +60,31 @@ export default function Dashboard() {
       try {
         console.log("=== DASHBOARD ADMIN CHECK STARTING ===")
         
-        // Method 1: Try Supabase client directly
-        try {
-          // First, try to refresh the session to get latest data
-          const { error: refreshError } = await supabase.auth.refreshSession()
-          if (refreshError) {
-            console.warn("Failed to refresh session:", refreshError.message)
-          }
-
-          const { data: { session } } = await supabase.auth.getSession()
-          console.log("Dashboard admin check - Session info:", {
-            hasSession: !!session,
-            userId: session?.user?.id,
-            email: session?.user?.email
-          })
-
-          if (session?.user) {
-            const { data: profile, error: profileError } = await supabase
-              .from("profiles")
-              .select("is_admin, email, is_verified, is_waitlisted")
-              .eq("id", session.user.id)
-              .single()
-            
-            console.log("Dashboard admin check - Profile query result:", {
-              profile,
-              error: profileError?.message,
-              isAdmin: profile?.is_admin
-            })
-
-            if (!profileError && profile) {
-              console.log("=== ADMIN CHECK SUCCESS: Using Supabase client ===")
-              setIsAdmin(profile.is_admin || false)
-              setIsLoadingAdmin(false)
-              return
-            } else {
-              console.warn("Profile query failed, trying debug endpoint fallback")
-            }
-          } else {
-            console.warn("No session found with Supabase client, trying debug endpoint")
-          }
-        } catch (supabaseError) {
-          console.error("Supabase admin check failed:", supabaseError)
+        // Use the debug endpoint (same method as manual test that works)
+        const response = await fetch('/api/debug/admin-check', {
+          credentials: 'include',
+          cache: 'no-cache'
+        })
+        
+        if (!response.ok) {
+          console.error("Debug endpoint failed with status:", response.status)
+          setIsAdmin(false)
+          return
         }
-
-        // Method 2: Fallback to debug endpoint
-        console.log("Using debug endpoint fallback...")
-        try {
-          const debugResponse = await fetch('/api/debug/admin-check', {
-            credentials: 'include',
-            cache: 'no-cache'
-          })
-          const debugData = await debugResponse.json()
-          
-          console.log("Debug endpoint result:", debugData)
-          
-          if (debugData.isAdmin !== undefined) {
-            console.log("=== ADMIN CHECK SUCCESS: Using debug endpoint ===")
-            setIsAdmin(debugData.isAdmin)
-          } else {
-            console.warn("Debug endpoint didn't return admin status")
-            setIsAdmin(false)
-          }
-        } catch (debugError) {
-          console.error("Debug endpoint failed:", debugError)
+        
+        const data = await response.json()
+        console.log("=== ADMIN CHECK SUCCESS: Debug endpoint result ===", data)
+        
+        if (data.isAdmin !== undefined) {
+          setIsAdmin(data.isAdmin)
+          console.log("Admin status set to:", data.isAdmin)
+        } else {
+          console.warn("Debug endpoint didn't return admin status")
           setIsAdmin(false)
         }
-
+        
       } catch (error) {
-        console.error("Error in admin status check:", error)
+        console.error("Admin check failed:", error)
         setIsAdmin(false)
       } finally {
         console.log("=== DASHBOARD ADMIN CHECK COMPLETE ===")
@@ -135,9 +92,14 @@ export default function Dashboard() {
       }
     }
 
-    // Run the check immediately and log it
-    console.log("Dashboard useEffect triggered - starting admin check")
-    checkAdminStatus()
+    // Add a small delay to let auth stabilize first
+    console.log("Dashboard useEffect triggered - waiting for auth to stabilize...")
+    const timeoutId = setTimeout(() => {
+      console.log("Starting admin check after auth stabilization delay")
+      checkAdminStatus()
+    }, 1000) // 1 second delay
+    
+    return () => clearTimeout(timeoutId)
   }, [])
 
   // Create new workbook function
