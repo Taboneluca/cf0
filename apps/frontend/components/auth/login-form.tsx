@@ -22,8 +22,13 @@ export function LoginForm() {
   useEffect(() => {
     // Use optional chaining for more resilience during SSR
     const from = searchParams?.get?.('from')
+    const errorParam = searchParams?.get?.('error')
+    const messageParam = searchParams?.get?.('message')
+    
     if (from) {
       setError(`You need to be logged in to access ${from}`)
+    } else if (errorParam && messageParam) {
+      setError(decodeURIComponent(messageParam))
     }
   }, [searchParams])
 
@@ -32,48 +37,37 @@ export function LoginForm() {
     setIsLoading(true)
     setError(null)
 
+    // Basic validation
+    if (!email || !password) {
+      setError("Email and password are required")
+      setIsLoading(false)
+      return
+    }
+
+    if (!email.includes('@')) {
+      setError("Please enter a valid email address")
+      setIsLoading(false)
+      return
+    }
+
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters")
+      setIsLoading(false)
+      return
+    }
+
     try {
-      console.log("Attempting login with:", email)
+      console.log("Attempting login with email:", email)
       
-      // First verify if we have a session already to avoid unnecessary logins
-      const { data: existingSession } = await supabase.auth.getSession()
-      if (existingSession.session) {
-        console.log("Client-side session exists, verifying with server")
-        
-        // Verify with server that session is valid before redirecting
-        try {
-          const verifyResponse = await fetch('/api/auth/session-sync', {
-            method: 'POST',
-            credentials: 'include',
-          })
-          
-          if (verifyResponse.ok) {
-            console.log("Server confirmed session is valid, redirecting to dashboard")
-            router.push('/dashboard')
-            return
-          } else {
-            console.log("Server rejected session, continuing with login")
-            // Continue with login flow
-          }
-        } catch (verifyErr) {
-          console.error("Error verifying session:", verifyErr)
-          // Continue with login flow
-        }
-      }
-      
-      // Use our server-side login API endpoint
+      // Use server-side login API endpoint for security
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email, password }),
-        // Important: Include credentials to ensure cookies are sent
         credentials: 'include',
       })
-      
-      // Log the response status and headers for debugging
-      console.log("Login response status:", response.status)
       
       const data = await response.json()
       
@@ -81,50 +75,28 @@ export function LoginForm() {
         throw new Error(data.error || 'Failed to sign in')
       }
       
-      console.log("Login successful, navigating to dashboard")
+      console.log("Login successful via API")
       
-      // Check if cookies were set properly
-      document.cookie.split(';').forEach(cookie => {
-        const trimmed = cookie.trim()
-        if (trimmed.startsWith('sb-') || trimmed.startsWith('supabase-')) {
-          console.log("Auth cookie detected:", trimmed.split('=')[0])
-        }
-      })
-      
-      // After successful login, verify the session with Supabase client
+      // Verify the session was properly set
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
       
       if (sessionError || !sessionData.session) {
         console.error("Session verification failed after login:", sessionError?.message || "No session found")
-        
-        // Try direct sign in with the Supabase client as fallback
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password
-        })
-        
-        if (signInError) {
-          console.error("Fallback sign-in failed:", signInError.message)
-        } else {
-          console.log("Fallback sign-in successful")
-        }
-      } else {
-        console.log("Session verified, expires:", 
-          sessionData.session.expires_at 
-            ? new Date(sessionData.session.expires_at * 1000).toISOString()
-            : 'no expiration date'
-        )
+        throw new Error("Authentication failed - please try again")
       }
       
-      // Refresh all route caches
+      console.log("Session verified, user authenticated")
+      
+      // Refresh the page cache to ensure protected routes work
       router.refresh()
       
       // Get the redirect destination, defaulting to dashboard
       const destination = searchParams?.get?.('from') || '/dashboard'
       router.push(destination)
+      
     } catch (err: any) {
       console.error("Login error:", err)
-      setError(err.message || "An error occurred during login")
+      setError(err.message || "Invalid email or password")
     } finally {
       setIsLoading(false)
     }
@@ -132,8 +104,14 @@ export function LoginForm() {
 
   const handleSignInWithMagicLink = async (e: React.MouseEvent) => {
     e.preventDefault()
+    
     if (!email) {
       setError("Please enter your email address")
+      return
+    }
+
+    if (!email.includes('@')) {
+      setError("Please enter a valid email address")
       return
     }
 
@@ -156,6 +134,7 @@ export function LoginForm() {
       }
 
       setEmail("")
+      setError(null)
       alert("Check your email for the login link!")
     } catch (err: any) {
       console.error("Magic link error:", err)
@@ -196,7 +175,9 @@ export function LoginForm() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            placeholder="Minimum 6 characters"
             required
+            minLength={6}
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
@@ -223,7 +204,11 @@ export function LoginForm() {
       >
         {isLoading ? "Sending..." : "Magic Link"}
       </button>
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3">
+          <p className="text-sm text-red-800">{error}</p>
+        </div>
+      )}
     </div>
   )
 } 

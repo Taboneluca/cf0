@@ -25,10 +25,20 @@ export function RegisterForm() {
 
         // Fetch email associated with invite code
         const fetchEmailFromInviteCode = async () => {
-          const { data, error } = await supabase.from("waitlist").select("email").eq("invite_code", code).single()
+          try {
+            const { data, error } = await supabase
+              .from("waitlist")
+              .select("email")
+              .eq("invite_code", code)
+              .single()
 
-          if (data && !error) {
-            setEmail(data.email)
+            if (data && !error) {
+              setEmail(data.email)
+            } else {
+              console.error("Error fetching email from invite code:", error)
+            }
+          } catch (err) {
+            console.error("Failed to fetch email:", err)
           }
         }
 
@@ -42,8 +52,23 @@ export function RegisterForm() {
     setIsLoading(true)
     setError(null)
 
+    // Basic validation
+    if (!email || !password || !fullName || !inviteCode) {
+      setError("All fields are required")
+      setIsLoading(false)
+      return
+    }
+
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters")
+      setIsLoading(false)
+      return
+    }
+
     try {
-      // Verify invite code is valid
+      console.log("Starting registration process for:", email)
+
+      // First verify invite code is valid via direct query
       const { data: waitlistData, error: waitlistError } = await supabase
         .from("waitlist")
         .select("email, status")
@@ -51,13 +76,14 @@ export function RegisterForm() {
         .single()
 
       if (waitlistError || !waitlistData) {
+        console.error("Invite code verification failed:", waitlistError)
         setError("Invalid invite code. Please check and try again.")
         setIsLoading(false)
         return
       }
 
-      if (waitlistData.status !== "approved" && waitlistData.status !== "invited") {
-        setError("This invite code is no longer valid.")
+      if (waitlistData.status !== "invited") {
+        setError("This invite code is no longer valid or has already been used.")
         setIsLoading(false)
         return
       }
@@ -68,20 +94,27 @@ export function RegisterForm() {
         return
       }
 
+      console.log("Invite code verified, proceeding with signup")
+
       // Check if we already have a session (via invite link)
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession()
       
-      if (session) {
-        // User is already authenticated via invite link, just update password
-        const { error: updErr } = await supabase.auth.updateUser({ 
+      if (session && session.user.email === email) {
+        console.log("User already has session, updating password")
+        // User is already authenticated via invite link, just update password and profile
+        const { error: updateError } = await supabase.auth.updateUser({ 
           password,
           data: { full_name: fullName }
-        });
+        })
         
-        if (updErr) throw updErr;
+        if (updateError) {
+          console.error("Error updating user:", updateError)
+          throw updateError
+        }
       } else {
-        // Fall back to regular sign up if no session
-        const { error: signUpError } = await supabase.auth.signUp({
+        console.log("Creating new user account")
+        // Create new account
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -89,18 +122,48 @@ export function RegisterForm() {
               full_name: fullName,
             },
           },
-        });
+        })
 
-        if (signUpError) throw signUpError;
+        if (signUpError) {
+          console.error("Signup error:", signUpError)
+          throw signUpError
+        }
+
+        if (!signUpData.user) {
+          throw new Error("Failed to create user account")
+        }
+
+        console.log("User account created successfully")
       }
 
-      // Update waitlist status to converted
-      await supabase.from("waitlist").update({ status: "converted" }).eq("invite_code", inviteCode);
+      // Now update waitlist status via secure API endpoint (not direct client update)
+      console.log("Updating waitlist status via API")
+      const updateResponse = await fetch('/api/auth/complete-registration', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          inviteCode: inviteCode,
+          email: email 
+        }),
+        credentials: 'include',
+      })
 
-      router.push("/dashboard");
+      if (!updateResponse.ok) {
+        const errorData = await updateResponse.json()
+        console.error("Failed to update waitlist status:", errorData)
+        // Don't fail registration for this - user is created but status might not update
+        console.warn("Registration succeeded but waitlist status update failed")
+      } else {
+        console.log("Waitlist status updated successfully")
+      }
+
+      console.log("Registration complete, redirecting to dashboard")
+      router.push("/dashboard")
     } catch (err: any) {
       console.error("Registration error:", err)
-      setError(err.message || "An error occurred during registration")
+      setError(err.message || "An error occurred during registration. Please try again.")
     } finally {
       setIsLoading(false)
     }
@@ -159,7 +222,9 @@ export function RegisterForm() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          placeholder="Minimum 6 characters"
           required
+          minLength={6}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
@@ -170,7 +235,11 @@ export function RegisterForm() {
       >
         {isLoading ? "Creating account..." : "Create Account"}
       </button>
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3">
+          <p className="text-sm text-red-800">{error}</p>
+        </div>
+      )}
     </form>
   )
 } 

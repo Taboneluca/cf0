@@ -10,76 +10,93 @@ export async function GET(request: NextRequest) {
     const inviteCode = requestUrl.searchParams.get("invite_code")
     const error = requestUrl.searchParams.get("error")
     const errorDescription = requestUrl.searchParams.get("error_description")
+    const errorCode = requestUrl.searchParams.get("error_code")
 
     console.log('Auth callback received:', {
       code: code ? 'present' : 'missing',
       inviteCode,
       error,
       errorDescription,
+      errorCode,
       fullUrl: request.url
     })
 
-    // Handle errors from the URL
+    // Handle errors from the URL first
     if (error) {
-      console.error('Auth callback error:', error, errorDescription)
+      console.error('Auth callback error:', { error, errorDescription, errorCode })
       
-      // If it's an expired link, redirect to a more helpful page
-      if (error === 'access_denied' && errorDescription?.includes('expired')) {
-        return NextResponse.redirect(
-          new URL(`/auth/link-expired?message=${encodeURIComponent('Your invitation link has expired. Please contact support for a new invitation.')}`, request.url)
-        )
+      let redirectUrl: URL
+      let errorMessage = errorDescription || error
+      
+      // Handle specific error cases
+      if (error === 'access_denied' && errorCode === 'otp_expired') {
+        redirectUrl = new URL('/auth/link-expired', requestUrl.origin)
+        redirectUrl.searchParams.set('message', 'Your invitation link has expired. Please request a new invitation.')
+      } else if (error === 'access_denied') {
+        redirectUrl = new URL('/login', requestUrl.origin)
+        redirectUrl.searchParams.set('error', 'access_denied')
+        redirectUrl.searchParams.set('message', 'Access denied. Please try logging in again.')
+      } else {
+        redirectUrl = new URL('/login', requestUrl.origin)
+        redirectUrl.searchParams.set('error', error)
+        redirectUrl.searchParams.set('message', errorMessage)
       }
       
-      // For other errors, redirect to login with error
-      return NextResponse.redirect(
-        new URL(`/login?error=${encodeURIComponent(error)}&message=${encodeURIComponent(errorDescription || 'Authentication failed')}`, request.url)
-      )
+      return NextResponse.redirect(redirectUrl)
     }
 
-    if (code) {
-      const cookieStore = cookies()
-      const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
-      
-      console.log('Attempting to exchange code for session...')
-      const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
-      
-      if (exchangeError) {
-        console.error('Session exchange error:', exchangeError)
-        
-        // Handle specific exchange errors
-        if (exchangeError.message?.includes('expired')) {
-          return NextResponse.redirect(
-            new URL(`/auth/link-expired?message=${encodeURIComponent('Your invitation link has expired. Please contact support for a new invitation.')}`, request.url)
-          )
-        }
-        
-        return NextResponse.redirect(
-          new URL(`/login?error=session_error&message=${encodeURIComponent(exchangeError.message)}`, request.url)
-        )
-      }
-
-      console.log('Session exchange successful:', {
-        userId: data.user?.id,
-        email: data.user?.email
-      })
+    // If no code is provided, redirect to login
+    if (!code) {
+      console.warn('Auth callback called without code parameter')
+      const redirectUrl = new URL('/login', requestUrl.origin)
+      redirectUrl.searchParams.set('error', 'missing_code')
+      redirectUrl.searchParams.set('message', 'Authentication failed - missing authorization code')
+      return NextResponse.redirect(redirectUrl)
     }
 
-    // If this is a waitlist invitation, forward to registration
+    const cookieStore = cookies()
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
+
+    // Exchange the code for a session
+    const { data: authData, error: authError } = await supabase.auth.exchangeCodeForSession(code)
+
+    if (authError) {
+      console.error('Failed to exchange code for session:', authError.message)
+      const redirectUrl = new URL('/login', requestUrl.origin)
+      redirectUrl.searchParams.set('error', 'auth_failed')
+      redirectUrl.searchParams.set('message', 'Authentication failed - please try again')
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    if (!authData.session || !authData.user) {
+      console.error('No session or user returned after code exchange')
+      const redirectUrl = new URL('/login', requestUrl.origin)
+      redirectUrl.searchParams.set('error', 'no_session')
+      redirectUrl.searchParams.set('message', 'Authentication failed - no session created')
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    console.log('Successfully authenticated user:', authData.user.email)
+
+    // If this is an invite-based registration, redirect to register page with the code
     if (inviteCode) {
-      console.log('Redirecting to registration with invite code:', inviteCode)
-      return NextResponse.redirect(
-        new URL(`/register?code=${inviteCode}`, request.url)
-      )
+      console.log('Invite-based auth detected, redirecting to registration')
+      const redirectUrl = new URL('/register', requestUrl.origin)
+      redirectUrl.searchParams.set('code', inviteCode)
+      return NextResponse.redirect(redirectUrl)
     }
 
-    // Default redirect for regular sign-ins
-    console.log('Redirecting to dashboard')
-    return NextResponse.redirect(new URL("/dashboard", request.url))
+    // For regular login, redirect to dashboard
+    console.log('Regular login detected, redirecting to dashboard')
+    const redirectUrl = new URL('/dashboard', requestUrl.origin)
+    return NextResponse.redirect(redirectUrl)
 
-  } catch (error) {
-    console.error('Auth callback unexpected error:', error)
-    return NextResponse.redirect(
-      new URL(`/login?error=callback_error&message=${encodeURIComponent('An unexpected error occurred during authentication')}`, request.url)
-    )
+  } catch (error: any) {
+    console.error('Unexpected error in auth callback:', error)
+    const requestUrl = new URL(request.url)
+    const redirectUrl = new URL('/login', requestUrl.origin)
+    redirectUrl.searchParams.set('error', 'unexpected_error')
+    redirectUrl.searchParams.set('message', 'An unexpected error occurred during authentication')
+    return NextResponse.redirect(redirectUrl)
   }
 } 
