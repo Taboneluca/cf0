@@ -237,8 +237,8 @@ class BaseAgent:
         if len(messages) < orig_message_count:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
-        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 10)
-        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))
+        # Allow many small tool calls without bailing out too early (env: MAX_TOOL_ITERATIONS, default 20)
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "20"))
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
@@ -369,9 +369,9 @@ class BaseAgent:
                     mutating_calls += 1
                     print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
                     
-                    # If this is more than the first mutation and not in the allowed list, abort
+                    # If this is more than the 5th mutation and not in the allowed list, abort
                     # allow row-by-row streaming via set_cell
-                    if mutating_calls > 1 and name not in {"set_cells", 
+                    if mutating_calls > 5 and name not in {"set_cells", 
                                                           "apply_updates_and_reply",
                                                           "set_cell"}:
                         print(f"[{agent_calls}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
@@ -760,7 +760,7 @@ class BaseAgent:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
         # Allow many small tool calls without bailing out too early
-        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))
+        max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "20"))
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
@@ -1097,8 +1097,8 @@ class BaseAgent:
                         mutating_calls += 1
                         print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {function_name}")
                         
-                        # If this is more than the first mutation and not a set_cells call, abort
-                        if mutating_calls > 1 and function_name not in {"set_cells", "apply_updates_and_reply"}:
+                        # If this is more than the 5th mutation and not a set_cells call, abort
+                        if mutating_calls > 5 and function_name not in {"set_cells", "apply_updates_and_reply"}:
                             print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
                             yield ChatStep(role="assistant", content="\nError: You should use a single set_cells call to make multiple updates.")
                             return

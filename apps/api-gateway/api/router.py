@@ -300,6 +300,12 @@ async def process_message(
             if not reply:
                 reply = f"Applied {len(updates)} updates."
             
+            # LIMIT RESPONSE LENGTH - truncate if too long
+            max_reply_length = 800  # Reasonable limit for streaming
+            if len(reply) > max_reply_length:
+                reply = reply[:max_reply_length] + "..."
+                print(f"[{request_id}] ✂️ Truncated reply from {len(reply)} to {max_reply_length} chars")
+            
             # Check if the reply mentions formulas being added
             formula_keywords = ["formula", "formulas", "calculation", "calculations", "= sign", "equals sign"]
             formula_requested = allow_formulas or any(keyword.lower() in reply.lower() for keyword in formula_keywords)
@@ -672,6 +678,12 @@ async def process_message_streaming(
                 
             if not reply:
                 reply = f"Applied {len(updates)} updates."
+            
+            # LIMIT RESPONSE LENGTH - truncate if too long
+            max_reply_length = 800  # Reasonable limit for streaming
+            if len(reply) > max_reply_length:
+                reply = reply[:max_reply_length] + "..."
+                print(f"[{request_id}] ✂️ Truncated reply from {len(reply)} to {max_reply_length} chars")
             
             # Check if the reply mentions formulas being added
             formula_keywords = ["formula", "formulas", "calculation", "calculations", "= sign", "equals sign"]

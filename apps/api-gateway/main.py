@@ -498,7 +498,7 @@ async def debug_config():
             "USE_DATAFRAME_MODEL": os.getenv("USE_DATAFRAME_MODEL", "0"),
             "USE_FORMULA_ENGINE": os.getenv("USE_FORMULA_ENGINE", "0"),
             "USE_INCREMENTAL_RECALC": os.getenv("USE_INCREMENTAL_RECALC", "1"),
-            "MAX_TOOL_ITERATIONS": os.getenv("MAX_TOOL_ITERATIONS", "10"),
+            "MAX_TOOL_ITERATIONS": os.getenv("MAX_TOOL_ITERATIONS", "20"),
             "MODEL": os.getenv("OPENAI_MODEL", "gpt-4o")
         },
         "versions": {

@@ -11,6 +11,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
     "anthropic:claude-3-5-sonnet": {"provider": "anthropic", "id": "claude-3-5-sonnet-20240620", "tool_calls": True, "max_tokens": 200000, "label": "Claude 3.5 sonnet"},
     "anthropic:claude-3-7-sonnet": {"provider": "anthropic", "id": "claude-3-7-sonnet-20250219", "tool_calls": True, "max_tokens": 200000, "label": "Claude 3.7 sonnet"},
     "groq:llama-3-3-70b":     {"provider": "groq",      "id": "llama-3.3-70b-versatile", "tool_calls": True, "max_tokens": 32768, "label": "Llama-3.3-70B"},
+    "groq:llama-3-1-8b":      {"provider": "groq",      "id": "llama-3.1-8b-instant", "tool_calls": True, "max_tokens": 8192, "label": "Llama-3.1-8B"},
     "groq:llama-3-8b":        {"provider": "groq",      "id": "llama3-8b-8192",    "tool_calls": True, "max_tokens": 8192, "label": "Llama-3-8B"},
 }
 
@@ -21,6 +22,10 @@ ALIAS_MAP = {
     "groq:llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
     "llama-3.3-70b-versatile":      "llama-3.3-70b-versatile",
     "llama-3-3-70b":               "llama-3.3-70b-versatile",
+    "groq:llama-3-1-8b":           "llama-3.1-8b-instant",
+    "groq:llama-3.1-8b-instant":   "llama-3.1-8b-instant",
+    "llama-3.1-8b-instant":        "llama-3.1-8b-instant",
+    "llama-3-1-8b":                "llama-3.1-8b-instant",
     "groq:llama3-8b-8192":         "llama3-8b-8192",
     "llama3-8b-8192":              "llama3-8b-8192",
     "groq:llama-3-8b":             "llama3-8b-8192",
