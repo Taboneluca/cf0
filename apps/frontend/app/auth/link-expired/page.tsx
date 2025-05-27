@@ -5,8 +5,9 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/logo"
 import { AlertCircle, Clock, Mail } from "lucide-react"
+import { Suspense } from "react"
 
-export default function LinkExpiredPage() {
+function LinkExpiredContent() {
   const searchParams = useSearchParams()
   const message = searchParams?.get("message") || "Your invitation link has expired."
 
@@ -81,5 +82,34 @@ export default function LinkExpiredPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
+      <div className="max-w-md w-full space-y-8">
+        <div className="text-center">
+          <Logo size="lg" clickable={false} className="justify-center mb-8" />
+          <div className="bg-red-950/20 border border-red-500/30 rounded-lg p-6 mb-6">
+            <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-white mb-2">Link Expired</h1>
+            <p className="text-red-200 mb-4">Your invitation link has expired.</p>
+            <div className="flex items-center justify-center gap-2 text-red-300 text-sm">
+              <Clock className="h-4 w-4" />
+              <span>Invitation links expire for security reasons</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function LinkExpiredPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <LinkExpiredContent />
+    </Suspense>
   )
 } 
