@@ -58,59 +58,85 @@ export default function Dashboard() {
   useEffect(() => {
     const checkAdminStatus = async () => {
       try {
-        // First, try to refresh the session to get latest data
-        const { error: refreshError } = await supabase.auth.refreshSession()
-        if (refreshError) {
-          console.warn("Failed to refresh session:", refreshError.message)
-        }
+        console.log("=== DASHBOARD ADMIN CHECK STARTING ===")
+        
+        // Method 1: Try Supabase client directly
+        try {
+          // First, try to refresh the session to get latest data
+          const { error: refreshError } = await supabase.auth.refreshSession()
+          if (refreshError) {
+            console.warn("Failed to refresh session:", refreshError.message)
+          }
 
-        const { data: { session } } = await supabase.auth.getSession()
-        console.log("Dashboard admin check - Session info:", {
-          hasSession: !!session,
-          userId: session?.user?.id,
-          email: session?.user?.email
-        })
-
-        if (session?.user) {
-          const { data: profile, error: profileError } = await supabase
-            .from("profiles")
-            .select("is_admin, email, is_verified, is_waitlisted")
-            .eq("id", session.user.id)
-            .single()
-          
-          console.log("Dashboard admin check - Profile query result:", {
-            profile,
-            error: profileError?.message,
-            isAdmin: profile?.is_admin
+          const { data: { session } } = await supabase.auth.getSession()
+          console.log("Dashboard admin check - Session info:", {
+            hasSession: !!session,
+            userId: session?.user?.id,
+            email: session?.user?.email
           })
 
-          if (profileError) {
-            console.error("Error fetching profile:", profileError)
-            // If there's an RLS error, try using the debug endpoint
-            try {
-              const debugResponse = await fetch('/api/debug/admin-check')
-              const debugData = await debugResponse.json()
-              console.log("Debug endpoint result:", debugData)
-              setIsAdmin(debugData.isAdmin || false)
-            } catch (debugError) {
-              console.error("Debug endpoint failed:", debugError)
-              setIsAdmin(false)
+          if (session?.user) {
+            const { data: profile, error: profileError } = await supabase
+              .from("profiles")
+              .select("is_admin, email, is_verified, is_waitlisted")
+              .eq("id", session.user.id)
+              .single()
+            
+            console.log("Dashboard admin check - Profile query result:", {
+              profile,
+              error: profileError?.message,
+              isAdmin: profile?.is_admin
+            })
+
+            if (!profileError && profile) {
+              console.log("=== ADMIN CHECK SUCCESS: Using Supabase client ===")
+              setIsAdmin(profile.is_admin || false)
+              setIsLoadingAdmin(false)
+              return
+            } else {
+              console.warn("Profile query failed, trying debug endpoint fallback")
             }
           } else {
-            setIsAdmin(profile?.is_admin || false)
+            console.warn("No session found with Supabase client, trying debug endpoint")
           }
-        } else {
-          console.warn("No session found")
+        } catch (supabaseError) {
+          console.error("Supabase admin check failed:", supabaseError)
+        }
+
+        // Method 2: Fallback to debug endpoint
+        console.log("Using debug endpoint fallback...")
+        try {
+          const debugResponse = await fetch('/api/debug/admin-check', {
+            credentials: 'include',
+            cache: 'no-cache'
+          })
+          const debugData = await debugResponse.json()
+          
+          console.log("Debug endpoint result:", debugData)
+          
+          if (debugData.isAdmin !== undefined) {
+            console.log("=== ADMIN CHECK SUCCESS: Using debug endpoint ===")
+            setIsAdmin(debugData.isAdmin)
+          } else {
+            console.warn("Debug endpoint didn't return admin status")
+            setIsAdmin(false)
+          }
+        } catch (debugError) {
+          console.error("Debug endpoint failed:", debugError)
           setIsAdmin(false)
         }
+
       } catch (error) {
-        console.error("Error checking admin status:", error)
+        console.error("Error in admin status check:", error)
         setIsAdmin(false)
       } finally {
+        console.log("=== DASHBOARD ADMIN CHECK COMPLETE ===")
         setIsLoadingAdmin(false)
       }
     }
 
+    // Run the check immediately and log it
+    console.log("Dashboard useEffect triggered - starting admin check")
     checkAdminStatus()
   }, [])
 
@@ -344,6 +370,37 @@ export default function Dashboard() {
               </div>
             </motion.div>
           )}
+
+          {/* Temporary Debug Section */}
+          <div className="mb-8 rounded-lg border border-purple-500/30 bg-purple-500/10 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-purple-200">Debug Info</h3>
+                <p className="text-xs text-purple-300">
+                  Admin: {isAdmin ? 'YES' : 'NO'} | Loading: {isLoadingAdmin ? 'YES' : 'NO'}
+                </p>
+              </div>
+              <Button
+                onClick={async () => {
+                  console.log("Manual admin check triggered")
+                  setIsLoadingAdmin(true)
+                  try {
+                    const response = await fetch('/api/debug/admin-check', { credentials: 'include' })
+                    const data = await response.json()
+                    console.log("Manual debug result:", data)
+                    setIsAdmin(data.isAdmin || false)
+                  } catch (error) {
+                    console.error("Manual check failed:", error)
+                  } finally {
+                    setIsLoadingAdmin(false)
+                  }
+                }}
+                className="bg-purple-600 hover:bg-purple-700 text-white text-xs h-6 px-3"
+              >
+                Test Admin Check
+              </Button>
+            </div>
+          </div>
 
           <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <Tabs defaultValue="all" className="w-full sm:w-auto" onValueChange={setActiveTab}>
