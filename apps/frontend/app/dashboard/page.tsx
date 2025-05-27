@@ -58,7 +58,7 @@ export default function Dashboard() {
   useEffect(() => {
     const checkAdminStatus = async () => {
       try {
-        console.log("=== DASHBOARD ADMIN CHECK STARTING ===")
+        console.log("Checking admin status...")
         
         // Use the debug endpoint (same method as manual test that works)
         const response = await fetch('/api/debug/admin-check', {
@@ -67,19 +67,18 @@ export default function Dashboard() {
         })
         
         if (!response.ok) {
-          console.error("Debug endpoint failed with status:", response.status)
+          console.error("Admin check failed with status:", response.status)
           setIsAdmin(false)
           return
         }
         
         const data = await response.json()
-        console.log("=== ADMIN CHECK SUCCESS: Debug endpoint result ===", data)
         
         if (data.isAdmin !== undefined) {
           setIsAdmin(data.isAdmin)
-          console.log("Admin status set to:", data.isAdmin)
+          console.log("Admin status:", data.isAdmin ? "✅ Admin" : "❌ Regular user")
         } else {
-          console.warn("Debug endpoint didn't return admin status")
+          console.warn("Admin check didn't return admin status")
           setIsAdmin(false)
         }
         
@@ -87,17 +86,14 @@ export default function Dashboard() {
         console.error("Admin check failed:", error)
         setIsAdmin(false)
       } finally {
-        console.log("=== DASHBOARD ADMIN CHECK COMPLETE ===")
         setIsLoadingAdmin(false)
       }
     }
 
     // Add a small delay to let auth stabilize first
-    console.log("Dashboard useEffect triggered - waiting for auth to stabilize...")
     const timeoutId = setTimeout(() => {
-      console.log("Starting admin check after auth stabilization delay")
       checkAdminStatus()
-    }, 1000) // 1 second delay
+    }, 300) // 300ms delay - fast but still allows auth to stabilize
     
     return () => clearTimeout(timeoutId)
   }, [])
@@ -332,37 +328,6 @@ export default function Dashboard() {
               </div>
             </motion.div>
           )}
-
-          {/* Temporary Debug Section */}
-          <div className="mb-8 rounded-lg border border-purple-500/30 bg-purple-500/10 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-purple-200">Debug Info</h3>
-                <p className="text-xs text-purple-300">
-                  Admin: {isAdmin ? 'YES' : 'NO'} | Loading: {isLoadingAdmin ? 'YES' : 'NO'}
-                </p>
-              </div>
-              <Button
-                onClick={async () => {
-                  console.log("Manual admin check triggered")
-                  setIsLoadingAdmin(true)
-                  try {
-                    const response = await fetch('/api/debug/admin-check', { credentials: 'include' })
-                    const data = await response.json()
-                    console.log("Manual debug result:", data)
-                    setIsAdmin(data.isAdmin || false)
-                  } catch (error) {
-                    console.error("Manual check failed:", error)
-                  } finally {
-                    setIsLoadingAdmin(false)
-                  }
-                }}
-                className="bg-purple-600 hover:bg-purple-700 text-white text-xs h-6 px-3"
-              >
-                Test Admin Check
-              </Button>
-            </div>
-          </div>
 
           <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <Tabs defaultValue="all" className="w-full sm:w-auto" onValueChange={setActiveTab}>
