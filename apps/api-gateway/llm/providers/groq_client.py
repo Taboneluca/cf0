@@ -230,7 +230,7 @@ class GroqClient(LLMClient):
             print(f"[GROQ DEBUG] Starting stream for model: {self.model}")
             
             # Create stream with all parameters
-            stream = await self.client.achat.completions.create(
+            stream = await self.client.chat.completions.create(
                 model=self.model,
                 messages=groq_messages,
                 tools=wrapped_tools,

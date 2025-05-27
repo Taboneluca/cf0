@@ -62,6 +62,9 @@ def normalize_model_name(model: str) -> str:
     # For provider-prefixed models, strip the prefix and check again
     if ":" in model:
         provider, model_id = model.split(":", 1)
+        # Handle specific case for llama-3.3-70b-versatile
+        if model_id == "llama-3.3-70b-versatile" and provider == "groq":
+            return "llama-3.3-70b-versatile"
         # Try with just the model_id
         if model_id in ALIAS_MAP:
             return ALIAS_MAP[model_id]

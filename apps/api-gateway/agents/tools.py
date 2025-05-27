@@ -208,22 +208,35 @@ TOOL_CATALOG = [
     },
     {
         "name": "apply_updates_and_reply",
-        "description": "Apply many cell updates **and** provide the final human-readable reply in ONE call.",
+        "description": """Apply multiple cell updates to build a complete table/model and provide a final reply. 
+    
+    CRITICAL: You MUST include actual updates in the 'updates' array. Do NOT call this function with empty updates.
+    
+    Example usage:
+    - When building a WACC model, include ALL the input cells, labels, and formulas
+    - Each update should have 'cell' (like 'A1') and 'value' (the content)
+    - Use this for building complete financial models or large data tables
+    """,
         "parameters": {
             "type": "object",
             "properties": {
                 "updates": {
                     "type": "array",
+                    "description": "Array of cell updates. MUST contain at least one update.",
+                    "minItems": 1,
                     "items": {
                         "type": "object",
                         "properties": {
-                            "cell":  {"type": "string"},
-                            "value": {}
+                            "cell":  {"type": "string", "description": "Cell reference like 'A1', 'B2', etc."},
+                            "value": {"description": "The value to put in the cell (text, number, or formula)"}
                         },
                         "required": ["cell", "value"]
                     }
                 },
-                "reply": { "type": "string" }
+                "reply": { 
+                    "type": "string",
+                    "description": "Human-readable explanation of what was built/updated"
+                }
             },
             "required": ["updates", "reply"]
         },

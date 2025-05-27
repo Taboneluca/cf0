@@ -91,6 +91,15 @@ export default function ChatInterface({
     }
   }, [isStreaming])
 
+  // Auto-resize textarea when input changes
+  useEffect(() => {
+    if (textareaRef.current) {
+      const textarea = textareaRef.current;
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+    }
+  }, [input]);
+
   // Effect to handle live updating of range selection for @-context
   useEffect(() => {
     if (!waitingForContext || ctxStart === null || !range) return
@@ -253,10 +262,10 @@ export default function ChatInterface({
 
           {/* Input Area */}
           <div className="border-t border-gray-800 bg-[#1a1a1a] p-3 space-y-2">
-            {/* Mode and Model Selectors - Much smaller and compact */}
+            {/* Mode and Model Selectors - MOVED TO TOP */} 
             <div className="flex items-center gap-1">
               <Select value={mode} onValueChange={handleModeChange}>
-                <SelectTrigger className="w-auto min-w-[60px] h-4 border-gray-700 text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors text-xs">
+                <SelectTrigger className="w-auto min-w-[70px] h-6 border-gray-700 text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors text-xs">
                   <SelectValue>
                     {mode === "ask" ? "Ask" : "Analyst"}
                   </SelectValue>
@@ -279,14 +288,6 @@ export default function ChatInterface({
                 <ModelSelect value={model} onChange={setModel} disabled={isStreaming} />
               </div>
             </div>
-            
-            {/* PendingBar for showing updates */}
-            <PendingBar 
-              visible={pendingUpdates.length > 0}
-              pendingCount={pendingUpdates.length}
-              onApply={applyPendingUpdates}
-              onReject={rejectPendingUpdates}
-            />
             
             {/* Context tags */}
             {contexts.length > 0 && (
@@ -313,6 +314,15 @@ export default function ChatInterface({
               </div>
             )}
             
+            {/* PendingBar for showing updates */}
+            <PendingBar 
+              visible={pendingUpdates.length > 0}
+              pendingCount={pendingUpdates.length}
+              onApply={applyPendingUpdates}
+              onReject={rejectPendingUpdates}
+            />
+            
+            {/* TEXT INPUT - NOW WITH AUTO-EXPANSION */}
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Textarea
@@ -322,11 +332,21 @@ export default function ChatInterface({
                   onKeyDown={handleKeyDown}
                   placeholder={`${
                     mode === "ask" || readOnly
-                      ? "Ask about your data... (Type @ to select cell range)"
-                      : "Tell me what to change in your spreadsheet..."
+                      ? "Ask about your spreadsheet data... (Type @ to select cell ranges for context)"
+                      : "Tell me what to build or change in your spreadsheet..."
                   }`}
-                  className="resize-none border-gray-700 focus:ring-1 focus:ring-gray-600 focus:border-gray-600 rounded text-xs p-2 min-h-[24px] pr-8 bg-gray-800 text-gray-300 font-mono placeholder:text-gray-500"
-                  rows={1}
+                  className="resize-none border-gray-700 focus:ring-1 focus:ring-gray-600 focus:border-gray-600 rounded text-xs p-2 pr-8 bg-gray-800 text-gray-300 font-mono placeholder:text-gray-500 overflow-hidden"
+                  style={{
+                    minHeight: '32px',
+                    maxHeight: '120px',
+                    height: 'auto'
+                  }}
+                  onInput={(e) => {
+                    // Auto-resize textarea
+                    const target = e.target as HTMLTextAreaElement;
+                    target.style.height = 'auto';
+                    target.style.height = Math.min(target.scrollHeight, 120) + 'px';
+                  }}
                 />
                 <Button
                   onClick={handleSendMessage}

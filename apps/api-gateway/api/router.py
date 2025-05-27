@@ -293,8 +293,12 @@ async def process_message(
             if updates is None:
                 updates = []
                 
+            # CRITICAL: Reject empty updates
+            if not updates:
+                return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
+                
             if not reply:
-                reply = "Updates applied."
+                reply = f"Applied {len(updates)} updates."
             
             # Check if the reply mentions formulas being added
             formula_keywords = ["formula", "formulas", "calculation", "calculations", "= sign", "equals sign"]
@@ -662,8 +666,12 @@ async def process_message_streaming(
             if updates is None:
                 updates = []
                 
+            # CRITICAL: Reject empty updates
+            if not updates:
+                return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
+                
             if not reply:
-                reply = "Updates applied."
+                reply = f"Applied {len(updates)} updates."
             
             # Check if the reply mentions formulas being added
             formula_keywords = ["formula", "formulas", "calculation", "calculations", "= sign", "equals sign"]

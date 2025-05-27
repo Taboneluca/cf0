@@ -374,7 +374,7 @@ class BaseAgent:
                     if mutating_calls > 1 and name not in {"set_cells", 
                                                           "apply_updates_and_reply",
                                                           "set_cell"}:
-                        print(f"[{agent_id}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
+                        print(f"[{agent_calls}] ⛔ Too many mutating calls. Use set_cells for batch updates.")
                         yield ChatStep(
                             role="assistant",
                             content="Error: You should use a single set_cells call to make multiple updates. Please try again with a single batch operation."
@@ -438,11 +438,33 @@ class BaseAgent:
                             total_time = time.time() - start_time
                             print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply "
                                   f"in {total_time:.2f}s with {len(collected_updates)} updates")
-                            yield ChatStep(
-                                role="assistant",
-                                content=result["reply"],
-                                usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
-                            )
+                            
+                            # Stream updates one by one BEFORE the final reply
+                            if collected_updates:
+                                for i, update in enumerate(collected_updates):
+                                    yield ChatStep(
+                                        role="tool", 
+                                        content=f"Updating {update.get('cell', 'cell')}...",
+                                        toolResult=update,
+                                        toolCall=type('obj', (object,), {'name': 'set_cell'})()
+                                    )
+                                    # Small delay between updates for better visualization
+                                    await asyncio.sleep(0.1)
+                            
+                            # Split final reply into smaller parts for streaming
+                            reply = result['reply']
+                            if len(reply) > 50:
+                                parts = []
+                                for sentence in reply.split('.'):
+                                    if sentence.strip():
+                                        parts.append(sentence.strip() + '.')
+                                
+                                # Yield each part separately for smooth streaming
+                                for part in parts:
+                                    yield ChatStep(role="assistant", content=f"\n{part}")
+                            else:
+                                yield ChatStep(role="assistant", content=f"\n{reply}")
+                                
                             return
                     
                 except Exception as e:
@@ -1117,6 +1139,18 @@ class BaseAgent:
                             total_time = time.time() - start_time
                             print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply "
                                   f"in {total_time:.2f}s with {len(collected_updates)} updates")
+                            
+                            # Stream updates one by one BEFORE the final reply
+                            if collected_updates:
+                                for i, update in enumerate(collected_updates):
+                                    yield ChatStep(
+                                        role="tool", 
+                                        content=f"Updating {update.get('cell', 'cell')}...",
+                                        toolResult=update,
+                                        toolCall=type('obj', (object,), {'name': 'set_cell'})()
+                                    )
+                                    # Small delay between updates for better visualization
+                                    await asyncio.sleep(0.1)
                             
                             # Split final reply into smaller parts for streaming
                             reply = result['reply']

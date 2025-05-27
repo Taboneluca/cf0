@@ -65,3 +65,5 @@ ENV/
 
 # local template compiler
 /scripts/compile_templates.py apps/frontend-old/
+cookies.txt
+.vercel
