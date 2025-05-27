@@ -556,9 +556,9 @@ async def process_message_streaming(
         def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, allow_formula: bool = False, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
-            if ref is None:
-                print(f"[{request_id}] ⚠️ Missing cell reference in set_cell call")
-                return {"error": "Missing cell reference parameter"}
+            if ref is None or not str(ref).strip():
+                print(f"[{request_id}] ⚠️ Missing or empty cell reference in set_cell call: {ref}")
+                return {"error": "Missing or empty cell reference parameter"}
             
             target_sheet = sheet
             
@@ -787,7 +787,10 @@ async def process_message_streaming(
                             return {"error": f"Invalid parameters for {name}: {str(e)}"}
                 elif name == "set_cell" and len(args) == 2:
                     # Handle case where set_cell is called with (cell, value) positional args
-                    return tool_fn(cell=args[0], value=args[1])
+                    cell_ref = args[0]
+                    if not cell_ref or not cell_ref.strip():
+                        return {"error": "Invalid empty cell reference for set_cell"}
+                    return tool_fn(cell=cell_ref, value=args[1])
                 else:
                     # Normal case - keyword arguments
                     try:

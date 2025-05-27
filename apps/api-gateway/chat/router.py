@@ -186,9 +186,9 @@ async def process_message(
         def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
-            if ref is None:
-                print(f"[{request_id}] ⚠️ Missing cell reference in set_cell call")
-                return {"error": "Missing cell reference parameter"}
+            if ref is None or not str(ref).strip():
+                print(f"[{request_id}] ⚠️ Missing or empty cell reference in set_cell call: {ref}")
+                return {"error": "Missing or empty cell reference parameter"}
             
             target_sheet = sheet
             
@@ -713,9 +713,9 @@ async def process_message_streaming(
         def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
-            if ref is None:
-                print(f"[{request_id}] ⚠️ Missing cell reference in set_cell call")
-                return {"error": "Missing cell reference parameter"}
+            if ref is None or not str(ref).strip():
+                print(f"[{request_id}] ⚠️ Missing or empty cell reference in set_cell call: {ref}")
+                return {"error": "Missing or empty cell reference parameter"}
             
             target_sheet = sheet
             

@@ -335,7 +335,7 @@ export default function ChatInterface({
                       ? "Ask about your spreadsheet data... (Type @ to select cell ranges for context)"
                       : "Tell me what to build or change in your spreadsheet..."
                   }`}
-                  className="resize-none border-gray-700 focus:ring-1 focus:ring-gray-600 focus:border-gray-600 rounded text-xs p-2 pr-8 bg-gray-800 text-gray-300 font-mono placeholder:text-gray-500 overflow-hidden"
+                  className="resize-none border-gray-700 focus:ring-1 focus:ring-gray-600 focus:border-gray-600 rounded text-xs leading-relaxed p-2 pr-8 bg-gray-800 text-gray-300 font-mono placeholder:text-gray-500 overflow-hidden"
                   style={{
                     minHeight: '32px',
                     maxHeight: '120px',

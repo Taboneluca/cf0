@@ -272,24 +272,32 @@ class GroqClient(LLMClient):
                 # Handle tool calls
                 if delta.tool_calls:
                     for tool_call_delta in delta.tool_calls:
+                        # Add null checks for function attribute
+                        if not hasattr(tool_call_delta, 'function') or tool_call_delta.function is None:
+                            print(f"[GROQ DEBUG] Skipping tool_call_delta with no function: {tool_call_delta}")
+                            continue
+                            
                         # Find or create the tool call
                         tool_call_id = tool_call_delta.index
                         if tool_call_id >= len(tool_calls):
-                            # Add new tool call
+                            # Add new tool call with safe access to function attributes
+                            function_name = getattr(tool_call_delta.function, 'name', '') or ""
+                            function_args = getattr(tool_call_delta.function, 'arguments', '') or ""
+                            
                             tool_calls.append({
                                 "id": f"call_{len(tool_calls)}",
                                 "type": "function",
                                 "function": {
-                                    "name": tool_call_delta.function.name or "",
-                                    "arguments": tool_call_delta.function.arguments or ""
+                                    "name": function_name,
+                                    "arguments": function_args
                                 }
                             })
                         else:
-                            # Update existing tool call
-                            if tool_call_delta.function.name:
+                            # Update existing tool call with safe access
+                            if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
                                 tool_calls[tool_call_id]["function"]["name"] = tool_call_delta.function.name
                             
-                            if tool_call_delta.function.arguments:
+                            if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
                                 tool_calls[tool_call_id]["function"]["arguments"] += tool_call_delta.function.arguments
                     
                     # Yield after each tool call update
