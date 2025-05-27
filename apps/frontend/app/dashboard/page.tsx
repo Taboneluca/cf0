@@ -58,18 +58,54 @@ export default function Dashboard() {
   useEffect(() => {
     const checkAdminStatus = async () => {
       try {
+        // First, try to refresh the session to get latest data
+        const { error: refreshError } = await supabase.auth.refreshSession()
+        if (refreshError) {
+          console.warn("Failed to refresh session:", refreshError.message)
+        }
+
         const { data: { session } } = await supabase.auth.getSession()
+        console.log("Dashboard admin check - Session info:", {
+          hasSession: !!session,
+          userId: session?.user?.id,
+          email: session?.user?.email
+        })
+
         if (session?.user) {
-          const { data: profile } = await supabase
+          const { data: profile, error: profileError } = await supabase
             .from("profiles")
-            .select("is_admin")
+            .select("is_admin, email, is_verified, is_waitlisted")
             .eq("id", session.user.id)
             .single()
           
-          setIsAdmin(profile?.is_admin || false)
+          console.log("Dashboard admin check - Profile query result:", {
+            profile,
+            error: profileError?.message,
+            isAdmin: profile?.is_admin
+          })
+
+          if (profileError) {
+            console.error("Error fetching profile:", profileError)
+            // If there's an RLS error, try using the debug endpoint
+            try {
+              const debugResponse = await fetch('/api/debug/admin-check')
+              const debugData = await debugResponse.json()
+              console.log("Debug endpoint result:", debugData)
+              setIsAdmin(debugData.isAdmin || false)
+            } catch (debugError) {
+              console.error("Debug endpoint failed:", debugError)
+              setIsAdmin(false)
+            }
+          } else {
+            setIsAdmin(profile?.is_admin || false)
+          }
+        } else {
+          console.warn("No session found")
+          setIsAdmin(false)
         }
       } catch (error) {
         console.error("Error checking admin status:", error)
+        setIsAdmin(false)
       } finally {
         setIsLoadingAdmin(false)
       }
