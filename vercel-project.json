@@ -3,9 +3,15 @@
   "orgId": "your-org-id",
   "settings": {
     "framework": "nextjs",
-    "buildCommand": "cd ../.. && pnpm nx build frontend --configuration=production",
-    "outputDirectory": "../../dist/apps/frontend/.next",
+    "buildCommand": "npm run build",
+    "outputDirectory": ".next",
     "rootDirectory": "apps/frontend",
-    "monorepo": true
+    "monorepo": true,
+    "nodeVersion": "18.x"
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
   }
 } 

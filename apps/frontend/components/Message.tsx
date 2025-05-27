@@ -96,7 +96,7 @@ const Message: React.FC<MessageProps> = ({ message }) => {
       <div className="flex justify-start mb-2">
         <div className="flex items-start gap-2 max-w-[85%]">
           <div className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 mt-0.5">
-            <Image src="/logo.png" alt="cf0" width={12} height={12} className="rounded-sm" />
+            <Image src="/transparent_image_v2.png" alt="cf0" width={12} height={12} className="rounded-sm" />
           </div>
           <div className="text-blue-400 text-xs leading-relaxed font-mono">
             {message.status === 'thinking' ? (
@@ -188,7 +188,7 @@ const Message: React.FC<MessageProps> = ({ message }) => {
     <div className="flex justify-start mb-3">
       <div className="flex items-start gap-2 max-w-[90%]">
         <div className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5">
-          <Image src="/logo.png" alt="cf0" width={14} height={14} className="rounded-sm" />
+          <Image src="/transparent_image_v2.png" alt="cf0" width={14} height={14} className="rounded-sm" />
         </div>
         <div className="space-y-0">
           {sections}

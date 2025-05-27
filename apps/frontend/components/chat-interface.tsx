@@ -194,7 +194,7 @@ export default function ChatInterface({
         >
           <div className="flex flex-col items-center gap-3 px-2">
             <div className="w-6 h-6 rounded flex items-center justify-center">
-              <Image src="/logo.png" alt="cf0" width={16} height={16} className="rounded-sm" />
+              <Image src="/transparent_image_v2.png" alt="cf0" width={16} height={16} className="rounded-sm" />
             </div>
             <Maximize2 className="text-gray-400 group-hover:text-gray-300 transition-colors" size={14} />
             <div className="rotate-90 text-gray-400 group-hover:text-gray-300 font-mono text-xs whitespace-nowrap tracking-wide">
@@ -208,7 +208,7 @@ export default function ChatInterface({
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 bg-[#1a1a1a]">
             <div className="flex items-center gap-2">
               <div className="w-5 h-5 rounded flex items-center justify-center">
-                <Image src="/logo.png" alt="cf0" width={14} height={14} className="rounded-sm" />
+                <Image src="/transparent_image_v2.png" alt="cf0" width={14} height={14} className="rounded-sm" />
               </div>
               <span className="font-mono text-gray-300 text-sm">cf0</span>
             </div>
