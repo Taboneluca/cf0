@@ -111,6 +111,9 @@ def _airesponse_to_message(resp: AIResponse):
                         id=tc.id or f"call_{i}",
                         type="function",
                         function=fn,
+                        # --- add the two lines below ---
+                        name=tc.name,          # make them available at top level
+                        args=tc.args,
                     )
                     self.tool_calls.append(call)
                 # expose first call for convenience
