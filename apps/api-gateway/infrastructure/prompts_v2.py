@@ -26,8 +26,8 @@ def load_prompt_spec(mode: str) -> Dict[str, Any]:
     Returns:
         Prompt specification dictionary
     """
-    # First try loading from JSON file in repo
-    prompt_path = Path("docs/prompts") / f"{mode}_v2.0.json"
+    # First try loading from JSON file in repo (relative to api-gateway deployment)
+    prompt_path = Path("prompts") / f"{mode}_v2.0.json"
     
     try:
         with open(prompt_path, 'r') as f:
@@ -199,7 +199,7 @@ def export_current_prompts_to_json():
                 }
                 
                 # Save to file
-                output_path = Path("docs/prompts") / f"{mode}_legacy.json"
+                output_path = Path("prompts") / f"{mode}_legacy.json"
                 with open(output_path, 'w') as f:
                     json.dump(legacy_spec, f, indent=2)
                 
