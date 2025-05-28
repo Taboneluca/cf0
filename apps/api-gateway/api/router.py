@@ -575,9 +575,16 @@ async def process_message_streaming(
         def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, allow_formula: bool = False, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
+            print(f"[{request_id}] 🔧 set_cell_with_xref called: cell_ref='{cell_ref}', cell='{cell}', value='{value}', kwargs={kwargs}")
+            
             if ref is None or not str(ref).strip():
                 print(f"[{request_id}] ⚠️ Missing or empty cell reference in set_cell call: {ref}")
-                return {"error": "Missing or empty cell reference parameter"}
+                # CRITICAL: Return a more informative error that tells the AI to provide the cell reference
+                return {
+                    "error": "MISSING_CELL_REFERENCE", 
+                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. The 'cell' parameter cannot be empty.",
+                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')"
+                }
             
             target_sheet = sheet
             
@@ -688,12 +695,18 @@ async def process_message_streaming(
         
         # Function to apply batch updates and generate a final reply in one step
         def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, allow_formulas: bool = False, **kwargs):
+            print(f"[{request_id}] 🔧 apply_updates_and_reply called with {len(updates) if updates else 0} updates")
+            print(f"[{request_id}] 💬 Reply: {reply[:100] if reply else 'None'}{'...' if reply and len(reply) > 100 else ''}")
+            print(f"[{request_id}] 📊 All args: updates={len(updates) if updates else 0}, allow_formulas={allow_formulas}, kwargs={kwargs}")
+            
             if updates is None:
                 updates = []
                 
             # CRITICAL: Reject empty updates
             if not updates:
-                return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
+                error_msg = "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."
+                print(f"[{request_id}] ❌ Empty updates error: {error_msg}")
+                return {"error": error_msg}
                 
             if not reply:
                 reply = f"Applied {len(updates)} updates."
@@ -709,10 +722,15 @@ async def process_message_streaming(
             formula_requested = allow_formulas or any(keyword.lower() in reply.lower() for keyword in formula_keywords)
             
             # Apply the updates with formula flag if formulas were requested
+            print(f"[{request_id}] 📊 Applying {len(updates)} updates with formulas={formula_requested}")
+            for i, update in enumerate(updates[:3]):  # Log first 3 updates
+                print(f"[{request_id}] 📝 Update {i+1}: {update}")
+            
             result = set_cells_with_xref(updates=updates, allow_formulas=formula_requested)
             
             # Add our reply
             result["reply"] = reply
+            print(f"[{request_id}] ✅ apply_updates_and_reply completed with {len(result.get('updates', []))} applied updates")
             
             return result
         

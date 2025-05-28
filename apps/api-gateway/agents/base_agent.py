@@ -775,6 +775,7 @@ class BaseAgent:
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
+        error_count = {}  # Track repeated errors to prevent infinite loops
         mutating_tools = {
             "set_cell", "set_cells", "apply_updates_and_reply",
             "add_row", "add_column", "delete_row", "delete_column",
@@ -1136,6 +1137,21 @@ class BaseAgent:
                         result = fn(args)
                     fn_time = time.time() - fn_start
                     print(f"[{agent_id}] ⏱️ Function executed in {fn_time:.2f}s")
+                    
+                    # Track repeated errors to prevent infinite loops
+                    if isinstance(result, dict) and "error" in result:
+                        error_key = f"{function_name}:{result.get('error', 'unknown')}"
+                        error_count[error_key] = error_count.get(error_key, 0) + 1
+                        print(f"[{agent_id}] ⚠️ Error in {function_name}: {result['error']} (count: {error_count[error_key]})")
+                        
+                        # Break infinite loops on repeated errors
+                        if error_count[error_key] >= 3:
+                            print(f"[{agent_id}] 🛑 Breaking loop - same error repeated {error_count[error_key]} times")
+                            yield ChatStep(
+                                role="assistant", 
+                                content=f"\nI'm having trouble with the {function_name} operation. The error '{result.get('message', result['error'])}' keeps occurring. Please check your request and try again with different parameters."
+                            )
+                            return
                     
                     # Collect updates
                     if isinstance(result, dict):
