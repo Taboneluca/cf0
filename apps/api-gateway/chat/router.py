@@ -330,7 +330,6 @@ async def process_message(
                         # Try to parse as JSON if it looks like a JSON string
                         if args[0].strip().startswith('{') or args[0].strip().startswith('['):
                             try:
-                                import json
                                 data = json.loads(args[0])
                                 if isinstance(data, dict):
                                     # Handle dict format (cells_dict)
@@ -857,7 +856,6 @@ async def process_message_streaming(
                         # Try to parse as JSON if it looks like a JSON string
                         if args[0].strip().startswith('{') or args[0].strip().startswith('['):
                             try:
-                                import json
                                 data = json.loads(args[0])
                                 if isinstance(data, dict):
                                     # Handle dict format (cells_dict)
