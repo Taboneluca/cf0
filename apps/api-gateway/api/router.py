@@ -186,9 +186,14 @@ async def process_message(
         def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, allow_formula: bool = False, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
-            if ref is None:
-                print(f"[{request_id}] ⚠️ Missing cell reference in set_cell call")
-                return {"error": "Missing cell reference parameter"}
+            if ref is None or not str(ref).strip():
+                print(f"[{request_id}] ⚠️ Missing or empty cell reference in set_cell call: {ref}")
+                # CRITICAL: Return a more informative error that tells the AI to provide the cell reference
+                return {
+                    "error": "MISSING_CELL_REFERENCE", 
+                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. The 'cell' parameter cannot be empty.",
+                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')"
+                }
             
             target_sheet = sheet
             
@@ -740,6 +745,10 @@ async def process_message_streaming(
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
                 
+                # Add detailed logging for debugging
+                print(f"[{request_id}] 📊 Tool args: {json.dumps(args, default=str)[:200] if args else 'None'}...")
+                print(f"[{request_id}] 📊 Tool kwargs: {json.dumps(kwargs, default=str)[:200] if kwargs else 'None'}...")
+                
                 # Tools that need special handling
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
                 sheet_tools = ["create_new_sheet"]
@@ -831,7 +840,17 @@ async def process_message_streaming(
                 else:
                     # Normal case - keyword arguments
                     try:
-                        return tool_fn(*args, **kwargs)
+                        print(f"[{request_id}] 🧰 Executing {name}")
+                        
+                        # Add detailed logging for debugging tool calls
+                        print(f"[{request_id}] 🔧 Tool: {name}, Args: {json.dumps(args, default=str)[:200]}...")
+                        
+                        fn_start = time.time()
+                        result = tool_fn(*args, **kwargs)
+                        fn_end = time.time()
+                        fn_duration = fn_end - fn_start
+                        print(f"[{request_id}] 🚀 {name} completed in {fn_duration:.2f}s")
+                        return result
                     except TypeError as e:
                         print(f"[{request_id}] ⚠️ Error calling {name} with {args} and {kwargs}: {str(e)}")
                         return {"error": f"Invalid parameters for {name}: {str(e)}"}
