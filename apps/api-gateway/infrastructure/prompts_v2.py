@@ -9,7 +9,7 @@ from pathlib import Path, PurePath
 from typing import Dict, Any, List
 from functools import lru_cache
 
-from .supa import prompts_supabase
+from db.supa import prompts_supabase
 
 # -------------------------------------------------------------------
 # JSON-based prompt loading
