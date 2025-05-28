@@ -452,7 +452,8 @@ async def process_message_streaming(
     """
     start_time = time.time()
     request_id = f"pm-stream-{int(start_time*1000)}"
-    print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}")
+    print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}, model={model}")
+    print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
     
     try:
         # Get history, sheet, and workbook - same as process_message
@@ -869,12 +870,15 @@ async def process_message_streaming(
             if model:
                 print(f"[{request_id}] 🔄 Using explicit model: {model}")
                 llm_client = get_client(model)
+                print(f"[{request_id}] ✅ LLM client created: {llm_client.__class__.__name__}")
             else:
                 # Use default model from environment
                 llm_client = get_default_client()
                 print(f"[{request_id}] 🔄 Using default model: {llm_client.model}")
+                print(f"[{request_id}] ✅ Default LLM client created: {llm_client.__class__.__name__}")
         except Exception as e:
             print(f"[{request_id}] ❌ Error initializing LLM client: {e}")
+            traceback.print_exc()
             yield {"error": f"Error initializing LLM client: {e}"}
             return
         
@@ -883,16 +887,23 @@ async def process_message_streaming(
             # Create sheet context summary
             summary = sheet_summary(sheet)
             ctx = f"[Context] Active sheet '{summary['name']}' has {summary['n_rows']} rows × {summary['n_cols']} cols; Headers: {summary['headers']}."
+            print(f"[{request_id}] 📊 Sheet context: {ctx}")
             
             # Import and initialize orchestrator
+            print(f"[{request_id}] 🎯 Importing orchestrator...")
             from agents.orchestrator import Orchestrator
+            print(f"[{request_id}] 🎯 Creating orchestrator with {len(tool_functions)} tool functions")
+            print(f"[{request_id}] 🔧 Available tools: {list(tool_functions.keys())}")
+            
             orchestrator = Orchestrator(
                 llm=llm_client,
                 sheet=sheet,
                 tool_functions=tool_functions
             )
+            print(f"[{request_id}] ✅ Orchestrator created successfully")
 
             # Notify client that the assistant has started processing
+            print(f"[{request_id}] 📡 Sending start event to client")
             yield { 'type': 'start' }
             
             # List to collect updates that may happen during streaming
@@ -900,10 +911,15 @@ async def process_message_streaming(
             
             # Start streaming
             print(f"[{request_id}] 🔄 Starting streaming with orchestrator, mode={mode}")
+            print(f"[{request_id}] 📚 History length: {len(history)} messages")
             content_buffer = ""
+            chunk_count = 0
             
             # Stream the orchestrator's response
+            print(f"[{request_id}] 🚀 Calling orchestrator.stream_run...")
             async for chunk in orchestrator.stream_run(mode, message, history):
+                chunk_count += 1
+                print(f"[{request_id}] 📦 Received chunk #{chunk_count}: {type(chunk)} - {str(chunk)[:100]}{'...' if len(str(chunk)) > 100 else ''}")
                 # Convert string chunks to ChatStep for compatibility
                 if isinstance(chunk, str):
                     # Convert string chunks to ChatStep for compatibility

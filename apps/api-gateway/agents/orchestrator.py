@@ -198,9 +198,14 @@ class Orchestrator:
         start_time = time.time()
         request_id = f"orch-stream-{int(start_time*1000)}"
         print(f"[{request_id}] 🎭 Orchestrator.stream_run: mode={mode}, model={self.llm.model}")
+        print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
+        print(f"[{request_id}] 📚 History: {len(history) if history else 0} messages")
         
         # Get the appropriate agent
+        print(f"[{request_id}] 🔍 Getting agent for mode: {mode}")
         agent = self.get_agent(mode)
+        print(f"[{request_id}] ✅ Agent obtained: {agent.__class__.__name__}")
+        print(f"[{request_id}] 🔧 Agent has {len(agent.tools)} tools available")
         
         # Reset system prompt to prevent accumulation from previous mode switches
         agent.reset_system_prompt()
@@ -257,13 +262,16 @@ class Orchestrator:
                 print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
         
         # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
+        print(f"[{request_id}] 🚀 Calling agent.stream_run...")
         agent_stream = agent.stream_run(message, history)
+        print(f"[{request_id}] ✅ Agent.stream_run returned: {type(agent_stream)}")
         
         # Verify we got an actual async generator
         if not inspect.isasyncgen(agent_stream):
             if inspect.isawaitable(agent_stream):
                 print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
                 agent_stream = await agent_stream
+                print(f"[{request_id}] 🔄 After awaiting: {type(agent_stream)}")
                 if not inspect.isasyncgen(agent_stream):
                     print(f"[{request_id}] ❌ Agent still did not return an async generator after awaiting")
                     raise TypeError("Agent.stream_run did not return an async generator")
@@ -272,9 +280,14 @@ class Orchestrator:
                 raise TypeError("Agent.stream_run did not return an async generator")
             
         # Now wrap it with the guard
+        print(f"[{request_id}] 🛡️ Wrapping stream with guard")
         guarded_stream = wrap_stream_with_guard(agent_stream)
+        print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
         
+        step_count = 0
         async for step in guarded_stream:
+            step_count += 1
+            print(f"[{request_id}] 📦 Stream step #{step_count}: {type(step)} - {str(step)[:100]}{'...' if len(str(step)) > 100 else ''}")
             # Convert string to ChatStep if needed for consistency
             if isinstance(step, str):
                 yield ChatStep(role="assistant", content=step)

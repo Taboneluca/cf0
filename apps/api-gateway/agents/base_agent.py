@@ -744,10 +744,15 @@ class BaseAgent:
         """
         agent_id = f"stream-agent-{int(time.time()*1000)}"
         print(f"[{agent_id}] 🤖 Starting streaming agent run with message length: {len(user_message)}")
+        print(f"[{agent_id}] 🔧 Using LLM: {self.llm.__class__.__name__} - {getattr(self.llm, 'model', 'unknown')}")
+        print(f"[{agent_id}] 🛠️ Available tools: {[tool['name'] for tool in self.tools]}")
+        print(f"[{agent_id}] 📝 Message preview: {user_message[:150]}{'...' if len(user_message) > 150 else ''}")
         
         # Prepare the basic message structure with system prompt
+        print(f"[{agent_id}] 📋 Preparing system message")
         system_message = {"role": "system", "content": self.system_prompt}
         messages = [system_message]
+        print(f"[{agent_id}] 💬 System prompt length: {len(self.system_prompt)} chars")
         
         # Add conversation history if provided
         if history:
