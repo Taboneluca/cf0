@@ -113,7 +113,7 @@ class Orchestrator:
         
         # For ask mode, add explicit instruction to not generate any financial templates
         if mode == "ask":
-            agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
+            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
         
         # For analyst mode, add explicit instruction about financial model tools
         elif mode == "analyst":
@@ -215,7 +215,7 @@ class Orchestrator:
         
         # For ask mode, add explicit instruction to not generate any financial templates
         if mode == "ask":
-            agent.add_system_message("Only answer the user's question. Do NOT create or describe financial templates. Do NOT mention DCF, FSM or templates unless the user explicitly asks about them.")
+            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
         
         # For analyst mode, add explicit instruction about financial model tools
         elif mode == "analyst":
