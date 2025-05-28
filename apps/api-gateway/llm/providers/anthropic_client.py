@@ -59,12 +59,18 @@ class AnthropicClient(LLMClient):
             if msg.role == "system":
                 continue
                 
-            # Convert tool results to assistant responses with content
+            # Convert tool results to user messages with tool_result blocks (FIXED)
             if msg.role == "tool":
-                # Tool results are mapped to assistant responses in Anthropic
+                # Tool results must be in user messages for Anthropic
                 result.append({
-                    "role": "assistant",
-                    "content": f"Tool result: {msg.content}"
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": msg.tool_call_id,
+                            "content": msg.content or ""
+                        }
+                    ]
                 })
                 continue
                 
