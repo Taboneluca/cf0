@@ -219,4 +219,59 @@ def get_active_prompt(mode: str) -> str:
     Backward compatibility function - returns assembled prompt as string
     This maintains compatibility with existing BaseAgent code
     """
-    return build_system_prompt(mode) 
+    return build_system_prompt(mode)
+
+# -------------------------------------------------------------------
+# Admin compatibility functions (for role_prompts table management)
+# -------------------------------------------------------------------
+
+def list_prompts(mode: str) -> List[Dict[str, Any]]:
+    """
+    Compatibility function for admin endpoints.
+    Return all stored versions for admin UI (latest first) from role_prompts table.
+    """
+    if prompts_supabase is None:
+        return []
+    
+    try:
+        res = (
+            prompts_supabase.table("role_prompts")
+            .select("*")
+            .eq("mode", mode)
+            .order("version", desc=True)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error listing prompts for mode {mode}: {e}")
+        return []
+
+def create_prompt(mode: str, text: str, created_by: str, version: str = "v1.0") -> Dict[str, Any]:
+    """
+    Compatibility function for admin endpoints.
+    Insert new prompt version and make it active in role_prompts table.
+    Previous active version is automatically de-activated.
+    """
+    if prompts_supabase is None:
+        raise RuntimeError("Supabase client not configured")
+    
+    try:
+        # deactivate older active prompt
+        prompts_supabase.table("role_prompts") \
+            .update({"active": False}) \
+            .eq("mode", mode) \
+            .eq("active", True) \
+            .execute()
+
+        result = prompts_supabase.table("role_prompts").insert({
+            "mode": mode,
+            "content": text,
+            "version": version,
+            "active": True,
+            "inserted_at": "now()"
+        }).execute()
+
+        return result.data[0] if result.data else {}
+    except Exception as e:
+        print(f"Error creating prompt for mode {mode}: {e}")
+        raise 

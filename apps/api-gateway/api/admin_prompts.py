@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List
-from db.prompts import list_prompts, create_prompt
+from infrastructure.prompts_v2 import list_prompts, create_prompt
 
 router = APIRouter(prefix="/admin/prompts", tags=["Prompts"])
 
