@@ -1,6 +1,7 @@
 from .base_agent import BaseAgent
 from .tools import READ_ONLY_TOOLS
 from llm.base import LLMClient
+from infrastructure.prompts_v2 import build_system_prompt
 
 ASK_SYSTEM = """
 You are an expert data-analysis assistant working on a spreadsheet.
@@ -25,17 +26,24 @@ Key guidelines:
 
 def build(llm: LLMClient) -> BaseAgent:
     """
-    Creates an AskAgent with the given LLM provider.
+    Creates an AskAgent with the new JSON-based prompt system.
     
     Args:
         llm: The LLMClient implementation to use
         
     Returns:
-        A BaseAgent instance configured for read-only operations
+        A BaseAgent instance configured for read-only operations with structured prompts
     """
+    # Build the structured prompt with auto-generated tools documentation
+    system_prompt = build_system_prompt(
+        mode="ask",
+        sheet_summary="",  # Will be injected by orchestrator
+        tools=READ_ONLY_TOOLS
+    )
+    
     return BaseAgent(
         llm,
-        ASK_SYSTEM,              # fallback
+        system_prompt,           # Use the structured P-T-C-F prompt
         READ_ONLY_TOOLS,
-        agent_mode="ask",        # <<< NEW
+        agent_mode="ask",
     )

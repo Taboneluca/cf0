@@ -1,6 +1,7 @@
 from .base_agent import BaseAgent
 from .tools import ALL_TOOLS
 from llm.base import LLMClient
+from infrastructure.prompts_v2 import build_system_prompt
 
 ANALYST_SYSTEM = """
 You are an advanced spreadsheet analyst.
@@ -52,17 +53,24 @@ CRITICAL: You MUST use tool calls to actually make changes to the sheet.
 
 def build(llm: LLMClient) -> BaseAgent:
     """
-    Creates an AnalystAgent with the given LLM provider.
+    Creates an AnalystAgent with the new JSON-based prompt system.
     
     Args:
         llm: The LLMClient implementation to use
         
     Returns:
-        A BaseAgent instance configured for full spreadsheet operations
+        A BaseAgent instance configured for full spreadsheet operations with structured prompts
     """
+    # Build the structured prompt with auto-generated tools documentation
+    system_prompt = build_system_prompt(
+        mode="analyst",
+        sheet_summary="",  # Will be injected by orchestrator
+        tools=ALL_TOOLS
+    )
+    
     return BaseAgent(
         llm,
-        ANALYST_SYSTEM,          # fallback
+        system_prompt,           # Use the structured P-T-C-F prompt
         ALL_TOOLS,
-        agent_mode="analyst",    # <<< NEW
+        agent_mode="analyst",
     )

@@ -12,7 +12,6 @@ from chat.token_utils import trim_history
 from agents.json_utils import safe_json_loads
 from llm.base import LLMClient
 from pydantic import BaseModel
-from db.prompts import get_active_prompt
 from types import SimpleNamespace
 from llm.chat_types import AIResponse, Message
 from llm.catalog import normalise, normalize_model_name  # Import the normalize_model_name function
