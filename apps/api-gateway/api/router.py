@@ -2,9 +2,9 @@ import asyncio
 import time
 import traceback
 import os
+import json  # Add missing json import
 from typing import Dict, Any, Optional, AsyncGenerator
 from functools import partial
-import json  # for serializing sheet state
 from dotenv import load_dotenv
 
 # Import the factory function instead of the provider registry
