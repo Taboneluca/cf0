@@ -271,24 +271,24 @@ async def process_message(
             
             try:
                 # Validate updates parameter
-                if updates is None:
-                    updates = []
-                    
+            if updates is None:
+                updates = []
+                
                 # Check for empty updates list
                 if not updates or len(updates) == 0:
                     print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates.")
                     return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
                     
-                if not reply:
-                    reply = "Updates applied."
-                    
-                # Apply the updates
-                result = set_cells_with_xref(updates=updates)
+            if not reply:
+                reply = "Updates applied."
                 
-                # Add our reply
-                result["reply"] = reply
-                
-                return result
+            # Apply the updates
+            result = set_cells_with_xref(updates=updates)
+            
+            # Add our reply
+            result["reply"] = reply
+            
+            return result
             except Exception as e:
                 # Better error handling - log the error and return a proper error response
                 print(f"[{request_id}] ❌ Error in apply_updates_and_reply: {str(e)}")
@@ -893,24 +893,24 @@ async def process_message_streaming(
             
             try:
                 # Validate updates parameter
-                if updates is None:
-                    updates = []
-                    
+            if updates is None:
+                updates = []
+                
                 # Check for empty updates list
                 if not updates or len(updates) == 0:
                     print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates.")
                     return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
                     
-                if not reply:
-                    reply = "Updates applied."
-                    
-                # Apply the updates
-                result = set_cells_with_xref(updates=updates)
+            if not reply:
+                reply = "Updates applied."
                 
-                # Add our reply
-                result["reply"] = reply
-                
-                return result
+            # Apply the updates
+            result = set_cells_with_xref(updates=updates)
+            
+            # Add our reply
+            result["reply"] = reply
+            
+            return result
             except Exception as e:
                 # Better error handling - log the error and return a proper error response
                 print(f"[{request_id}] ❌ Error in apply_updates_and_reply: {str(e)}")

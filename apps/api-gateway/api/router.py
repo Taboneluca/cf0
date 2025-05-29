@@ -186,15 +186,44 @@ async def process_message(
         def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, allow_formula: bool = False, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
-            if ref is None or not str(ref).strip():
-                print(f"[{request_id}] ⚠️ Missing or empty cell reference in set_cell call: {ref}")
-                # CRITICAL: Return a more informative error that tells the AI to provide the cell reference
+            
+            # Enhanced debugging and validation
+            print(f"[{request_id}] 🔧 set_cell_with_xref called: cell_ref='{cell_ref}', cell='{cell}', value='{value}', kwargs={kwargs}")
+            
+            # Check for completely missing parameters
+            if ref is None:
+                print(f"[{request_id}] ⚠️ Both cell_ref and cell parameters are None")
                 return {
                     "error": "MISSING_CELL_REFERENCE", 
-                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. The 'cell' parameter cannot be empty.",
-                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')"
+                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. Both 'cell_ref' and 'cell' parameters are missing.",
+                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')",
+                    "debug": {
+                        "cell_ref": cell_ref,
+                        "cell": cell,
+                        "value": value,
+                        "kwargs": kwargs
+                    }
                 }
             
+            # Check for empty string after converting to string and stripping
+            ref_str = str(ref).strip() if ref is not None else ""
+            if not ref_str:
+                print(f"[{request_id}] ⚠️ Empty cell reference after stripping: '{ref}' -> '{ref_str}'")
+                return {
+                    "error": "EMPTY_CELL_REFERENCE", 
+                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. The cell reference cannot be empty.",
+                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')",
+                    "debug": {
+                        "original_ref": ref,
+                        "stripped_ref": ref_str,
+                        "cell_ref": cell_ref,
+                        "cell": cell,
+                        "value": value
+                    }
+                }
+            
+            # Use the cleaned reference
+            ref = ref_str
             target_sheet = sheet
             
             # If the cell reference includes a sheet name (e.g., Sheet2!A1)
@@ -255,9 +284,16 @@ async def process_message(
             for update in updates:
                 # Skip invalid update objects
                 if not isinstance(update, dict) or "cell" not in update:
+                    print(f"[{request_id}] ⚠️ Skipping invalid update object: {update}")
                     continue
                     
                 cell_ref = update["cell"]
+                
+                # Validate cell reference
+                if not cell_ref or not str(cell_ref).strip():
+                    print(f"[{request_id}] ⚠️ Skipping update with empty cell reference: '{cell_ref}'")
+                    continue
+                
                 value = update.get("value", update.get("new_value", update.get("new", None)))
                 
                 # If the cell reference includes a sheet name (e.g., Sheet2!A1)
@@ -580,17 +616,44 @@ async def process_message_streaming(
         def set_cell_with_xref(cell_ref: str = None, cell: str = None, value: Any = None, allow_formula: bool = False, **kwargs):
             # Accept either cell_ref or cell parameter name
             ref = cell_ref if cell_ref is not None else cell
+            
+            # Enhanced debugging and validation
             print(f"[{request_id}] 🔧 set_cell_with_xref called: cell_ref='{cell_ref}', cell='{cell}', value='{value}', kwargs={kwargs}")
             
-            if ref is None or not str(ref).strip():
-                print(f"[{request_id}] ⚠️ Missing or empty cell reference in set_cell call: {ref}")
-                # CRITICAL: Return a more informative error that tells the AI to provide the cell reference
+            # Check for completely missing parameters
+            if ref is None:
+                print(f"[{request_id}] ⚠️ Both cell_ref and cell parameters are None")
                 return {
                     "error": "MISSING_CELL_REFERENCE", 
-                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. The 'cell' parameter cannot be empty.",
-                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')"
+                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. Both 'cell_ref' and 'cell' parameters are missing.",
+                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')",
+                    "debug": {
+                        "cell_ref": cell_ref,
+                        "cell": cell,
+                        "value": value,
+                        "kwargs": kwargs
+                    }
                 }
             
+            # Check for empty string after converting to string and stripping
+            ref_str = str(ref).strip() if ref is not None else ""
+            if not ref_str:
+                print(f"[{request_id}] ⚠️ Empty cell reference after stripping: '{ref}' -> '{ref_str}'")
+                return {
+                    "error": "EMPTY_CELL_REFERENCE", 
+                    "message": "You must provide a valid cell reference like 'A1', 'B2', etc. The cell reference cannot be empty.",
+                    "example": "Call set_cell with: set_cell(cell='A1', value='Hello')",
+                    "debug": {
+                        "original_ref": ref,
+                        "stripped_ref": ref_str,
+                        "cell_ref": cell_ref,
+                        "cell": cell,
+                        "value": value
+                    }
+                }
+            
+            # Use the cleaned reference
+            ref = ref_str
             target_sheet = sheet
             
             # If the cell reference includes a sheet name (e.g., Sheet2!A1)
@@ -651,9 +714,16 @@ async def process_message_streaming(
             for update in updates:
                 # Skip invalid update objects
                 if not isinstance(update, dict) or "cell" not in update:
+                    print(f"[{request_id}] ⚠️ Skipping invalid update object: {update}")
                     continue
                     
                 cell_ref = update["cell"]
+                
+                # Validate cell reference
+                if not cell_ref or not str(cell_ref).strip():
+                    print(f"[{request_id}] ⚠️ Skipping update with empty cell reference: '{cell_ref}'")
+                    continue
+                
                 value = update.get("value", update.get("new_value", update.get("new", None)))
                 
                 # If the cell reference includes a sheet name (e.g., Sheet2!A1)

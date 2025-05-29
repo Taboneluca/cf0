@@ -589,6 +589,12 @@ class BaseAgent:
                                         if "cell" in update and ("new_value" in update or "new" in update or "value" in update):
                                             cell = update["cell"]
                                             value = update.get("new_value", update.get("new", update.get("value")))
+                                            
+                                            # Validate cell reference before attempting to execute
+                                            if not cell or not str(cell).strip():
+                                                print(f"[{agent_id}] ⚠️ Skipping update with invalid cell reference: '{cell}'")
+                                                continue
+                                            
                                             print(f"[{agent_id}] 📝 Executing set_cell from JSON for {cell} = {value}")
                                             
                                             # Apply the update directly
@@ -632,6 +638,11 @@ class BaseAgent:
                                 if "cell" in update and ("new_value" in update or "new" in update or "value" in update):
                                     cell = update["cell"]
                                     value = update.get("new_value", update.get("new", update.get("value")))
+                                    
+                                    # Validate cell reference before attempting to execute
+                                    if not cell or not str(cell).strip():
+                                        print(f"[{agent_id}] ⚠️ Skipping update with invalid cell reference: '{cell}'")
+                                        continue
                                     
                                     print(f"[{agent_id}] 📝 Executing set_cell from direct JSON for {cell} = {value}")
                                     
