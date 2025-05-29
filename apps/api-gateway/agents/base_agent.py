@@ -892,14 +892,6 @@ class BaseAgent:
             is_function_call = False
             current_tool_calls = {}  # Track accumulating tool calls
             
-            # Setup for collecting the streaming response
-            # current_content = ""     # MOVED ABOVE
-            # previous_content = ""    # MOVED ABOVE  
-            # function_name = None     # MOVED ABOVE
-            # function_args = ""       # MOVED ABOVE
-            # is_function_call = False # MOVED ABOVE
-            # current_tool_calls = {}  # MOVED ABOVE
-            
             # Proper tool call accumulation for streaming
             accumulated_tool_calls = []  # List to store tool calls being built
             
@@ -960,18 +952,20 @@ class BaseAgent:
                                         "type": "function",
                                         "function": {"name": "", "arguments": ""}
                                     })
-                                    
+                                
                                 current_tool_call = accumulated_tool_calls[index]
                                 
-                                # Accumulate the tool call properties
-                                if tool_call_chunk.id:
-                                    current_tool_call["id"] += tool_call_chunk.id
+                                # Accumulate the tool call properties - FIX: Don't concatenate IDs
+                                if hasattr(tool_call_chunk, 'id') and tool_call_chunk.id and not current_tool_call["id"]:
+                                    # Only set ID once - OpenAI sends complete ID in first chunk
+                                    current_tool_call["id"] = tool_call_chunk.id
+                                # FIX: Use correct OpenAI format attributes
                                 if tool_call_chunk.function and tool_call_chunk.function.name:
                                     current_tool_call["function"]["name"] += tool_call_chunk.function.name
                                 if tool_call_chunk.function and tool_call_chunk.function.arguments:
                                     current_tool_call["function"]["arguments"] += tool_call_chunk.function.arguments
                                 
-                                print(f"[{agent_id}] 🔧 Tool call {index}: name='{current_tool_call['function']['name']}', args_length={len(current_tool_call['function']['arguments'])}")
+                                print(f"[{agent_id}] 🔧 OpenAI tool call {index}: id='{current_tool_call['id'][:20]}...', name='{current_tool_call['function']['name']}', args_length={len(current_tool_call['function']['arguments'])}")
                         
                         # Handle legacy function_call format
                         if hasattr(delta, "function_call") and delta.function_call:
@@ -1193,33 +1187,51 @@ class BaseAgent:
                                     
                                 current_tool_call = accumulated_tool_calls[index]
                                 
-                                # Accumulate the tool call properties
-                                if hasattr(tool_call_chunk, 'id') and tool_call_chunk.id:
-                                    current_tool_call["id"] += tool_call_chunk.id
-                                if hasattr(tool_call_chunk, 'name') and tool_call_chunk.name:
-                                    current_tool_call["function"]["name"] += tool_call_chunk.name
-                                if hasattr(tool_call_chunk, 'args'):
-                                    if isinstance(tool_call_chunk.args, str):
-                                        current_tool_call["function"]["arguments"] += tool_call_chunk.args
-                                    elif isinstance(tool_call_chunk.args, dict):
-                                        # Convert dict to JSON string
-                                        current_tool_call["function"]["arguments"] += json.dumps(tool_call_chunk.args)
+                                # Accumulate the tool call properties - FIX: Don't concatenate IDs
+                                if hasattr(tool_call_chunk, 'id') and tool_call_chunk.id and not current_tool_call["id"]:
+                                    # Only set ID once - OpenAI sends complete ID in first chunk
+                                    current_tool_call["id"] = tool_call_chunk.id
+                                # FIX: Use correct OpenAI format attributes
+                                if tool_call_chunk.function and tool_call_chunk.function.name:
+                                    current_tool_call["function"]["name"] += tool_call_chunk.function.name
+                                if tool_call_chunk.function and tool_call_chunk.function.arguments:
+                                    current_tool_call["function"]["arguments"] += tool_call_chunk.function.arguments
                                 
-                                print(f"[{agent_id}] 🔧 AIResponse tool call {index}: name='{current_tool_call['function']['name']}', args_length={len(current_tool_call['function']['arguments'])}")
+                                print(f"[{agent_id}] 🔧 OpenAI tool call {index}: id='{current_tool_call['id'][:20]}...', name='{current_tool_call['function']['name']}', args_length={len(current_tool_call['function']['arguments'])}")
                 
                 # Process accumulated tool calls after streaming is complete
                 if accumulated_tool_calls:
                     print(f"[{agent_id}] 🛠️ Processing {len(accumulated_tool_calls)} accumulated tool calls")
                     
+                    # Validate tool call IDs to prevent OpenAI 400 errors
+                    for i, tool_call in enumerate(accumulated_tool_calls):
+                        if not tool_call["id"] or len(tool_call["id"]) > 40:
+                            # Generate a valid ID if missing or too long
+                            new_id = f"call_{int(time.time()*1000)}_{i}"[:40]
+                            print(f"[{agent_id}] 🔧 Fixed invalid tool call ID: '{tool_call['id'][:50]}...' -> '{new_id}'")
+                            tool_call["id"] = new_id
+                        
+                        # Ensure function name is present
+                        if not tool_call["function"]["name"]:
+                            print(f"[{agent_id}] ❌ Skipping tool call with empty function name")
+                            continue
+                    
+                    # Filter out invalid tool calls
+                    valid_tool_calls = [tc for tc in accumulated_tool_calls if tc["function"]["name"]]
+                    
+                    if not valid_tool_calls:
+                        print(f"[{agent_id}] ⚠️ No valid tool calls found, continuing without tools")
+                        continue
+                    
                     # Add the assistant message with tool calls to conversation
                     msg = {
                         "role": "assistant",
-                        "tool_calls": accumulated_tool_calls
+                        "tool_calls": valid_tool_calls
                     }
                     messages.append(msg)
                     
                     # Process each tool call
-                    for tool_call in accumulated_tool_calls:
+                    for tool_call in valid_tool_calls:
                         function_name = tool_call["function"]["name"]
                         function_args_str = tool_call["function"]["arguments"]
                         tool_call_id = tool_call["id"]
@@ -1339,6 +1351,16 @@ class BaseAgent:
             except Exception as e:
                 print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")
                 traceback.print_exc()  # Add stack trace for better debugging
+                
+                # Check for specific OpenAI errors that indicate we should break the loop
+                error_str = str(e)
+                if "string too long" in error_str or "tool_calls" in error_str or "400" in error_str:
+                    print(f"[{agent_id}] 🛑 Detected tool call validation error, breaking iteration loop")
+                    # Clean up messages to remove problematic tool calls
+                    messages = [m for m in messages if not (m.get("role") == "assistant" and "tool_calls" in m)]
+                    yield ChatStep(role="assistant", content="I encountered a technical issue with tool calls. Let me provide a direct response instead.")
+                    return
+                
                 yield ChatStep(role="assistant", content=f"\nError communicating with AI service: {str(e)}")
                 return
         
