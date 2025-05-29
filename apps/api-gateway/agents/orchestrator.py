@@ -400,22 +400,15 @@ PREVIOUS CONTEXT TO IMPLEMENT:
 {implementation_context}
 
 EXECUTION INSTRUCTIONS:
-1. First, analyze the above context to identify what needs to be built (e.g., income statement structure)
-2. Break down the implementation into specific cell updates with labels and formulas
-3. Start by creating the header structure using set_cell for titles and labels
-4. Then set up the input sections with clear labels (e.g., "Sales Revenue", "COGS", etc.)
-5. Add calculation formulas using set_cell with proper cell references
-6. Work systematically from top to bottom, row by row
-7. Use set_cell for individual updates rather than trying to do everything at once
+1. Analyze the above context to understand EXACTLY what needs to be built/implemented
+2. Extract all specific details: labels, formulas, data sources, structure, formatting
+3. If it's a financial model/table, identify all required components (inputs, calculations, outputs)
+4. Implement the complete specification using appropriate tools
+5. Do NOT ask for clarification - proceed with implementation based on the context
+6. If multiple options exist, choose the most comprehensive and industry-standard approach
 
-IMPORTANT: 
-- Use set_cell(cell="A1", value="Income Statement") for headers
-- Use set_cell(cell="A2", value="Sales Revenue") for labels  
-- Use set_cell(cell="B5", value="=B2-B4") for formulas
-- Do NOT use apply_updates_and_reply unless you have a complete list of specific updates
-- Focus on building the structure systematically rather than all at once
-
-Start implementation now by setting up the basic structure.
+CRITICAL: The user expects you to automatically execute the plan from the context above. 
+Do not explain what you're going to do - just do it immediately.
 """
                 agent.add_system_message(context_instruction)
                 

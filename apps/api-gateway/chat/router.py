@@ -266,22 +266,11 @@ async def process_message(
         # Function to apply batch updates and generate a final reply in one step
         def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
             try:
-                # Handle case where updates is None or empty
                 if updates is None:
                     updates = []
-                
-                # If no updates provided, return a helpful message
-                if not updates:
-                    if not reply:
-                        reply = "No updates to apply. Use set_cell or set_cells to make changes first."
-                    return {
-                        "reply": reply,
-                        "updates": [],
-                        "info": "apply_updates_and_reply called with no updates"
-                    }
                     
                 if not reply:
-                    reply = "Updates applied successfully."
+                    reply = "Updates applied."
                     
                 # Apply the updates
                 result = set_cells_with_xref(updates=updates)
@@ -406,49 +395,19 @@ async def process_message(
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "sheet_summary":
-                        # sheet_summary doesn't take string arguments - it works on the current sheet
+                    elif name in ["sheet_summary", "list_sheets", "get_sheet_summary"]:
+                        # These functions are already bound with partial() and don't expect additional arguments
                         try:
-                            # Call without arguments - it uses the bound sheet
+                            print(f"[{request_id}] 🔧 Calling {name} without additional arguments (already bound with partial)")
                             return tool_fn()
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "get_sheet_summary":
-                        # get_sheet_summary expects a sheet_id parameter
+                    elif name == "apply_updates_and_reply":
+                        # This function requires proper updates array and reply text - don't call with just string
                         try:
-                            # Use the string as sheet_id parameter
-                            return tool_fn(sheet_id=args[0])
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "list_sheets":
-                        # list_sheets doesn't take string arguments - it works on the current workbook
-                        try:
-                            # Call without arguments - it uses the bound workbook
-                            return tool_fn()
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "calculate":
-                        # For calculate, use the formula parameter for the string
-                        try:
-                            # Always use as keyword argument - calculate expects formula parameter
-                            return tool_fn(formula=args[0])
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "get_row_by_header" or name == "get_column_by_header":
-                        # These expect header parameter
-                        try:
-                            return tool_fn(header=args[0])
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "apply_scalar_to_row" or name == "apply_scalar_to_column":
-                        # These tools need more than just a string - they need header and scalar value
-                        try:
-                            return {"error": f"{name} requires both header and scalar parameters. Single string argument not supported."}
+                            print(f"[{request_id}] ⚠️ apply_updates_and_reply called with string argument - requires proper updates array")
+                            return {"error": f"apply_updates_and_reply requires both updates array and reply text, not a single string."}
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
@@ -919,22 +878,11 @@ async def process_message_streaming(
         # Function to apply batch updates and generate a final reply in one step
         def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
             try:
-                # Handle case where updates is None or empty
                 if updates is None:
                     updates = []
-                
-                # If no updates provided, return a helpful message
-                if not updates:
-                    if not reply:
-                        reply = "No updates to apply. Use set_cell or set_cells to make changes first."
-                    return {
-                        "reply": reply,
-                        "updates": [],
-                        "info": "apply_updates_and_reply called with no updates"
-                    }
                     
                 if not reply:
-                    reply = "Updates applied successfully."
+                    reply = "Updates applied."
                     
                 # Apply the updates
                 result = set_cells_with_xref(updates=updates)
@@ -1059,49 +1007,19 @@ async def process_message_streaming(
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "sheet_summary":
-                        # sheet_summary doesn't take string arguments - it works on the current sheet
+                    elif name in ["sheet_summary", "list_sheets", "get_sheet_summary"]:
+                        # These functions are already bound with partial() and don't expect additional arguments
                         try:
-                            # Call without arguments - it uses the bound sheet
+                            print(f"[{request_id}] 🔧 Calling {name} without additional arguments (already bound with partial)")
                             return tool_fn()
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "get_sheet_summary":
-                        # get_sheet_summary expects a sheet_id parameter
+                    elif name == "apply_updates_and_reply":
+                        # This function requires proper updates array and reply text - don't call with just string
                         try:
-                            # Use the string as sheet_id parameter
-                            return tool_fn(sheet_id=args[0])
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "list_sheets":
-                        # list_sheets doesn't take string arguments - it works on the current workbook
-                        try:
-                            # Call without arguments - it uses the bound workbook
-                            return tool_fn()
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "calculate":
-                        # For calculate, use the formula parameter for the string
-                        try:
-                            # Always use as keyword argument - calculate expects formula parameter
-                            return tool_fn(formula=args[0])
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "get_row_by_header" or name == "get_column_by_header":
-                        # These expect header parameter
-                        try:
-                            return tool_fn(header=args[0])
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "apply_scalar_to_row" or name == "apply_scalar_to_column":
-                        # These tools need more than just a string - they need header and scalar value
-                        try:
-                            return {"error": f"{name} requires both header and scalar parameters. Single string argument not supported."}
+                            print(f"[{request_id}] ⚠️ apply_updates_and_reply called with string argument - requires proper updates array")
+                            return {"error": f"apply_updates_and_reply requires both updates array and reply text, not a single string."}
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
