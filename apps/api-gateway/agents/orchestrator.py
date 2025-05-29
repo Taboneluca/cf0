@@ -30,22 +30,33 @@ class ContextAnalyzer:
         if not history:
             return None
             
-        # Look for messages with detailed specifications
+        # Enhanced patterns for financial and spreadsheet models
         context_patterns = [
             # Financial models and calculations
             r'(?i)(wacc|weighted average cost|discount rate|valuation|financial model)',
             r'(?i)(income statement|balance sheet|cash flow|p&l|profit)',
             r'(?i)(model|template|table|structure|format)',
+            # Spreadsheet-specific patterns
+            r'(?i)(cell|row|column|header|formula|calculation)',
+            r'(?i)(A1|B1|C1|D1|A2|B2|C2|D2)',  # Cell references
+            r'(?i)(=SUM|=AVERAGE|=MAX|=MIN|=[A-Z]+[0-9]+)',  # Excel formulas
             # Data specifications
             r'(?i)(rows?|columns?|cells?|data|fields?|headers?)',
             r'(?i)(calculate|compute|build|create|generate|set up)',
             # Detailed descriptions with steps
             r'(?i)(steps?|process|methodology|approach|structure)',
-            r'(?i)(inputs?|outputs?|formula|calculation|equation)'
+            r'(?i)(inputs?|outputs?|formula|calculation|equation)',
+            # Financial statement specific
+            r'(?i)(revenue|sales|expenses|costs|profit|loss|assets|liabilities|equity)',
+            r'(?i)(gross profit|operating income|net income|total)'
         ]
         
-        # Find the most recent substantial message with implementation details
-        for message in reversed(history[-10:]):  # Look at last 10 messages
+        # Look for the most recent substantial message with implementation details
+        best_context = None
+        best_score = 0
+        
+        # Check last 15 messages instead of 10 to capture more context
+        for message in reversed(history[-15:]):
             if message.get('role') == 'user':
                 continue
                 
@@ -56,11 +67,24 @@ class ContextAnalyzer:
             # Count pattern matches to determine relevance
             pattern_matches = sum(1 for pattern in context_patterns if re.search(pattern, content))
             
-            # If message has multiple patterns and substantial content, it's likely implementation context
-            if pattern_matches >= 2 and len(content) > 200:
-                return content
-                
-        return None
+            # Give extra weight to messages with cell references, formulas, or financial terms
+            bonus_patterns = [
+                r'(?i)(cell [A-Z][0-9]+|[A-Z][0-9]+:)',  # Cell references
+                r'(?i)(=\w+\(|formula)',  # Excel formulas
+                r'(?i)(income statement|balance sheet|cash flow)',  # Financial statements
+                r'(?i)(header|column|row)',  # Spreadsheet structure
+            ]
+            bonus_score = sum(2 for pattern in bonus_patterns if re.search(pattern, content))
+            
+            total_score = pattern_matches + bonus_score
+            
+            # If message has good patterns and substantial content, consider it
+            if total_score >= 3 and len(content) > 200:
+                if total_score > best_score:
+                    best_context = content
+                    best_score = total_score
+                    
+        return best_context
     
     @staticmethod
     def analyze_user_intent(message: str, history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -75,12 +99,15 @@ class ContextAnalyzer:
             'direct_reference': [
                 r'(?i)\b(build|create|implement|make|generate|set up)\s+(the\s+)?(above|that|this|it)\b',
                 r'(?i)\b(do|execute|perform|carry out)\s+(the\s+)?(above|that|this|it)\b',
-                r'(?i)\b(based on|using|following)\s+(the\s+)?(above|previous|that|what)\b'
+                r'(?i)\b(based on|using|following)\s+(the\s+)?(above|previous|that|what)\b',
+                r'(?i)\b(build|create|implement|make|generate|set up).*in.*sheet\b',
+                r'(?i)\b(build|create|implement|make|generate|set up).*in.*current.*sheet\b'
             ],
             'contextual_reference': [
                 r'(?i)\b(as\s+)?(described|mentioned|discussed|outlined|specified)\s+(above|previously|earlier|before)\b',
                 r'(?i)\b(the\s+)?(plan|model|structure|format|template)\s+(we|you|I)\s+(discussed|mentioned|described)\b',
-                r'(?i)\b(what\s+)?(we|you|I)\s+(talked about|discussed|went over|covered)\b'
+                r'(?i)\b(what\s+)?(we|you|I)\s+(talked about|discussed|went over|covered)\b',
+                r'(?i)\b(income statement|balance sheet|cash flow|financial model)\s+.*(described|mentioned|outlined)\b'
             ],
             'imperative_with_context': [
                 r'(?i)^(now\s+)?(build|create|implement|make|generate|set up)\b',
@@ -403,12 +430,21 @@ EXECUTION INSTRUCTIONS:
 1. Analyze the above context to understand EXACTLY what needs to be built/implemented
 2. Extract all specific details: labels, formulas, data sources, structure, formatting
 3. If it's a financial model/table, identify all required components (inputs, calculations, outputs)
-4. Implement the complete specification using appropriate tools
-5. Do NOT ask for clarification - proceed with implementation based on the context
-6. If multiple options exist, choose the most comprehensive and industry-standard approach
+4. Look for any cell references (A1, B2, etc.) and formulas (=SUM, =AVERAGE, etc.) mentioned
+5. Implement using proper tool calls with exact cell references and values
+6. If formulas are mentioned, use allow_formula=True parameter
+7. Build the complete structure step by step, starting with headers/labels
+8. Do NOT ask for clarification - proceed with implementation based on the context
+9. If multiple options exist, choose the most comprehensive and industry-standard approach
+
+TOOL CALL REQUIREMENTS:
+- Always provide specific cell references (e.g., "A1", "B2") 
+- For multiple updates, use apply_updates_and_reply with a complete updates array
+- For formulas, include allow_formula=True parameter
+- Make sure every update has both "cell" and "value" fields
 
 CRITICAL: The user expects you to automatically execute the plan from the context above. 
-Do not explain what you're going to do - just do it immediately.
+Do not explain what you're going to do - just do it immediately using the appropriate tool calls.
 """
                 agent.add_system_message(context_instruction)
                 

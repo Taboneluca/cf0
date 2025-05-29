@@ -815,6 +815,16 @@ async def process_message_streaming(
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
                 
+                # ENHANCED DEBUGGING for tool wrapper calls
+                print(f"[{request_id}] 🔍 TOOL WRAPPER DEBUG:")
+                print(f"[{request_id}] 📝 Tool name: '{name}'")
+                print(f"[{request_id}] 📝 Args type: {type(args)}")
+                print(f"[{request_id}] 📝 Args content: {repr(args)}")
+                print(f"[{request_id}] 📝 Args length: {len(args) if args else 0}")
+                print(f"[{request_id}] 📝 Kwargs type: {type(kwargs)}")
+                print(f"[{request_id}] 📝 Kwargs content: {repr(kwargs)}")
+                print(f"[{request_id}] 📝 Kwargs length: {len(kwargs) if kwargs else 0}")
+                
                 # Add detailed logging for debugging
                 print(f"[{request_id}] 📊 Tool args: {json.dumps(args, default=str)[:200] if args else 'None'}...")
                 print(f"[{request_id}] 📊 Tool kwargs: {json.dumps(kwargs, default=str)[:200] if kwargs else 'None'}...")

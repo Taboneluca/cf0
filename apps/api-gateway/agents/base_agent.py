@@ -321,19 +321,77 @@ class BaseAgent:
                 name = tc.name
                 args = tc.args
                 
+                # ENHANCED DEBUGGING for tool call parsing
+                print(f"[{agent_id}] 🔍 RAW TOOL CALL DEBUG:")
+                print(f"[{agent_id}] 📝 Tool name: '{name}'")
+                print(f"[{agent_id}] 📝 Raw args type: {type(args)}")
+                print(f"[{agent_id}] 📝 Raw args content: {repr(args)}")
+                print(f"[{agent_id}] 📝 Raw args str: '{str(args)}'")
+                if hasattr(tc, 'id'):
+                    print(f"[{agent_id}] 📝 Tool call ID: {tc.id}")
+                
+                # Additional debugging for the raw message
+                print(f"[{agent_id}] 🔍 RAW MESSAGE DEBUG:")
+                print(f"[{agent_id}] 📝 Message type: {type(msg)}")
+                print(f"[{agent_id}] 📝 Message dict: {msg.model_dump() if hasattr(msg, 'model_dump') else str(msg.__dict__)}")
+                
                 # Get the call ID for error handling
                 call_id = tc.id
                 if call_id is None:
                     call_id = f"call_{int(time.time()*1000)}"
                 
+                # Enhanced args validation and conversion
+                print(f"[{agent_id}] 🔍 ARGS VALIDATION:")
+                print(f"[{agent_id}] 📝 Args is None: {args is None}")
+                print(f"[{agent_id}] 📝 Args is empty string: {args == ''}")
+                print(f"[{agent_id}] 📝 Args is empty dict: {args == {}}")
+                
                 # Make sure args is a dictionary before calling the function
                 if not isinstance(args, dict):
+                    print(f"[{agent_id}] ⚠️ Args is not a dict, converting...")
                     if isinstance(args, list):
+                        print(f"[{agent_id}] 🔄 Converting list args to dict with 'updates' key")
                         args = {"updates": args}
                     elif isinstance(args, str):
-                        args = {"value": args}
+                        print(f"[{agent_id}] 🔄 Args is string: '{args}'")
+                        if args.strip() == "":
+                            print(f"[{agent_id}] ⚠️ Empty string args detected!")
+                            # For empty string args, try to infer based on function name
+                            if name == "apply_updates_and_reply":
+                                print(f"[{agent_id}] 🔄 Empty apply_updates_and_reply detected, skipping...")
+                                # Add error message and continue
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": json.dumps({"error": "No updates provided for apply_updates_and_reply. Please provide specific cell updates."})
+                                })
+                                continue
+                            elif name == "set_cell":
+                                print(f"[{agent_id}] 🔄 Empty set_cell detected, skipping...")
+                                messages.append({
+                                    "role": "tool", 
+                                    "tool_call_id": call_id,
+                                    "content": json.dumps({"error": "No cell reference provided for set_cell. Please specify cell and value."})
+                                })
+                                continue
+                            else:
+                                args = {}
+                        else:
+                            # Try to parse as JSON if it looks like JSON
+                            if args.strip().startswith('{') or args.strip().startswith('['):
+                                try:
+                                    args = json.loads(args)
+                                    print(f"[{agent_id}] ✅ Successfully parsed JSON args: {args}")
+                                except json.JSONDecodeError as e:
+                                    print(f"[{agent_id}] ❌ Failed to parse JSON args: {e}")
+                                    args = {"value": args}
+                            else:
+                                args = {"value": args}
                     else:
+                        print(f"[{agent_id}] 🔄 Converting {type(args)} to dict with 'value' key")
                         args = {"value": args}
+                
+                print(f"[{agent_id}] 📝 Final processed args: {args}")
                 
                 try:
                     print(f"[{agent_id}] 🛠️ Tool call: {name}")
@@ -1141,6 +1199,44 @@ class BaseAgent:
                     # Parse function arguments
                     try:
                         args = safe_json_loads(function_args)
+                        
+                        # ENHANCED DEBUGGING for streaming function calls
+                        print(f"[{agent_id}] 🔍 STREAMING TOOL CALL DEBUG:")
+                        print(f"[{agent_id}] 📝 Function name: '{function_name}'")
+                        print(f"[{agent_id}] 📝 Raw function_args: '{function_args}'")
+                        print(f"[{agent_id}] 📝 Parsed args type: {type(args)}")
+                        print(f"[{agent_id}] 📝 Parsed args content: {repr(args)}")
+                        print(f"[{agent_id}] 📝 Parsed args str: '{str(args)}'")
+                        
+                        # Additional validation
+                        print(f"[{agent_id}] 🔍 STREAMING ARGS VALIDATION:")
+                        print(f"[{agent_id}] 📝 Args is None: {args is None}")
+                        print(f"[{agent_id}] 📝 Args is empty string: {args == ''}")
+                        print(f"[{agent_id}] 📝 Args is empty dict: {args == {}}")
+                        
+                        # Handle empty or problematic args
+                        if args is None or args == "" or (isinstance(args, dict) and len(args) == 0):
+                            print(f"[{agent_id}] ⚠️ Empty or None args detected for {function_name}")
+                            if function_name == "apply_updates_and_reply":
+                                print(f"[{agent_id}] 🔄 Skipping empty apply_updates_and_reply call")
+                                # Add tool response and continue
+                                call_id = tool_call_id if 'tool_call_id' in locals() else f"call_{int(time.time()*1000)}"
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": json.dumps({"error": "No updates provided for apply_updates_and_reply. Please provide specific cell updates."})
+                                })
+                                continue
+                            elif function_name == "set_cell":
+                                print(f"[{agent_id}] 🔄 Skipping empty set_cell call")
+                                call_id = tool_call_id if 'tool_call_id' in locals() else f"call_{int(time.time()*1000)}"
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": json.dumps({"error": "No cell reference provided for set_cell. Please specify cell and value."})
+                                })
+                                continue
+                        
                     except ValueError as e:
                         print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
                         yield ChatStep(role="assistant", content=f"\nSorry, I encountered an error processing your request. Please try again with simpler instructions.")
