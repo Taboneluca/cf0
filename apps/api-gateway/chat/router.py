@@ -322,16 +322,76 @@ async def process_message(
                     elif name == "create_new_sheet":
                         # Handle create_new_sheet with a string argument as the name parameter
                         return tool_fn(name=args[0])
-                    elif name == "add_column" or name == "add_row":
-                        # For add_column and add_row, use the header parameter for the string
-                        # Make sure we're always using keyword arguments to avoid the ** mapping error
+                    elif name == "add_column":
+                        # For add_column, use the name parameter for the string
                         try:
                             # First check if the string looks like it might be a formula
                             if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
-                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as header.")
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as name.")
                             
-                            # Always use as keyword argument
-                            return tool_fn(header=args[0])
+                            # Always use as keyword argument - add_column expects name parameter
+                            return tool_fn(name=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "add_row":
+                        # For add_row, convert string to values list - add_row expects values parameter as list
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as values.")
+                            
+                            # Convert string to list for values parameter
+                            return tool_fn(values=[args[0]])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "delete_column":
+                        # For delete_column, use the column_index_or_letter parameter for the string
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as column_index_or_letter.")
+                            
+                            # Always use as keyword argument - delete_column expects column_index_or_letter parameter
+                            return tool_fn(column_index_or_letter=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "delete_row":
+                        # For delete_row, use the row_index parameter for the string
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as row_index.")
+                            
+                            # Convert string to int if possible for row_index parameter
+                            try:
+                                row_idx = int(args[0])
+                                return tool_fn(row_index=row_idx)
+                            except ValueError:
+                                return {"error": f"delete_row requires a numeric row index, got: {args[0]}"}
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "sort_range":
+                        # For sort_range, use the range_ref parameter for the string
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as range_ref.")
+                            
+                            # Always use as keyword argument - sort_range expects range_ref parameter
+                            return tool_fn(range_ref=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "find_replace":
+                        # For find_replace, it requires two parameters - this is more complex for single string
+                        try:
+                            # find_replace requires both find_text and replace_text
+                            # If only one string is provided, it's not sufficient
+                            return {"error": f"find_replace requires both find_text and replace_text parameters. Single string argument not supported."}
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
@@ -858,16 +918,76 @@ async def process_message_streaming(
                     elif name == "create_new_sheet":
                         # Handle create_new_sheet with a string argument as the name parameter
                         return tool_fn(name=args[0])
-                    elif name == "add_column" or name == "add_row":
-                        # For add_column and add_row, use the header parameter for the string
-                        # Make sure we're always using keyword arguments to avoid the ** mapping error
+                    elif name == "add_column":
+                        # For add_column, use the name parameter for the string
                         try:
                             # First check if the string looks like it might be a formula
                             if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
-                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as header.")
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as name.")
                             
-                            # Always use as keyword argument
-                            return tool_fn(header=args[0])
+                            # Always use as keyword argument - add_column expects name parameter
+                            return tool_fn(name=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "add_row":
+                        # For add_row, convert string to values list - add_row expects values parameter as list
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as values.")
+                            
+                            # Convert string to list for values parameter
+                            return tool_fn(values=[args[0]])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "delete_column":
+                        # For delete_column, use the column_index_or_letter parameter for the string
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as column_index_or_letter.")
+                            
+                            # Always use as keyword argument - delete_column expects column_index_or_letter parameter
+                            return tool_fn(column_index_or_letter=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "delete_row":
+                        # For delete_row, use the row_index parameter for the string
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as row_index.")
+                            
+                            # Convert string to int if possible for row_index parameter
+                            try:
+                                row_idx = int(args[0])
+                                return tool_fn(row_index=row_idx)
+                            except ValueError:
+                                return {"error": f"delete_row requires a numeric row index, got: {args[0]}"}
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "sort_range":
+                        # For sort_range, use the range_ref parameter for the string
+                        try:
+                            # First check if the string looks like it might be a formula
+                            if '\\' in args[0] or '$' in args[0] or '=' in args[0]:
+                                print(f"[{request_id}] ⚠️ Cannot use formula string directly with {name}. Using as range_ref.")
+                            
+                            # Always use as keyword argument - sort_range expects range_ref parameter
+                            return tool_fn(range_ref=args[0])
+                        except Exception as e:
+                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
+                            return {"error": f"Error in {name}: {str(e)}"}
+                    elif name == "find_replace":
+                        # For find_replace, it requires two parameters - this is more complex for single string
+                        try:
+                            # find_replace requires both find_text and replace_text
+                            # If only one string is provided, it's not sufficient
+                            return {"error": f"find_replace requires both find_text and replace_text parameters. Single string argument not supported."}
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
