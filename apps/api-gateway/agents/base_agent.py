@@ -934,11 +934,38 @@ class BaseAgent:
                 # Wrap the stream with our guard to protect against infinite loops
                 guarded_stream = wrap_stream_with_guard(stream)
                 
+                # Add stream termination tracking
+                stream_finished = False
+                content_yielded = False
+                chunks_processed = 0
+                last_chunk_time = time.time()
+                
                 # Instead of awaiting the generator, iterate through it with async for
                 async for chunk in guarded_stream:
+                    chunks_processed += 1
+                    current_time = time.time()
+                    
+                    # Safety check: if we've been processing chunks for too long without progress, break
+                    if current_time - last_chunk_time > 30:  # 30 second timeout per chunk
+                        print(f"[{agent_id}] ⚠️ Stream chunk timeout detected, breaking loop")
+                        break
+                    last_chunk_time = current_time
+                    
+                    # Safety check: if we've processed too many chunks, something is wrong
+                    if chunks_processed > 1000:  # Reasonable chunk limit
+                        print(f"[{agent_id}] ⚠️ Too many chunks processed ({chunks_processed}), breaking loop")
+                        break
+                    
                     # Check if this is an AIResponse or OpenAI format
                     if hasattr(chunk, "choices") and chunk.choices:
                         delta = chunk.choices[0].delta
+                        choice = chunk.choices[0]
+                        
+                        # Check for stream termination signals
+                        if hasattr(choice, 'finish_reason') and choice.finish_reason is not None:
+                            print(f"[{agent_id}] 🏁 Stream finished with reason: {choice.finish_reason}")
+                            stream_finished = True
+                            # Don't break immediately - process any final content in this chunk first
                         
                         # Handle tool_calls accumulation properly
                         if hasattr(delta, "tool_calls") and delta.tool_calls:
@@ -1052,9 +1079,11 @@ class BaseAgent:
                                     for part in parts:
                                         if part.strip():  # Skip empty parts
                                             yield ChatStep(role="assistant", content=part)
+                                            content_yielded = True
                             else:
                                 # Small enough to yield directly
                                 yield ChatStep(role="assistant", content=new_content)
+                                content_yielded = True
                     else:
                         # Handle AIResponse format
                         if hasattr(chunk, "content") and chunk.content:
@@ -1165,9 +1194,11 @@ class BaseAgent:
                                             for part in parts:
                                                 if part.strip():  # Skip empty parts
                                                     yield ChatStep(role="assistant", content=part)
+                                                    content_yielded = True
                                         else:
                                             # Small enough to yield directly
                                             yield ChatStep(role="assistant", content=new_content)
+                                    content_yielded = True
                             else:
                                 # Handle non-string content (log it but don't yield)
                                 print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
@@ -1198,6 +1229,11 @@ class BaseAgent:
                                     current_tool_call["function"]["arguments"] += tool_call_chunk.function.arguments
                                 
                                 print(f"[{agent_id}] 🔧 OpenAI tool call {index}: id='{current_tool_call['id'][:20]}...', name='{current_tool_call['function']['name']}', args_length={len(current_tool_call['function']['arguments'])}")
+                
+                # Check if we should terminate the stream
+                if stream_finished:
+                    print(f"[{agent_id}] 🏁 Breaking chunk loop - stream finished")
+                    break
                 
                 # Process accumulated tool calls after streaming is complete
                 if accumulated_tool_calls:
@@ -1346,6 +1382,12 @@ class BaseAgent:
                 if current_content:
                     total_time = time.time() - start_time
                     print(f"[{agent_id}] ✅ Streaming completed in {total_time:.2f}s")
+                    return
+                
+                # Check if we successfully completed streaming without tool calls
+                if stream_finished and content_yielded and not accumulated_tool_calls:
+                    total_time = time.time() - start_time  
+                    print(f"[{agent_id}] ✅ Streaming completed (no tool calls) in {total_time:.2f}s")
                     return
             
             except Exception as e:

@@ -75,6 +75,11 @@ class StreamGuard:
             self.last_yield_time = time.time()
             self.chunk_counter += 1
             
+            # Check for excessive chunk processing (potential infinite loop)
+            if self.chunk_counter > 500:  # Reasonable chunk limit
+                print(f"⚠️ Stream processed too many chunks ({self.chunk_counter}) - potential infinite loop")
+                raise StopAsyncIteration
+            
             if DEBUG_CHUNKING:
                 chunk_type = type(chunk).__name__
                 content_preview = ""
@@ -169,18 +174,43 @@ class StreamGuard:
             
             # Process content for token counting and repetition detection
             if content_to_count:
-                # Only count new content by tracking cumulative content
-                # This prevents double-counting when a provider repeats content
+                # Better content deduplication logic
+                # Track the total length of content we've seen to avoid double-counting
                 new_content_length = len(content_to_count)
-                if content_to_count in self.cumulative_content:
+                
+                # Check if this content is entirely new or contains new parts
+                if not self.cumulative_content.endswith(content_to_count):
+                    # Find how much of this content is actually new
+                    if content_to_count.startswith(self.cumulative_content[-len(content_to_count):] if len(self.cumulative_content) >= len(content_to_count) else ""):
+                        # This content extends our cumulative content
+                        overlap_start = max(0, len(self.cumulative_content) - len(content_to_count))
+                        overlap = self.cumulative_content[overlap_start:]
+                        if content_to_count.startswith(overlap):
+                            new_content = content_to_count[len(overlap):]
+                            actual_new_length = len(new_content)
+                        else:
+                            actual_new_length = new_content_length
+                    else:
+                        actual_new_length = new_content_length
+                    
+                    # Conservative token counting: ~1 token per 3 characters (more realistic for most languages)
+                    new_tokens = max(1, (actual_new_length + 2) // 3) if actual_new_length > 0 else 0
+                    self.token_count += new_tokens
+                    
+                    # Update cumulative content (but cap it to prevent memory issues)
+                    if len(self.cumulative_content) > 10000:  # Keep only last 10k chars
+                        self.cumulative_content = self.cumulative_content[-5000:] + content_to_count
+                    else:
+                        self.cumulative_content += content_to_count
+                else:
                     # Content already seen, don't count again
                     new_tokens = 0
-                else:
-                    # For simplicity: approximate 1 token ≈ 4 chars
-                    new_tokens = (new_content_length + 3) // 4
-                    self.cumulative_content += content_to_count
                 
-                self.token_count += new_tokens
+                # Debug excessive token counting 
+                if new_tokens > 1000:  # Sanity check
+                    print(f"⚠️ WARNING: Unusually high token count increment: {new_tokens} for content length {new_content_length}")
+                    print(f"⚠️ Content preview: '{content_to_count[:100]}...'")
+                    new_tokens = min(new_tokens, 50)  # Cap to reasonable amount
                 
                 # 3. Check if we've reached the maximum token limit (if enabled)
                 if self.max_tokens is not None and self.token_count > self.max_tokens:
