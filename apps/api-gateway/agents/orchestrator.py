@@ -117,6 +117,20 @@ class Orchestrator:
         
         # For analyst mode, add explicit instruction about financial model tools
         elif mode == "analyst":
+            # Check if the message references previous context
+            context_references = ["the above", "that", "this", "it", "the previous", "what I mentioned", "build the above", "create that", "implement this"]
+            message_lower = message.lower()
+            
+            if any(ref in message_lower for ref in context_references):
+                # Add instruction to look at conversation history for context
+                agent.add_system_message("""
+                CONTEXT AWARENESS: The user is referring to something from the previous conversation. 
+                Look carefully at the conversation history to understand what they're referring to.
+                If they say "build the above" or "create that", look for the most recent detailed description
+                or specification in the conversation history and implement it.
+                """)
+                print(f"[{request_id}] 🔗 Detected context reference in message: '{message[:50]}...'")
+            
             agent.add_system_message("""
             IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
             - DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:
@@ -219,6 +233,20 @@ class Orchestrator:
         
         # For analyst mode, add explicit instruction about financial model tools
         elif mode == "analyst":
+            # Check if the message references previous context
+            context_references = ["the above", "that", "this", "it", "the previous", "what I mentioned", "build the above", "create that", "implement this"]
+            message_lower = message.lower()
+            
+            if any(ref in message_lower for ref in context_references):
+                # Add instruction to look at conversation history for context
+                agent.add_system_message("""
+                CONTEXT AWARENESS: The user is referring to something from the previous conversation. 
+                Look carefully at the conversation history to understand what they're referring to.
+                If they say "build the above" or "create that", look for the most recent detailed description
+                or specification in the conversation history and implement it.
+                """)
+                print(f"[{request_id}] 🔗 Detected context reference in message: '{message[:50]}...'")
+            
             agent.add_system_message("""
             IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
             - DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:

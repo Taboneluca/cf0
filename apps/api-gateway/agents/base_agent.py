@@ -26,10 +26,6 @@ MODEL_LIMITS = {
     "gpt-4o": 128_000,
     "gpt-4o-mini": 32_768,
     "o4-mini": 32_768,
-    "o4-preview": 128_000,
-    "gpt-4-turbo": 128_000,
-    "llama-3-70b": 8_192,
-    "llama-3-8b": 8_192,
     "llama-3.1-70b": 8_192,
     "llama-3.1-8b": 8_192, 
     "llama-3.1-405b": 128_000,
@@ -397,7 +393,7 @@ class BaseAgent:
                     yield ChatStep(
                         role="assistant",
                         content=f"Sorry, the function '{name}' is not available.",
-                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                        usage=None
                     )
                     return
                 
@@ -425,7 +421,7 @@ class BaseAgent:
                             yield ChatStep(
                                 role="assistant",
                                 content=f"I'm having trouble with the {name} operation. The error '{result.get('message', result['error'])}' keeps occurring. Please check your request and try again with different parameters.",
-                                usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                usage=None
                             )
                             return
                     
@@ -495,7 +491,7 @@ class BaseAgent:
                     yield ChatStep(
                         role="assistant",
                         content=f"Sorry, I encountered an error: {e}",
-                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                        usage=None
                     )
                     return
                 
@@ -555,7 +551,7 @@ class BaseAgent:
                                     yield ChatStep(
                                         role="assistant",
                                         content=result["reply"],
-                                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                        usage=None
                                     )
                                     return
                                 
@@ -566,7 +562,7 @@ class BaseAgent:
                                 yield ChatStep(
                                     role="assistant",
                                     content=f"Sorry, the function '{function_name}' is not available.",
-                                    usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                    usage=None
                                 )
                                 return
                         except (json.JSONDecodeError, Exception) as e:
@@ -611,7 +607,7 @@ class BaseAgent:
                                     yield ChatStep(
                                         role="assistant",
                                         content=extracted_json["reply"],
-                                        usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                        usage=None
                                     )
                                     return
                         except json.JSONDecodeError as e:
@@ -656,7 +652,7 @@ class BaseAgent:
                             yield ChatStep(
                                 role="assistant",
                                 content=json_result["reply"],
-                                usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                usage=None
                             )
                             return
                     except json.JSONDecodeError:
@@ -672,7 +668,7 @@ class BaseAgent:
                 yield ChatStep(
                     role="assistant",
                     content=reply,
-                    usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                    usage=None
                 )
                 return
         
@@ -1076,11 +1072,16 @@ class BaseAgent:
                                 print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
                         
                         if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                            is_function_call = True
-                            first_tool = chunk.tool_calls[0]
-                            function_name = first_tool.name
-                            function_args = json.dumps(first_tool.args)
-                            print(f"[{agent_id}] 🔧 Starting function call (AIResponse): {function_name}")
+                            # Only process if we haven't already started a function call
+                            if not is_function_call:
+                                is_function_call = True
+                                first_tool = chunk.tool_calls[0]
+                                function_name = first_tool.name
+                                function_args = json.dumps(first_tool.args)
+                                print(f"[{agent_id}] 🔧 Starting function call (AIResponse): {function_name}")
+                            else:
+                                # Log that we're ignoring duplicate tool call detection
+                                print(f"[{agent_id}] 🔄 Ignoring duplicate tool call detection for: {function_name}")
                 
                 if is_function_call:
                     # Need to add a proper tool_calls entry for OpenAI to reference later
@@ -1145,7 +1146,7 @@ class BaseAgent:
                     
                     if fn is None:
                         print(f"[{agent_id}] ❌ Function {function_name} not found in available tools")
-                        yield ChatStep(role="assistant", content=f"\nError: Function '{function_name}' is not available.")
+                        yield ChatStep(role="assistant", content=f"\nError: Function '{function_name}' is not available.", usage=None)
                         return
                     
                     print(f"[{agent_id}] 🧰 Executing {function_name}")
@@ -1175,7 +1176,7 @@ class BaseAgent:
                             yield ChatStep(
                                 role="assistant",
                                 content=f"I'm having trouble with the {function_name} operation. The error '{result.get('message', result['error'])}' keeps occurring. Please check your request and try again with different parameters.",
-                                usage=getattr(response.usage, "model_dump", lambda: None)() if getattr(response, "usage", None) else None
+                                usage=None
                             )
                             return
                     

@@ -265,19 +265,29 @@ async def process_message(
         
         # Function to apply batch updates and generate a final reply in one step
         def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
-            if updates is None:
-                updates = []
+            try:
+                if updates is None:
+                    updates = []
+                    
+                if not reply:
+                    reply = "Updates applied."
+                    
+                # Apply the updates
+                result = set_cells_with_xref(updates=updates)
                 
-            if not reply:
-                reply = "Updates applied."
+                # Add our reply
+                result["reply"] = reply
                 
-            # Apply the updates
-            result = set_cells_with_xref(updates=updates)
-            
-            # Add our reply
-            result["reply"] = reply
-            
-            return result
+                return result
+            except Exception as e:
+                # Better error handling - log the error and return a proper error response
+                print(f"[{request_id}] ❌ Error in apply_updates_and_reply: {str(e)}")
+                traceback.print_exc()
+                return {
+                    "error": str(e), 
+                    "reply": f"Error applying updates: {str(e)}",
+                    "updates": []
+                }
         
         # Create a streaming wrapper for tool functions
         def create_streaming_wrapper(tool_fn, name):
@@ -348,7 +358,7 @@ async def process_message(
                                         # Debug the formula parsing
                                         if DEBUG_FORMULA_PARSING:
                                             print(f"[{request_id}] 📐 Parsing LaTeX formula: {formula.strip()}")
-                                            print(f"[{request_id}] 🔍 Raw formula: {repr(formula)}")
+                                            print(f"[{request_id}] �� Raw formula: {repr(formula)}")
                                         return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
                                     except Exception as e:
                                         print(f"[{request_id}] ⚠️ LaTeX formula handling failed: {str(e)}")
@@ -791,19 +801,29 @@ async def process_message_streaming(
         
         # Function to apply batch updates and generate a final reply in one step
         def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
-            if updates is None:
-                updates = []
+            try:
+                if updates is None:
+                    updates = []
+                    
+                if not reply:
+                    reply = "Updates applied."
+                    
+                # Apply the updates
+                result = set_cells_with_xref(updates=updates)
                 
-            if not reply:
-                reply = "Updates applied."
+                # Add our reply
+                result["reply"] = reply
                 
-            # Apply the updates
-            result = set_cells_with_xref(updates=updates)
-            
-            # Add our reply
-            result["reply"] = reply
-            
-            return result
+                return result
+            except Exception as e:
+                # Better error handling - log the error and return a proper error response
+                print(f"[{request_id}] ❌ Error in apply_updates_and_reply: {str(e)}")
+                traceback.print_exc()
+                return {
+                    "error": str(e), 
+                    "reply": f"Error applying updates: {str(e)}",
+                    "updates": []
+                }
         
         # Create a streaming wrapper for tool functions
         def create_streaming_wrapper(tool_fn, name):
@@ -874,7 +894,7 @@ async def process_message_streaming(
                                         # Debug the formula parsing
                                         if DEBUG_FORMULA_PARSING:
                                             print(f"[{request_id}] 📐 Parsing LaTeX formula: {formula.strip()}")
-                                            print(f"[{request_id}] 🔍 Raw formula: {repr(formula)}")
+                                            print(f"[{request_id}] �� Raw formula: {repr(formula)}")
                                         return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
                                     except Exception as e:
                                         print(f"[{request_id}] ⚠️ LaTeX formula handling failed: {str(e)}")
