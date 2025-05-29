@@ -265,9 +265,19 @@ async def process_message(
         
         # Function to apply batch updates and generate a final reply in one step
         def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
+            print(f"[{request_id}] 🔧 apply_updates_and_reply called with {len(updates) if updates else 0} updates")
+            print(f"[{request_id}] 💬 Reply: {reply}")
+            print(f"[{request_id}] 📊 All args: updates={len(updates) if updates else 0}, allow_formulas={kwargs.get('allow_formulas', False)}, kwargs={kwargs}")
+            
             try:
+                # Validate updates parameter
                 if updates is None:
                     updates = []
+                    
+                # Check for empty updates list
+                if not updates or len(updates) == 0:
+                    print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates.")
+                    return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
                     
                 if not reply:
                     reply = "Updates applied."
@@ -877,9 +887,19 @@ async def process_message_streaming(
         
         # Function to apply batch updates and generate a final reply in one step
         def apply_updates_and_reply(updates: list[dict[str, Any]] = None, reply: str = None, **kwargs):
+            print(f"[{request_id}] 🔧 apply_updates_and_reply called with {len(updates) if updates else 0} updates")
+            print(f"[{request_id}] 💬 Reply: {reply}")
+            print(f"[{request_id}] 📊 All args: updates={len(updates) if updates else 0}, allow_formulas={kwargs.get('allow_formulas', False)}, kwargs={kwargs}")
+            
             try:
+                # Validate updates parameter
                 if updates is None:
                     updates = []
+                    
+                # Check for empty updates list
+                if not updates or len(updates) == 0:
+                    print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates.")
+                    return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
                     
                 if not reply:
                     reply = "Updates applied."

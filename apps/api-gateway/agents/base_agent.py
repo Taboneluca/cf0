@@ -372,7 +372,7 @@ class BaseAgent:
                     if mutating_calls > 5 and name not in {"set_cells", 
                                                           "apply_updates_and_reply",
                                                           "set_cell"}:
-                        print(f"[{agent_id}] ⚠️ High # of single-cell mutations – consider batching.")
+                        print(f"[{agent_calls}] ⚠️ High # of single-cell mutations – consider batching.")
                         # NO hard stop any more
 
                 # Invoke the Python function
@@ -815,6 +815,14 @@ class BaseAgent:
             loop_start = time.time()
             print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations}")
             
+            # Reset tool call detection variables for each iteration to prevent false duplicates
+            current_content = ""
+            previous_content = ""  # Track previous content to calculate delta
+            function_name = None
+            function_args = ""
+            is_function_call = False
+            current_tool_calls = {}  # Track accumulating tool calls
+            
             # Call the LLM model with streaming enabled
             print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {self.llm.model}")
             
@@ -831,12 +839,12 @@ class BaseAgent:
                         }]
                 
                 # Setup for collecting the streaming response
-                current_content = ""
-                previous_content = ""  # Track previous content to calculate delta
-                function_name = None
-                function_args = ""
-                is_function_call = False
-                current_tool_calls = {}  # Track accumulating tool calls
+                # current_content = ""     # MOVED ABOVE
+                # previous_content = ""    # MOVED ABOVE  
+                # function_name = None     # MOVED ABOVE
+                # function_args = ""       # MOVED ABOVE
+                # is_function_call = False # MOVED ABOVE
+                # current_tool_calls = {}  # MOVED ABOVE
                 
                 # Get the stream object from llm.chat
                 max_resp_tokens = int(os.getenv("MAX_RESPONSE_TOKENS", "4000"))
