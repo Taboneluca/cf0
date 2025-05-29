@@ -980,6 +980,7 @@ class BaseAgent:
             # Initialize streaming tool call handler for this iteration
             tool_handler = StreamingToolCallHandler()
             current_content = ""
+            previous_content = ""  # Initialize for delta calculation
             
             # Call the LLM model with streaming enabled
             print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {self.llm.model}")
