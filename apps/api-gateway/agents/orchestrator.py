@@ -17,138 +17,112 @@ from spreadsheet_engine.summary import sheet_summary
 
 class ContextAnalyzer:
     """
-    Analyzes conversation history to extract actionable context for agent instructions.
-    This mimics how tools like Cursor and Windsurf understand user intent across modes.
+    Analyzes conversation context to understand what the user is referring to.
+    This mirrors how Cursor and Windsurf understand context references.
     """
     
     @staticmethod
-    def extract_actionable_context(message: str, history: Optional[list] = None) -> Optional[str]:
+    def extract_implementation_context(history: List[Dict[str, Any]]) -> Optional[str]:
         """
-        Analyzes the user message and conversation history to extract actionable context.
-        Returns detailed instructions for what the agent should build/implement.
-        """
-        if not history:
-            return None
-            
-        # Detect context reference patterns (covers thousands of variations)
-        reference_patterns = [
-            r'\b(build|create|implement|make|generate|add|set up|construct)\s+(the\s+)?(above|that|this|it|those)\b',
-            r'\b(do|apply|execute|perform)\s+(the\s+)?(above|that|this|it|those)\b',
-            r'\b(use|take|follow|adopt)\s+(the\s+)?(above|that|this|it|those)\b',
-            r'\b(based\s+on|according\s+to|using|with)\s+(the\s+)?(above|that|this|it|those)\b',
-            r'\bwhat\s+i\s+(mentioned|said|described|outlined|specified|asked\s+for)\b',
-            r'\b(from\s+)?(the\s+)?(previous|earlier|last|recent)\s+(message|conversation|discussion|request)\b',
-            r'\b(as\s+)?(mentioned|described|outlined|specified|discussed)\s+(before|earlier|above|previously)\b'
-        ]
-        
-        message_lower = message.lower()
-        has_reference = any(re.search(pattern, message_lower, re.IGNORECASE) for pattern in reference_patterns)
-        
-        if not has_reference:
-            return None
-            
-        # Extract the most recent and detailed specification from history
-        context_content = ContextAnalyzer._extract_specification_from_history(history)
-        
-        if context_content:
-            return f"""
-CONTEXT-AWARE EXECUTION: The user is referencing previous conversation content.
-
-EXTRACTED SPECIFICATION:
-{context_content}
-
-INSTRUCTIONS:
-1. Analyze the extracted specification carefully
-2. Identify all components, requirements, and details mentioned
-3. Implement the specification completely using appropriate tools
-4. If building a model/table, include all fields, formulas, and structure mentioned
-5. Maintain the exact terminology and approach described in the specification
-6. If any part is unclear, implement the most logical interpretation based on context
-
-Your task is to execute this specification, not to ask clarifying questions about it.
-"""
-        
-        return None
-    
-    @staticmethod
-    def _extract_specification_from_history(history: list) -> Optional[str]:
-        """
-        Extracts the most detailed specification or description from conversation history.
-        Prioritizes recent, detailed content with actionable information.
+        Extract actionable implementation details from conversation history.
+        Looks for detailed specifications, requirements, or plans that can be executed.
         """
         if not history:
             return None
             
-        # Look for detailed specifications in reverse chronological order
-        specifications = []
+        # Look for messages with detailed specifications
+        context_patterns = [
+            # Financial models and calculations
+            r'(?i)(wacc|weighted average cost|discount rate|valuation|financial model)',
+            r'(?i)(income statement|balance sheet|cash flow|p&l|profit)',
+            r'(?i)(model|template|table|structure|format)',
+            # Data specifications
+            r'(?i)(rows?|columns?|cells?|data|fields?|headers?)',
+            r'(?i)(calculate|compute|build|create|generate|set up)',
+            # Detailed descriptions with steps
+            r'(?i)(steps?|process|methodology|approach|structure)',
+            r'(?i)(inputs?|outputs?|formula|calculation|equation)'
+        ]
         
-        for message in reversed(history):
-            if message.get("role") != "user":
+        # Find the most recent substantial message with implementation details
+        for message in reversed(history[-10:]):  # Look at last 10 messages
+            if message.get('role') == 'user':
                 continue
                 
-            content = message.get("content", "")
-            if not content:
+            content = message.get('content', '')
+            if len(content) < 100:  # Skip short messages
                 continue
                 
-            # Score content based on detail and actionability
-            score = ContextAnalyzer._score_content_detail(content)
+            # Count pattern matches to determine relevance
+            pattern_matches = sum(1 for pattern in context_patterns if re.search(pattern, content))
             
-            if score > 50:  # Threshold for detailed content
-                specifications.append({
-                    "content": content,
-                    "score": score
-                })
-        
-        # Return the highest scoring specification
-        if specifications:
-            best_spec = max(specifications, key=lambda x: x["score"])
-            return best_spec["content"]
-            
+            # If message has multiple patterns and substantial content, it's likely implementation context
+            if pattern_matches >= 2 and len(content) > 200:
+                return content
+                
         return None
     
     @staticmethod
-    def _score_content_detail(content: str) -> int:
+    def analyze_user_intent(message: str, history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Scores content based on how detailed and actionable it is.
-        Higher scores indicate more detailed specifications.
+        Analyze user intent to determine if they're referring to previous context
+        and what type of action they want to take.
         """
-        score = 0
-        content_lower = content.lower()
+        message_lower = message.lower().strip()
         
-        # Length indicates detail level
-        score += min(len(content) // 10, 30)
+        # Enhanced reference detection patterns
+        reference_patterns = {
+            'direct_reference': [
+                r'(?i)\b(build|create|implement|make|generate|set up)\s+(the\s+)?(above|that|this|it)\b',
+                r'(?i)\b(do|execute|perform|carry out)\s+(the\s+)?(above|that|this|it)\b',
+                r'(?i)\b(based on|using|following)\s+(the\s+)?(above|previous|that|what)\b'
+            ],
+            'contextual_reference': [
+                r'(?i)\b(as\s+)?(described|mentioned|discussed|outlined|specified)\s+(above|previously|earlier|before)\b',
+                r'(?i)\b(the\s+)?(plan|model|structure|format|template)\s+(we|you|I)\s+(discussed|mentioned|described)\b',
+                r'(?i)\b(what\s+)?(we|you|I)\s+(talked about|discussed|went over|covered)\b'
+            ],
+            'imperative_with_context': [
+                r'(?i)^(now\s+)?(build|create|implement|make|generate|set up)\b',
+                r'(?i)^(please\s+)?(build|create|implement|make|generate|set up)\b',
+                r'(?i)^(go ahead and\s+)?(build|create|implement|make|generate|set up)\b'
+            ]
+        }
         
-        # Financial/business model indicators
-        financial_terms = [
-            'wacc', 'dcf', 'financial model', 'valuation', 'cash flow', 'income statement',
-            'balance sheet', 'cost of capital', 'risk free rate', 'beta', 'market risk premium',
-            'debt', 'equity', 'npv', 'irr', 'revenue', 'expenses', 'formula', 'calculation'
-        ]
-        score += sum(5 for term in financial_terms if term in content_lower)
+        # Check for reference patterns
+        has_reference = False
+        reference_type = None
         
-        # Structure indicators
-        structure_terms = [
-            'steps', 'detailed', 'model', 'table', 'columns', 'rows', 'fields',
-            'inputs', 'outputs', 'source', 'data', 'labels', 'build', 'create'
-        ]
-        score += sum(3 for term in structure_terms if term in content_lower)
+        for ref_type, patterns in reference_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, message):
+                    has_reference = True
+                    reference_type = ref_type
+                    break
+            if has_reference:
+                break
         
-        # Specificity indicators
-        specific_terms = [
-            'cell', 'a1', 'b1', 'formula', 'rate', 'percentage', 'value',
-            'industry standard', 'calculate', 'compute'
-        ]
-        score += sum(2 for term in specific_terms if term in content_lower)
+        # Analyze action intent
+        action_keywords = {
+            'build': ['build', 'create', 'make', 'construct', 'develop', 'set up', 'establish'],
+            'implement': ['implement', 'execute', 'perform', 'carry out', 'do', 'run'],
+            'modify': ['modify', 'change', 'update', 'edit', 'adjust', 'alter'],
+            'analyze': ['analyze', 'review', 'examine', 'check', 'look at', 'inspect']
+        }
         
-        # Numbered lists or bullet points indicate structured specifications
-        if re.search(r'\d+\.\s+', content) or re.search(r'[-*]\s+', content):
-            score += 15
-            
-        # Multiple sentences indicate detailed explanation
-        sentence_count = len(re.findall(r'[.!?]+', content))
-        score += min(sentence_count * 2, 20)
+        detected_action = None
+        for action, keywords in action_keywords.items():
+            if any(keyword in message_lower for keyword in keywords):
+                detected_action = action
+                break
         
-        return score
+        return {
+            'has_context_reference': has_reference,
+            'reference_type': reference_type,
+            'action_intent': detected_action,
+            'message_length': len(message),
+            'is_short_command': len(message.split()) <= 5 and has_reference
+        }
 
 
 class Orchestrator:
@@ -199,6 +173,9 @@ class Orchestrator:
         cols_key = 'columns' if 'columns' in summary else 'n_cols'
         
         self.sheet_context = f"[Context] Active sheet '{summary['name']}' has {summary[rows_key]} rows × {summary[cols_key]} cols; Headers: {summary['headers']}."
+        
+        # Initialize context analyzer
+        self.context_analyzer = ContextAnalyzer()
     
     def get_agent(self, mode: str) -> BaseAgent:
         """
@@ -239,41 +216,11 @@ class Orchestrator:
         request_id = f"orch-{int(start_time*1000)}"
         print(f"[{request_id}] 🎭 Orchestrator.run: mode={mode}, model={self.llm.model}")
         
-        # Get the appropriate agent
+        # Get the appropriate agent and prepare it with context awareness
         agent = self.get_agent(mode)
+        agent = self._prepare_context_aware_agent(agent, mode, message, history)
         
-        # Reset system prompt to prevent accumulation from previous mode switches
-        agent.reset_system_prompt()
-        
-        # Add sheet context if not already there
-        agent.add_system_message(self.sheet_context)
-        
-        # For ask mode, add explicit instruction to not generate any financial templates
-        if mode == "ask":
-            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
-        
-        # For analyst mode, apply context-aware execution
-        elif mode == "analyst":
-            # Use the robust context analyzer to extract actionable context
-            context_instructions = ContextAnalyzer.extract_actionable_context(message, history)
-            
-            if context_instructions:
-                agent.add_system_message(context_instructions)
-                print(f"[{request_id}] 🧠 Applied context-aware instructions for analyst mode")
-            
-            agent.add_system_message("""
-            IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
-            - DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:
-              * a financial statement model (FSM)
-              * a discounted cash flow model (DCF)
-              * a 3-statement model
-              * a financial projection model with multiple statements
-            - For simple financial tables (single income statement, single balance sheet, etc.), create them directly using set_cell, without using specialized model tools.
-            - When the user asks for a basic table, NEVER attempt to build a full financial model with multiple statements.
-            """)
-        
-        # For llama-70b model specifically, filter out complex financial model tools
-        # unless they're explicitly requested in the user message
+        # Apply legacy financial model tool filtering for llama-70b model
         if hasattr(self.llm, 'model') and (
             'llama-3-70b' in self.llm.model or 
             'llama3-70b' in self.llm.model or
@@ -329,7 +276,7 @@ class Orchestrator:
                        message: str, 
                        history: Optional[list] = None) -> AsyncGenerator[ChatStep, None]:
         """
-        Stream the orchestration process - similar to run() but yields ChatStep objects.
+        Streaming version of the orchestration process.
         
         Args:
             mode: "ask" or "analyst"
@@ -337,45 +284,25 @@ class Orchestrator:
             history: Conversation history
             
         Yields:
-            ChatStep objects from the agent execution
+            ChatStep objects from the agent
         """
         start_time = time.time()
         request_id = f"orch-stream-{int(start_time*1000)}"
         print(f"[{request_id}] 🎭 Orchestrator.stream_run: mode={mode}, model={self.llm.model}")
+        print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
+        print(f"[{request_id}] 📚 History: {len(history) if history else 0} messages")
         
-        # Get the appropriate agent
+        # Get the appropriate agent and prepare it with context awareness
+        print(f"[{request_id}] 🔍 Getting agent for mode: {mode}")
         agent = self.get_agent(mode)
+        print(f"[{request_id}] ✅ Agent obtained: {agent.__class__.__name__}")
         
-        # Reset system prompt to prevent accumulation from previous mode switches
-        agent.reset_system_prompt()
+        # Apply context-aware preparation
+        agent = self._prepare_context_aware_agent(agent, mode, message, history)
+        print(f"[{request_id}] 🧠 Context-aware agent preparation completed")
+        print(f"[{request_id}] 🔧 Agent has {len(agent.tools)} tools available")
         
-        # Add sheet context
-        agent.add_system_message(self.sheet_context)
-        
-        # Mode-specific configuration
-        if mode == "ask":
-            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
-        
-        elif mode == "analyst":
-            # Apply context-aware execution for analyst mode
-            context_instructions = ContextAnalyzer.extract_actionable_context(message, history)
-            
-            if context_instructions:
-                agent.add_system_message(context_instructions)
-                print(f"[{request_id}] 🧠 Applied context-aware instructions for streaming analyst mode")
-            
-            agent.add_system_message("""
-            IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
-            - DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:
-              * a financial statement model (FSM)
-              * a discounted cash flow model (DCF)
-              * a 3-statement model
-              * a financial projection model with multiple statements
-            - For simple financial tables (single income statement, single balance sheet, etc.), create them directly using set_cell, without using specialized model tools.
-            - When the user asks for a basic table, NEVER attempt to build a full financial model with multiple statements.
-            """)
-        
-        # Apply llama-70b filtering if needed
+        # Apply legacy financial model tool filtering for llama-70b model
         if hasattr(self.llm, 'model') and (
             'llama-3-70b' in self.llm.model or 
             'llama3-70b' in self.llm.model or
@@ -384,25 +311,127 @@ class Orchestrator:
             financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
             message_lower = message.lower()
             
+            # Only provide financial model tools if explicitly mentioned
             should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
             
             if not should_include_model_tools:
+                # Filter out financial model tools from agent's tools
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
                 
+                # Create a new tools list without the financial model tools
                 filtered_tools = []
                 for tool in agent.tools:
                     if tool["name"] not in financial_model_tools:
                         filtered_tools.append(tool)
                 
+                # Create a new agent with filtered tools
                 agent = agent.__class__(
                     llm=agent.llm,
                     fallback_prompt=agent.system_prompt,
                     tools=filtered_tools
                 )
-                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b streaming")
+                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
         
-        # Stream the agent execution
-        async for step in agent.stream_run(message, history):
-            yield step
+        # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
+        print(f"[{request_id}] 🚀 Calling agent.stream_run...")
+        agent_stream = agent.stream_run(message, history)
+        print(f"[{request_id}] ✅ Agent.stream_run returned: {type(agent_stream)}")
         
-        print(f"[{request_id}] ✅ Orchestrator streaming completed in {time.time() - start_time:.2f}s") 
+        # Verify we got an actual async generator
+        if not inspect.isasyncgen(agent_stream):
+            if inspect.isawaitable(agent_stream):
+                print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
+                agent_stream = await agent_stream
+                print(f"[{request_id}] 🔄 After awaiting: {type(agent_stream)}")
+                if not inspect.isasyncgen(agent_stream):
+                    print(f"[{request_id}] ❌ Agent still did not return an async generator after awaiting")
+                    raise TypeError("Agent.stream_run did not return an async generator")
+            else:
+                print(f"[{request_id}] ❌ Agent did not return an async generator or coroutine")
+                raise TypeError("Agent.stream_run did not return an async generator")
+            
+        # Now wrap it with the guard
+        print(f"[{request_id}] 🛡️ Wrapping stream with guard")
+        guarded_stream = wrap_stream_with_guard(agent_stream)
+        print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
+        
+        step_count = 0
+        async for step in guarded_stream:
+            step_count += 1
+            print(f"[{request_id}] 📦 Stream step #{step_count}: {type(step)} - {str(step)[:100]}{'...' if len(str(step)) > 100 else ''}")
+            # Convert string to ChatStep if needed for consistency
+            if isinstance(step, str):
+                yield ChatStep(role="assistant", content=step)
+            else:
+                yield step
+        
+        print(f"[{request_id}] ✅ Orchestrator stream completed in {time.time() - start_time:.2f}s")
+
+    def _prepare_context_aware_agent(self, agent: BaseAgent, mode: str, message: str, history: List[Dict[str, Any]] = None) -> BaseAgent:
+        """
+        Prepare an agent with context-aware instructions based on conversation history.
+        This is the core intelligence that mirrors Cursor/Windsurf behavior.
+        """
+        # Reset system prompt to prevent accumulation
+        agent.reset_system_prompt()
+        
+        # Add sheet context
+        agent.add_system_message(self.sheet_context)
+        
+        if mode == "ask":
+            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
+            return agent
+        
+        # For analyst mode, perform sophisticated context analysis
+        intent_analysis = self.context_analyzer.analyze_user_intent(message, history)
+        
+        if intent_analysis['has_context_reference']:
+            # Extract implementation context from history
+            implementation_context = self.context_analyzer.extract_implementation_context(history or [])
+            
+            if implementation_context:
+                # Add sophisticated context-aware instructions
+                context_instruction = f"""
+CONTEXT-AWARE EXECUTION MODE ACTIVATED:
+
+The user is referencing previous conversation content with intent to {intent_analysis['action_intent'] or 'execute'}.
+
+PREVIOUS CONTEXT TO IMPLEMENT:
+{implementation_context}
+
+EXECUTION INSTRUCTIONS:
+1. Analyze the above context to understand EXACTLY what needs to be built/implemented
+2. Extract all specific details: labels, formulas, data sources, structure, formatting
+3. If it's a financial model/table, identify all required components (inputs, calculations, outputs)
+4. Implement the complete specification using appropriate tools
+5. Do NOT ask for clarification - proceed with implementation based on the context
+6. If multiple options exist, choose the most comprehensive and industry-standard approach
+
+CRITICAL: The user expects you to automatically execute the plan from the context above. 
+Do not explain what you're going to do - just do it immediately.
+"""
+                agent.add_system_message(context_instruction)
+                
+                print(f"🧠 Context-aware mode activated - implementing from previous context ({len(implementation_context)} chars)")
+            else:
+                # Fallback for references without clear implementation context
+                agent.add_system_message("""
+CONTEXT REFERENCE DETECTED: The user is referring to something from previous conversation.
+Look at the conversation history to understand what they want you to implement or build.
+Extract the most detailed specification or plan from recent messages and execute it.
+""")
+                print(f"🔗 Context reference detected but no clear implementation context found")
+        else:
+            # Standard analyst mode instructions
+            agent.add_system_message("""
+IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
+- DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:
+  * a financial statement model (FSM)
+  * a discounted cash flow model (DCF)
+  * a 3-statement model
+  * a financial projection model with multiple statements
+- For simple financial tables (single income statement, single balance sheet, etc.), create them directly using set_cell, without using specialized model tools.
+- When the user asks for a basic table, NEVER attempt to build a full financial model with multiple statements.
+""")
+        
+        return agent 
