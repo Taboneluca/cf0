@@ -446,26 +446,45 @@ class BaseAgent:
                         print(f"[{agent_id}] 🔄 Args is string: '{args}'")
                         if args.strip() == "":
                             print(f"[{agent_id}] ⚠️ Empty string args detected!")
-                            # For empty string args, try to infer based on function name
+                            # For empty string args, add error and skip
                             if name == "apply_updates_and_reply":
-                                print(f"[{agent_id}] 🔄 Empty apply_updates_and_reply detected, skipping...")
-                                # Add error message and continue
+                                print(f"[{agent_id}] 🔄 Empty apply_updates_and_reply detected, adding error and continuing...")
                                 messages.append({
                                     "role": "tool",
                                     "tool_call_id": call_id,
-                                    "content": json.dumps({"error": "No updates provided for apply_updates_and_reply. Please provide specific cell updates."})
+                                    "content": json.dumps({"error": f"Empty arguments provided for {name}. apply_updates_and_reply requires updates array with at least one update containing 'cell' and 'value' fields."})
+                                })
+                                # Add a system message to force retry with proper arguments
+                                messages.append({
+                                    "role": "system",
+                                    "content": f"The tool call to {name} failed because empty arguments were provided. You MUST provide specific arguments:\n\nFor apply_updates_and_reply, you need:\n- updates: array of cell updates, each with 'cell' and 'value'\n- reply: explanation of what was done\n\nExample: apply_updates_and_reply(updates=[{{\"cell\": \"A1\", \"value\": \"Title\"}}], reply=\"Added title\")\n\nPlease retry with proper arguments or use set_cell for individual updates."
                                 })
                                 continue
                             elif name == "set_cell":
-                                print(f"[{agent_id}] 🔄 Empty set_cell detected, skipping...")
+                                print(f"[{agent_id}] 🔄 Empty set_cell detected, adding error and continuing...")
                                 messages.append({
                                     "role": "tool", 
                                     "tool_call_id": call_id,
-                                    "content": json.dumps({"error": "No cell reference provided for set_cell. Please specify cell and value."})
+                                    "content": json.dumps({"error": "No cell reference provided for set_cell. Please specify cell and value parameters."})
+                                })
+                                # Add system message for retry
+                                messages.append({
+                                    "role": "system",
+                                    "content": "The set_cell tool requires both 'cell' and 'value' parameters. Example: set_cell(cell='A1', value='Revenue'). Please retry with proper arguments."
                                 })
                                 continue
                             else:
-                                args = {}
+                                # Add error message and force retry for other tools
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": json.dumps({"error": f"Empty arguments provided for {name}. Please provide specific parameters."})
+                                })
+                                messages.append({
+                                    "role": "system", 
+                                    "content": f"The tool call to {name} failed because no arguments were provided. Please call the tool again with proper arguments."
+                                })
+                                continue
                         else:
                             # Try to parse as JSON if it looks like JSON
                             if args.strip().startswith('{') or args.strip().startswith('['):
@@ -1038,16 +1057,34 @@ class BaseAgent:
                             
                             print(f"[{agent_id}] 🔧 Executing completed tool call: {name} with args: {args}")
                             
-                            # Handle empty or problematic args
+                            # In stream_run method around line 1040, handle empty or problematic args
                             if args is None or args == "" or (isinstance(args, dict) and len(args) == 0):
-                                print(f"[{agent_id}] ⚠️ Empty args detected for {name}, providing fallbacks")
+                                print(f"[{agent_id}] ⚠️ Empty args detected for {name}")
+                                
+                                # Add a system message to force retry with proper arguments
                                 if name == "apply_updates_and_reply":
-                                    print(f"[{agent_id}] 🔄 Skipping empty apply_updates_and_reply call")
-                                    continue
-                                elif name == "set_cell":
-                                    print(f"[{agent_id}] 🔄 Skipping empty set_cell call")
-                                    continue
+                                    retry_message = f"""The tool call to {name} failed because empty arguments were provided. 
                                     
+For apply_updates_and_reply, you MUST provide:
+- updates: array of cell updates, each with 'cell' and 'value'
+- reply: explanation of what was done
+
+Example: apply_updates_and_reply(updates=[{{"cell": "A1", "value": "Title"}}], reply="Added title")
+
+Please retry with proper arguments or use set_cell for individual updates."""
+                                else:
+                                    retry_message = f"""The tool call to {name} failed because empty arguments were provided. 
+                                    
+Please retry with specific parameters required for this tool."""
+                                
+                                messages.append({
+                                    "role": "system",
+                                    "content": retry_message
+                                })
+                                
+                                # Skip this tool call and continue to next iteration
+                                continue
+                            
                             # Execute the tool
                             try:
                                 tool_fn = tool_functions.get(name)

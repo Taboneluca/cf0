@@ -426,6 +426,22 @@ The user is referencing previous conversation content with intent to {intent_ana
 PREVIOUS CONTEXT TO IMPLEMENT:
 {implementation_context}
 
+CRITICAL EXECUTION RULES:
+1. DO NOT call apply_updates_and_reply with empty arguments
+2. ALWAYS provide specific cell references (e.g., "A1", "B2") and values
+3. When building a financial model from the context above:
+   - Extract ALL specific cells, labels, and formulas mentioned
+   - Start with headers in row 1 (A1, B1, C1, etc.)
+   - Build the model cell by cell using set_cell
+   - Use apply_updates_and_reply ONLY when you have multiple specific updates ready
+4. Example of CORRECT usage:
+   apply_updates_and_reply(updates=[
+       {{"cell": "A1", "value": "Revenue"}},
+       {{"cell": "B1", "value": "2024"}},
+       {{"cell": "B2", "value": 1500}}
+   ], reply="Built revenue model")
+5. NEVER call apply_updates_and_reply with empty updates array or without arguments
+
 EXECUTION INSTRUCTIONS:
 1. Analyze the above context to understand EXACTLY what needs to be built/implemented
 2. Extract all specific details: labels, formulas, data sources, structure, formatting
@@ -437,14 +453,7 @@ EXECUTION INSTRUCTIONS:
 8. Do NOT ask for clarification - proceed with implementation based on the context
 9. If multiple options exist, choose the most comprehensive and industry-standard approach
 
-TOOL CALL REQUIREMENTS:
-- Always provide specific cell references (e.g., "A1", "B2") 
-- For multiple updates, use apply_updates_and_reply with a complete updates array
-- For formulas, include allow_formula=True parameter
-- Make sure every update has both "cell" and "value" fields
-
-CRITICAL: The user expects you to automatically execute the plan from the context above. 
-Do not explain what you're going to do - just do it immediately using the appropriate tool calls.
+IMMEDIATE ACTION: Build the model described in the context using specific tool calls.
 """
                 agent.add_system_message(context_instruction)
                 
@@ -455,6 +464,11 @@ Do not explain what you're going to do - just do it immediately using the approp
 CONTEXT REFERENCE DETECTED: The user is referring to something from previous conversation.
 Look at the conversation history to understand what they want you to implement or build.
 Extract the most detailed specification or plan from recent messages and execute it.
+
+CRITICAL: When making tool calls:
+- NEVER call apply_updates_and_reply with empty arguments
+- Always provide specific cell references and values
+- Use set_cell for individual updates when uncertain
 """)
                 print(f"🔗 Context reference detected but no clear implementation context found")
         else:

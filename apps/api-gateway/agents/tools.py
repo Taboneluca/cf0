@@ -210,12 +210,27 @@ TOOL_CATALOG = [
         "name": "apply_updates_and_reply",
         "description": """Apply multiple cell updates to build a complete table/model and provide a final reply. 
     
-    CRITICAL: You MUST include actual updates in the 'updates' array. Do NOT call this function with empty updates.
+    CRITICAL REQUIREMENTS:
+    - MUST include at least one update in the 'updates' array
+    - Each update MUST have both 'cell' (e.g., 'A1') and 'value' fields
+    - DO NOT call this function with empty or missing arguments
+    - Use set_cell for single updates instead
     
-    Example usage:
-    - When building a WACC model, include ALL the input cells, labels, and formulas
-    - Each update should have 'cell' (like 'A1') and 'value' (the content)
-    - Use this for building complete financial models or large data tables
+    CORRECT EXAMPLE:
+    apply_updates_and_reply(
+        updates=[
+            {"cell": "A1", "value": "Income Statement"},
+            {"cell": "A2", "value": "Revenue"},
+            {"cell": "B1", "value": "2024"},
+            {"cell": "B2", "value": 1500}
+        ],
+        reply="Built income statement with revenue data"
+    )
+    
+    WRONG EXAMPLES:
+    - apply_updates_and_reply() # Missing arguments
+    - apply_updates_and_reply("") # Empty string argument
+    - apply_updates_and_reply(updates=[], reply="test") # Empty updates array
     """,
         "parameters": {
             "type": "object",

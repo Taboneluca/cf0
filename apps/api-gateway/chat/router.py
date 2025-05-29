@@ -304,6 +304,46 @@ async def process_message(
             """Create a wrapper that logs the call"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
+                print(f"[{request_id}] 🔍 TOOL WRAPPER DEBUG:")
+                print(f"[{request_id}] 📝 Tool name: '{name}'")
+                print(f"[{request_id}] 📝 Args type: {type(args)}")
+                print(f"[{request_id}] 📝 Args content: {args}")
+                print(f"[{request_id}] 📝 Args length: {len(args)}")
+                print(f"[{request_id}] 📝 Kwargs type: {type(kwargs)}")
+                print(f"[{request_id}] 📝 Kwargs content: {kwargs}")
+                print(f"[{request_id}] 📝 Kwargs length: {len(kwargs)}")
+                
+                # Special handling for apply_updates_and_reply
+                if name == "apply_updates_and_reply":
+                    # Check if args is empty or contains empty string
+                    if (len(args) == 1 and isinstance(args[0], str) and args[0].strip() == "") or \
+                       (len(args) == 0 and len(kwargs) == 0):
+                        error_msg = "apply_updates_and_reply requires updates array with at least one update. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"
+                        print(f"[{request_id}] ❌ Empty call to apply_updates_and_reply detected")
+                        return {"error": error_msg, "suggestion": "Use set_cell for individual updates or provide multiple updates"}
+                    
+                    # If updates is in kwargs but empty
+                    if 'updates' in kwargs and (not kwargs['updates'] or len(kwargs['updates']) == 0):
+                        return {"error": "Empty updates array provided. Must include at least one cell update."}
+                    
+                    # Handle single string argument case for apply_updates_and_reply
+                    if len(args) == 1 and isinstance(args[0], str):
+                        print(f"[{request_id}] 🔄 Handling single string argument: {repr(args[0])}")
+                        if args[0].strip() == "":
+                            print(f"[{request_id}] 🔧 apply_updates_and_reply called with 0 updates")
+                            return {"error": "apply_updates_and_reply requires both updates array and reply text, not a single string."}
+                
+                # Handle completely empty tool calls
+                elif len(args) == 0 and len(kwargs) == 0:
+                    print(f"[{request_id}] ⚠️ Empty tool call detected for {name}")
+                    if name == "set_cell":
+                        return {"error": "set_cell requires cell and value parameters. Example: set_cell(cell='A1', value='Hello')"}
+                    elif name == "set_cells":
+                        return {"error": "set_cells requires updates parameter. Example: set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])"}
+                    elif name == "apply_updates_and_reply":
+                        return {"error": "apply_updates_and_reply requires updates parameter. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"}
+                    else:
+                        return {"error": f"The {name} tool requires parameters. Please provide the necessary arguments."}
                 
                 # Tools that need special handling
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
@@ -410,14 +450,6 @@ async def process_message(
                         try:
                             print(f"[{request_id}] 🔧 Calling {name} without additional arguments (already bound with partial)")
                             return tool_fn()
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "apply_updates_and_reply":
-                        # This function requires proper updates array and reply text - don't call with just string
-                        try:
-                            print(f"[{request_id}] ⚠️ apply_updates_and_reply called with string argument - requires proper updates array")
-                            return {"error": f"apply_updates_and_reply requires both updates array and reply text, not a single string."}
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
@@ -926,6 +958,46 @@ async def process_message_streaming(
             """Create a wrapper that logs the call"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
+                print(f"[{request_id}] 🔍 TOOL WRAPPER DEBUG:")
+                print(f"[{request_id}] 📝 Tool name: '{name}'")
+                print(f"[{request_id}] 📝 Args type: {type(args)}")
+                print(f"[{request_id}] 📝 Args content: {args}")
+                print(f"[{request_id}] 📝 Args length: {len(args)}")
+                print(f"[{request_id}] 📝 Kwargs type: {type(kwargs)}")
+                print(f"[{request_id}] 📝 Kwargs content: {kwargs}")
+                print(f"[{request_id}] 📝 Kwargs length: {len(kwargs)}")
+                
+                # Special handling for apply_updates_and_reply
+                if name == "apply_updates_and_reply":
+                    # Check if args is empty or contains empty string
+                    if (len(args) == 1 and isinstance(args[0], str) and args[0].strip() == "") or \
+                       (len(args) == 0 and len(kwargs) == 0):
+                        error_msg = "apply_updates_and_reply requires updates array with at least one update. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"
+                        print(f"[{request_id}] ❌ Empty call to apply_updates_and_reply detected")
+                        return {"error": error_msg, "suggestion": "Use set_cell for individual updates or provide multiple updates"}
+                    
+                    # If updates is in kwargs but empty
+                    if 'updates' in kwargs and (not kwargs['updates'] or len(kwargs['updates']) == 0):
+                        return {"error": "Empty updates array provided. Must include at least one cell update."}
+                    
+                    # Handle single string argument case for apply_updates_and_reply
+                    if len(args) == 1 and isinstance(args[0], str):
+                        print(f"[{request_id}] 🔄 Handling single string argument: {repr(args[0])}")
+                        if args[0].strip() == "":
+                            print(f"[{request_id}] 🔧 apply_updates_and_reply called with 0 updates")
+                            return {"error": "apply_updates_and_reply requires both updates array and reply text, not a single string."}
+                
+                # Handle completely empty tool calls
+                elif len(args) == 0 and len(kwargs) == 0:
+                    print(f"[{request_id}] ⚠️ Empty tool call detected for {name}")
+                    if name == "set_cell":
+                        return {"error": "set_cell requires cell and value parameters. Example: set_cell(cell='A1', value='Hello')"}
+                    elif name == "set_cells":
+                        return {"error": "set_cells requires updates parameter. Example: set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])"}
+                    elif name == "apply_updates_and_reply":
+                        return {"error": "apply_updates_and_reply requires updates parameter. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"}
+                    else:
+                        return {"error": f"The {name} tool requires parameters. Please provide the necessary arguments."}
                 
                 # Tools that need special handling
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
@@ -1032,14 +1104,6 @@ async def process_message_streaming(
                         try:
                             print(f"[{request_id}] 🔧 Calling {name} without additional arguments (already bound with partial)")
                             return tool_fn()
-                        except Exception as e:
-                            print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
-                            return {"error": f"Error in {name}: {str(e)}"}
-                    elif name == "apply_updates_and_reply":
-                        # This function requires proper updates array and reply text - don't call with just string
-                        try:
-                            print(f"[{request_id}] ⚠️ apply_updates_and_reply called with string argument - requires proper updates array")
-                            return {"error": f"apply_updates_and_reply requires both updates array and reply text, not a single string."}
                         except Exception as e:
                             print(f"[{request_id}] ❌ Error in {name}: {str(e)}")
                             return {"error": f"Error in {name}: {str(e)}"}
