@@ -3,6 +3,7 @@ import time
 import json
 import os
 import inspect
+import re
 
 from llm.base import LLMClient
 from llm.factory import get_client
@@ -12,6 +13,142 @@ from .ask_agent import build as build_ask_agent
 from .base_agent import BaseAgent, ChatStep
 from spreadsheet_engine.model import Spreadsheet
 from spreadsheet_engine.summary import sheet_summary
+
+
+class ContextAnalyzer:
+    """
+    Analyzes conversation history to extract actionable context for agent instructions.
+    This mimics how tools like Cursor and Windsurf understand user intent across modes.
+    """
+    
+    @staticmethod
+    def extract_actionable_context(message: str, history: Optional[list] = None) -> Optional[str]:
+        """
+        Analyzes the user message and conversation history to extract actionable context.
+        Returns detailed instructions for what the agent should build/implement.
+        """
+        if not history:
+            return None
+            
+        # Detect context reference patterns (covers thousands of variations)
+        reference_patterns = [
+            r'\b(build|create|implement|make|generate|add|set up|construct)\s+(the\s+)?(above|that|this|it|those)\b',
+            r'\b(do|apply|execute|perform)\s+(the\s+)?(above|that|this|it|those)\b',
+            r'\b(use|take|follow|adopt)\s+(the\s+)?(above|that|this|it|those)\b',
+            r'\b(based\s+on|according\s+to|using|with)\s+(the\s+)?(above|that|this|it|those)\b',
+            r'\bwhat\s+i\s+(mentioned|said|described|outlined|specified|asked\s+for)\b',
+            r'\b(from\s+)?(the\s+)?(previous|earlier|last|recent)\s+(message|conversation|discussion|request)\b',
+            r'\b(as\s+)?(mentioned|described|outlined|specified|discussed)\s+(before|earlier|above|previously)\b'
+        ]
+        
+        message_lower = message.lower()
+        has_reference = any(re.search(pattern, message_lower, re.IGNORECASE) for pattern in reference_patterns)
+        
+        if not has_reference:
+            return None
+            
+        # Extract the most recent and detailed specification from history
+        context_content = ContextAnalyzer._extract_specification_from_history(history)
+        
+        if context_content:
+            return f"""
+CONTEXT-AWARE EXECUTION: The user is referencing previous conversation content.
+
+EXTRACTED SPECIFICATION:
+{context_content}
+
+INSTRUCTIONS:
+1. Analyze the extracted specification carefully
+2. Identify all components, requirements, and details mentioned
+3. Implement the specification completely using appropriate tools
+4. If building a model/table, include all fields, formulas, and structure mentioned
+5. Maintain the exact terminology and approach described in the specification
+6. If any part is unclear, implement the most logical interpretation based on context
+
+Your task is to execute this specification, not to ask clarifying questions about it.
+"""
+        
+        return None
+    
+    @staticmethod
+    def _extract_specification_from_history(history: list) -> Optional[str]:
+        """
+        Extracts the most detailed specification or description from conversation history.
+        Prioritizes recent, detailed content with actionable information.
+        """
+        if not history:
+            return None
+            
+        # Look for detailed specifications in reverse chronological order
+        specifications = []
+        
+        for message in reversed(history):
+            if message.get("role") != "user":
+                continue
+                
+            content = message.get("content", "")
+            if not content:
+                continue
+                
+            # Score content based on detail and actionability
+            score = ContextAnalyzer._score_content_detail(content)
+            
+            if score > 50:  # Threshold for detailed content
+                specifications.append({
+                    "content": content,
+                    "score": score
+                })
+        
+        # Return the highest scoring specification
+        if specifications:
+            best_spec = max(specifications, key=lambda x: x["score"])
+            return best_spec["content"]
+            
+        return None
+    
+    @staticmethod
+    def _score_content_detail(content: str) -> int:
+        """
+        Scores content based on how detailed and actionable it is.
+        Higher scores indicate more detailed specifications.
+        """
+        score = 0
+        content_lower = content.lower()
+        
+        # Length indicates detail level
+        score += min(len(content) // 10, 30)
+        
+        # Financial/business model indicators
+        financial_terms = [
+            'wacc', 'dcf', 'financial model', 'valuation', 'cash flow', 'income statement',
+            'balance sheet', 'cost of capital', 'risk free rate', 'beta', 'market risk premium',
+            'debt', 'equity', 'npv', 'irr', 'revenue', 'expenses', 'formula', 'calculation'
+        ]
+        score += sum(5 for term in financial_terms if term in content_lower)
+        
+        # Structure indicators
+        structure_terms = [
+            'steps', 'detailed', 'model', 'table', 'columns', 'rows', 'fields',
+            'inputs', 'outputs', 'source', 'data', 'labels', 'build', 'create'
+        ]
+        score += sum(3 for term in structure_terms if term in content_lower)
+        
+        # Specificity indicators
+        specific_terms = [
+            'cell', 'a1', 'b1', 'formula', 'rate', 'percentage', 'value',
+            'industry standard', 'calculate', 'compute'
+        ]
+        score += sum(2 for term in specific_terms if term in content_lower)
+        
+        # Numbered lists or bullet points indicate structured specifications
+        if re.search(r'\d+\.\s+', content) or re.search(r'[-*]\s+', content):
+            score += 15
+            
+        # Multiple sentences indicate detailed explanation
+        sentence_count = len(re.findall(r'[.!?]+', content))
+        score += min(sentence_count * 2, 20)
+        
+        return score
 
 
 class Orchestrator:
@@ -115,21 +252,14 @@ class Orchestrator:
         if mode == "ask":
             agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
         
-        # For analyst mode, add explicit instruction about financial model tools
+        # For analyst mode, apply context-aware execution
         elif mode == "analyst":
-            # Check if the message references previous context
-            context_references = ["the above", "that", "this", "it", "the previous", "what I mentioned", "build the above", "create that", "implement this"]
-            message_lower = message.lower()
+            # Use the robust context analyzer to extract actionable context
+            context_instructions = ContextAnalyzer.extract_actionable_context(message, history)
             
-            if any(ref in message_lower for ref in context_references):
-                # Add instruction to look at conversation history for context
-                agent.add_system_message("""
-                CONTEXT AWARENESS: The user is referring to something from the previous conversation. 
-                Look carefully at the conversation history to understand what they're referring to.
-                If they say "build the above" or "create that", look for the most recent detailed description
-                or specification in the conversation history and implement it.
-                """)
-                print(f"[{request_id}] 🔗 Detected context reference in message: '{message[:50]}...'")
+            if context_instructions:
+                agent.add_system_message(context_instructions)
+                print(f"[{request_id}] 🧠 Applied context-aware instructions for analyst mode")
             
             agent.add_system_message("""
             IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
@@ -199,7 +329,7 @@ class Orchestrator:
                        message: str, 
                        history: Optional[list] = None) -> AsyncGenerator[ChatStep, None]:
         """
-        Streaming version of the orchestration process.
+        Stream the orchestration process - similar to run() but yields ChatStep objects.
         
         Args:
             mode: "ask" or "analyst"
@@ -207,45 +337,32 @@ class Orchestrator:
             history: Conversation history
             
         Yields:
-            ChatStep objects from the agent
+            ChatStep objects from the agent execution
         """
         start_time = time.time()
         request_id = f"orch-stream-{int(start_time*1000)}"
         print(f"[{request_id}] 🎭 Orchestrator.stream_run: mode={mode}, model={self.llm.model}")
-        print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
-        print(f"[{request_id}] 📚 History: {len(history) if history else 0} messages")
         
         # Get the appropriate agent
-        print(f"[{request_id}] 🔍 Getting agent for mode: {mode}")
         agent = self.get_agent(mode)
-        print(f"[{request_id}] ✅ Agent obtained: {agent.__class__.__name__}")
-        print(f"[{request_id}] 🔧 Agent has {len(agent.tools)} tools available")
         
         # Reset system prompt to prevent accumulation from previous mode switches
         agent.reset_system_prompt()
         
-        # Add sheet context if not already there
+        # Add sheet context
         agent.add_system_message(self.sheet_context)
         
-        # For ask mode, add explicit instruction to not generate any financial templates
+        # Mode-specific configuration
         if mode == "ask":
             agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
         
-        # For analyst mode, add explicit instruction about financial model tools
         elif mode == "analyst":
-            # Check if the message references previous context
-            context_references = ["the above", "that", "this", "it", "the previous", "what I mentioned", "build the above", "create that", "implement this"]
-            message_lower = message.lower()
+            # Apply context-aware execution for analyst mode
+            context_instructions = ContextAnalyzer.extract_actionable_context(message, history)
             
-            if any(ref in message_lower for ref in context_references):
-                # Add instruction to look at conversation history for context
-                agent.add_system_message("""
-                CONTEXT AWARENESS: The user is referring to something from the previous conversation. 
-                Look carefully at the conversation history to understand what they're referring to.
-                If they say "build the above" or "create that", look for the most recent detailed description
-                or specification in the conversation history and implement it.
-                """)
-                print(f"[{request_id}] 🔗 Detected context reference in message: '{message[:50]}...'")
+            if context_instructions:
+                agent.add_system_message(context_instructions)
+                print(f"[{request_id}] 🧠 Applied context-aware instructions for streaming analyst mode")
             
             agent.add_system_message("""
             IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
@@ -258,8 +375,7 @@ class Orchestrator:
             - When the user asks for a basic table, NEVER attempt to build a full financial model with multiple statements.
             """)
         
-        # For llama-70b model specifically, filter out complex financial model tools
-        # unless they're explicitly requested in the user message
+        # Apply llama-70b filtering if needed
         if hasattr(self.llm, 'model') and (
             'llama-3-70b' in self.llm.model or 
             'llama3-70b' in self.llm.model or
@@ -268,58 +384,25 @@ class Orchestrator:
             financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
             message_lower = message.lower()
             
-            # Only provide financial model tools if explicitly mentioned
             should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
             
             if not should_include_model_tools:
-                # Filter out financial model tools from agent's tools
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
                 
-                # Create a new tools list without the financial model tools
                 filtered_tools = []
                 for tool in agent.tools:
                     if tool["name"] not in financial_model_tools:
                         filtered_tools.append(tool)
                 
-                # Create a new agent with filtered tools
                 agent = agent.__class__(
                     llm=agent.llm,
                     fallback_prompt=agent.system_prompt,
                     tools=filtered_tools
                 )
-                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
+                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b streaming")
         
-        # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
-        print(f"[{request_id}] 🚀 Calling agent.stream_run...")
-        agent_stream = agent.stream_run(message, history)
-        print(f"[{request_id}] ✅ Agent.stream_run returned: {type(agent_stream)}")
+        # Stream the agent execution
+        async for step in agent.stream_run(message, history):
+            yield step
         
-        # Verify we got an actual async generator
-        if not inspect.isasyncgen(agent_stream):
-            if inspect.isawaitable(agent_stream):
-                print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
-                agent_stream = await agent_stream
-                print(f"[{request_id}] 🔄 After awaiting: {type(agent_stream)}")
-                if not inspect.isasyncgen(agent_stream):
-                    print(f"[{request_id}] ❌ Agent still did not return an async generator after awaiting")
-                    raise TypeError("Agent.stream_run did not return an async generator")
-            else:
-                print(f"[{request_id}] ❌ Agent did not return an async generator or coroutine")
-                raise TypeError("Agent.stream_run did not return an async generator")
-            
-        # Now wrap it with the guard
-        print(f"[{request_id}] 🛡️ Wrapping stream with guard")
-        guarded_stream = wrap_stream_with_guard(agent_stream)
-        print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
-        
-        step_count = 0
-        async for step in guarded_stream:
-            step_count += 1
-            print(f"[{request_id}] 📦 Stream step #{step_count}: {type(step)} - {str(step)[:100]}{'...' if len(str(step)) > 100 else ''}")
-            # Convert string to ChatStep if needed for consistency
-            if isinstance(step, str):
-                yield ChatStep(role="assistant", content=step)
-            else:
-                yield step
-        
-        print(f"[{request_id}] ✅ Orchestrator stream completed in {time.time() - start_time:.2f}s") 
+        print(f"[{request_id}] ✅ Orchestrator streaming completed in {time.time() - start_time:.2f}s") 
