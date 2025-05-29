@@ -198,6 +198,24 @@ export function useChatStream(
       status: 'thinking'
     }]);
     
+    // Fallback: If no start event is received within 2 seconds, switch to streaming anyway
+    const fallbackTimer = setTimeout(() => {
+      if (currentMessageIdRef.current === id) {
+        if (DEBUG_STREAMING) console.log('[Stream DEBUG] Fallback: switching to streaming status after 2s delay');
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const index = newMessages.findIndex(m => m.id === id);
+          if (index >= 0 && newMessages[index].status === 'thinking') {
+            newMessages[index] = {
+              ...newMessages[index],
+              status: 'streaming'
+            };
+          }
+          return newMessages;
+        });
+      }
+    }, 2000);
+    
     setIsStreaming(true);
     
     try {
@@ -287,6 +305,9 @@ export function useChatStream(
             
             // Process the event based on type
             if (event.type === 'start') {
+              // Clear fallback timer since we got the real start event
+              clearTimeout(fallbackTimer);
+              
               // Just mark that streaming has started
               setMessages(prev => {
                 const newMessages = [...prev];
@@ -375,6 +396,9 @@ export function useChatStream(
               });
             }
             else if (event.type === 'complete') {
+              // Clear fallback timer
+              clearTimeout(fallbackTimer);
+              
               // Stream is complete
               setMessages(prev => {
                 const newMessages = [...prev];
@@ -405,6 +429,9 @@ export function useChatStream(
               }
             }
             else if (event.type === 'error') {
+              // Clear fallback timer
+              clearTimeout(fallbackTimer);
+              
               // Handle error
               setMessages(prev => {
                 const newMessages = [...prev];
@@ -433,6 +460,9 @@ export function useChatStream(
         }
       }
     } catch (e) {
+      // Clear fallback timer in case of any error
+      clearTimeout(fallbackTimer);
+      
       if ((e as Error).name === 'AbortError') {
         if (DEBUG_STREAMING) console.log('[Stream DEBUG] Stream aborted by user');
         // The request was aborted, handle gracefully
