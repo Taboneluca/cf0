@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Callable, Union
 import os
 import asyncio
 import json
@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from llm.chat_types import AIResponse, Message
 from llm.catalog import normalise, normalize_model_name  # Import the normalize_model_name function
 from llm import wrap_stream_with_guard
+from abc import ABC, abstractmethod
 
 load_dotenv()
 MAX_RETRIES = 3
@@ -39,6 +40,95 @@ MODEL_LIMITS = {
     "claude-3-5-sonnet-20240620": 200_000,
 }
 DEFAULT_MODEL_LIMIT = 16_384  # Default for most other models
+
+class StreamingToolCallHandler:
+    """Handles proper accumulation of streaming tool calls from OpenAI API"""
+    
+    def __init__(self):
+        self.tool_calls = {}  # id -> {name, args_buffer}
+        self.completed_calls = []
+    
+    def process_delta(self, delta) -> List[Dict[str, Any]]:
+        """Process a streaming delta and return completed tool calls"""
+        completed = []
+        
+        if hasattr(delta, 'tool_calls') and delta.tool_calls:
+            for tc_delta in delta.tool_calls:
+                call_id = getattr(tc_delta, 'id', None)
+                index = getattr(tc_delta, 'index', 0)
+                
+                # Use index as fallback ID if no ID provided
+                if call_id is None:
+                    call_id = f"call_{index}_{int(time.time()*1000)}"
+                
+                # Initialize tool call if not exists
+                if call_id not in self.tool_calls:
+                    self.tool_calls[call_id] = {
+                        'id': call_id,
+                        'name': '',
+                        'args_buffer': '',
+                        'completed': False
+                    }
+                
+                tool_call = self.tool_calls[call_id]
+                
+                # Handle function name
+                if hasattr(tc_delta, 'function') and tc_delta.function:
+                    if hasattr(tc_delta.function, 'name') and tc_delta.function.name:
+                        tool_call['name'] = tc_delta.function.name
+                    
+                    # Accumulate arguments
+                    if hasattr(tc_delta.function, 'arguments') and tc_delta.function.arguments:
+                        tool_call['args_buffer'] += tc_delta.function.arguments
+                
+                # Check if this tool call is complete (no more arguments coming)
+                # This is indicated when we get a delta without arguments or with empty arguments
+                if (hasattr(tc_delta, 'function') and tc_delta.function and 
+                    hasattr(tc_delta.function, 'arguments') and 
+                    tc_delta.function.arguments == '' and 
+                    tool_call['args_buffer'] and 
+                    not tool_call['completed']):
+                    
+                    # Mark as completed and try to parse
+                    tool_call['completed'] = True
+                    try:
+                        parsed_args = json.loads(tool_call['args_buffer']) if tool_call['args_buffer'].strip() else {}
+                        completed.append({
+                            'id': call_id,
+                            'name': tool_call['name'],
+                            'arguments': parsed_args
+                        })
+                    except json.JSONDecodeError:
+                        print(f"Failed to parse tool call arguments: {tool_call['args_buffer']}")
+                        # Provide empty args as fallback
+                        completed.append({
+                            'id': call_id,
+                            'name': tool_call['name'],
+                            'arguments': {}
+                        })
+        
+        return completed
+    
+    def force_complete_all(self) -> List[Dict[str, Any]]:
+        """Force complete all pending tool calls"""
+        completed = []
+        for call_id, tool_call in self.tool_calls.items():
+            if not tool_call['completed'] and tool_call['name']:
+                try:
+                    parsed_args = json.loads(tool_call['args_buffer']) if tool_call['args_buffer'].strip() else {}
+                    completed.append({
+                        'id': call_id,
+                        'name': tool_call['name'],
+                        'arguments': parsed_args
+                    })
+                except json.JSONDecodeError:
+                    completed.append({
+                        'id': call_id,
+                        'name': tool_call['name'],
+                        'arguments': {}
+                    })
+                tool_call['completed'] = True
+        return completed
 
 def get_max_tokens(model: str) -> int:
     """Get the max token limit for a given model, with fallback"""
@@ -879,21 +969,17 @@ class BaseAgent:
         print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
         in_tool_calling_phase = True
         
+        # Create tool function mapping for easy lookup
+        tool_functions = {t["name"]: t["func"] for t in self.tools}
+        
         while iterations < max_iterations:
             iterations += 1
             loop_start = time.time()
             print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations}")
             
-            # Reset tool call detection variables for each iteration to prevent false duplicates
+            # Initialize streaming tool call handler for this iteration
+            tool_handler = StreamingToolCallHandler()
             current_content = ""
-            previous_content = ""  # Track previous content to calculate delta
-            function_name = None
-            function_args = ""
-            is_function_call = False
-            current_tool_calls = {}  # Track accumulating tool calls
-            
-            # Proper tool call accumulation for streaming
-            accumulated_tool_calls = []  # List to store tool calls being built
             
             # Call the LLM model with streaming enabled
             print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {self.llm.model}")
@@ -934,81 +1020,77 @@ class BaseAgent:
                 # Wrap the stream with our guard to protect against infinite loops
                 guarded_stream = wrap_stream_with_guard(stream)
                 
-                # Add stream termination tracking
-                stream_finished = False
-                content_yielded = False
-                chunks_processed = 0
-                last_chunk_time = time.time()
-                
-                # Instead of awaiting the generator, iterate through it with async for
+                # Process streaming chunks
                 async for chunk in guarded_stream:
-                    chunks_processed += 1
-                    current_time = time.time()
-                    
-                    # Safety check: if we've been processing chunks for too long without progress, break
-                    if current_time - last_chunk_time > 30:  # 30 second timeout per chunk
-                        print(f"[{agent_id}] ⚠️ Stream chunk timeout detected, breaking loop")
-                        break
-                    last_chunk_time = current_time
-                    
-                    # Safety check: if we've processed too many chunks, something is wrong
-                    if chunks_processed > 1000:  # Reasonable chunk limit
-                        print(f"[{agent_id}] ⚠️ Too many chunks processed ({chunks_processed}), breaking loop")
-                        break
-                    
-                    # Check if this is an AIResponse or OpenAI format
+                    # Check if this is an OpenAI-style response
                     if hasattr(chunk, "choices") and chunk.choices:
                         delta = chunk.choices[0].delta
-                        choice = chunk.choices[0]
                         
-                        # Check for stream termination signals
-                        if hasattr(choice, 'finish_reason') and choice.finish_reason is not None:
-                            print(f"[{agent_id}] 🏁 Stream finished with reason: {choice.finish_reason}")
-                            stream_finished = True
-                            # Don't break immediately - process any final content in this chunk first
+                        # Process tool calls using the new handler
+                        completed_calls = tool_handler.process_delta(delta)
                         
-                        # Handle tool_calls accumulation properly
-                        if hasattr(delta, "tool_calls") and delta.tool_calls:
-                            for tool_call_chunk in delta.tool_calls:
-                                index = tool_call_chunk.index
-                                
-                                # Ensure we have a slot for this tool call
-                                while len(accumulated_tool_calls) <= index:
-                                    accumulated_tool_calls.append({
-                                        "id": "",
-                                        "type": "function",
-                                        "function": {"name": "", "arguments": ""}
-                                    })
-                                
-                                current_tool_call = accumulated_tool_calls[index]
-                                
-                                # Accumulate the tool call properties - FIX: Don't concatenate IDs
-                                if hasattr(tool_call_chunk, 'id') and tool_call_chunk.id and not current_tool_call["id"]:
-                                    # Only set ID once - OpenAI sends complete ID in first chunk
-                                    current_tool_call["id"] = tool_call_chunk.id
-                                # FIX: Use correct OpenAI format attributes
-                                if tool_call_chunk.function and tool_call_chunk.function.name:
-                                    current_tool_call["function"]["name"] += tool_call_chunk.function.name
-                                if tool_call_chunk.function and tool_call_chunk.function.arguments:
-                                    current_tool_call["function"]["arguments"] += tool_call_chunk.function.arguments
-                                
-                                print(f"[{agent_id}] 🔧 OpenAI tool call {index}: id='{current_tool_call['id'][:20]}...', name='{current_tool_call['function']['name']}', args_length={len(current_tool_call['function']['arguments'])}")
-                        
-                        # Handle legacy function_call format
-                        if hasattr(delta, "function_call") and delta.function_call:
-                            if not is_function_call:
-                                is_function_call = True
-                                function_name = delta.function_call.name or ""
-                                function_args = ""
-                                print(f"[{agent_id}] 🔧 Starting legacy function call: {function_name}")
+                        # Execute any completed tool calls
+                        for tool_call in completed_calls:
+                            name = tool_call['name']
+                            args = tool_call['arguments']
+                            tool_call_id = tool_call['id']
                             
-                            if delta.function_call.arguments:
-                                function_args += delta.function_call.arguments
-                                print(f"[{agent_id}] 📝 Accumulating legacy args: '{delta.function_call.arguments}' -> total: '{function_args}'")
+                            print(f"[{agent_id}] 🔧 Executing completed tool call: {name} with args: {args}")
+                            
+                            # Handle empty or problematic args
+                            if args is None or args == "" or (isinstance(args, dict) and len(args) == 0):
+                                print(f"[{agent_id}] ⚠️ Empty args detected for {name}, providing fallbacks")
+                                if name == "apply_updates_and_reply":
+                                    print(f"[{agent_id}] 🔄 Skipping empty apply_updates_and_reply call")
+                                    continue
+                                elif name == "set_cell":
+                                    print(f"[{agent_id}] 🔄 Skipping empty set_cell call")
+                                    continue
+                                    
+                            # Execute the tool
+                            try:
+                                tool_fn = tool_functions.get(name)
+                                if tool_fn:
+                                    if name in mutating_tools:
+                                        mutating_calls += 1
+                                    
+                                    if isinstance(args, dict):
+                                        result = tool_fn(**args)
+                                    elif isinstance(args, list):
+                                        result = tool_fn(*args)
+                                    else:
+                                        result = tool_fn(args)
+                                        
+                                    # Add tool call and result to messages
+                                    messages.append({
+                                        "role": "assistant",
+                                        "tool_calls": [{
+                                            "id": tool_call_id,
+                                            "type": "function",
+                                            "function": {"name": name, "arguments": json.dumps(args)}
+                                        }]
+                                    })
+                                    messages.append({
+                                        "role": "tool",
+                                        "tool_call_id": tool_call_id,
+                                        "content": json.dumps(result) if result is not None else "null"
+                                    })
+                                    
+                                    yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
+                                    
+                                else:
+                                    print(f"[{agent_id}] ❌ Unknown tool: {name}")
+                                    
+                            except Exception as e:
+                                print(f"[{agent_id}] ❌ Tool execution error: {e}")
+                                error_msg = str(e)
+                                error_count[error_msg] = error_count.get(error_msg, 0) + 1
+                                if error_count[error_msg] > 3:
+                                    print(f"[{agent_id}] 🛑 Too many repeated errors, breaking")
+                                    break
                         
-                        # Accumulate content for text response
+                        # Handle regular content
                         if hasattr(delta, "content") and delta.content:
-                            # Get just the new content (delta)
                             new_content = delta.content
                             
                             if debug_streaming:
@@ -1018,74 +1100,60 @@ class BaseAgent:
                                 # We've transitioned from tool calling to final answer
                                 in_tool_calling_phase = False
                                 print(f"[{agent_id}] 💬 Transitioning to final answer")
+                            
+                            current_content += new_content
+                            
+                            # Yield content in smaller chunks for smoother streaming
+                            if len(new_content) > 15:
+                                # Split by sentence, newline or at word boundaries
+                                parts = []
                                 
-                                # Update tracking of current content BEFORE yielding
-                                current_content += new_content
-                                
-                                # Split larger chunks into smaller ones for smoother streaming
-                                # This improves the user experience by making the text appear more natural
-                                if len(new_content) > 15:  # Smaller threshold for more frequent updates
-                                    # Split by sentence, newline or at word boundaries
-                                    parts = []
+                                if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
+                                    import re
+                                    pattern = r'([.!?]|\n)'
+                                    pieces = re.split(pattern, new_content)
                                     
-                                    # First try to split by sentence/paragraph
-                                    if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
-                                        import re
-                                        # Split on sentence boundaries or newlines
-                                        pattern = r'([.!?]|\n)'
-                                        pieces = re.split(pattern, new_content)
-                                        
-                                        i = 0
-                                        while i < len(pieces) - 1:
-                                            # Group sentence with its punctuation
-                                            if i + 1 < len(pieces):
-                                                sentence = pieces[i] + pieces[i+1]
-                                                if sentence.strip():  # Only add non-empty
-                                                    parts.append(sentence)
-                                                i += 2
+                                    i = 0
+                                    while i < len(pieces) - 1:
+                                        if i + 1 < len(pieces):
+                                            sentence = pieces[i] + pieces[i+1]
+                                            if sentence.strip():
+                                                parts.append(sentence)
+                                            i += 2
+                                        else:
+                                            if pieces[i].strip():
+                                                parts.append(pieces[i])
+                                            i += 1
+                                else:
+                                    # Split at word boundaries
+                                    words = new_content.split(' ')
+                                    current_part = ""
+                                    
+                                    for word in words:
+                                        if len(current_part) + len(word) + 1 <= 20:
+                                            if current_part:
+                                                current_part += ' ' + word
                                             else:
-                                                # Should be rare, handle odd cases
-                                                if pieces[i].strip():
-                                                    parts.append(pieces[i])
-                                                i += 1
-                                    else:
-                                        # If no sentence breaks, split at word boundaries
-                                        words = new_content.split(' ')
-                                        current_part = ""
-                                        
-                                        for word in words:
-                                            if len(current_part) + len(word) + 1 <= 20:  # Keep parts reasonably small
-                                                if current_part:
-                                                    current_part += ' ' + word
-                                                else:
-                                                    current_part = word
-                                            else:
-                                                if current_part:
-                                                    parts.append(current_part)
                                                 current_part = word
-                                        
-                                        # Add the last part if any
-                                        if current_part:
-                                            parts.append(current_part)
+                                        else:
+                                            if current_part:
+                                                parts.append(current_part)
+                                            current_part = word
                                     
-                                    # If splitting failed, fallback to original
-                                    if not parts:
-                                        parts = [new_content]
-                                    
-                                    if debug_streaming:
-                                        print(f"[{agent_id}] 🔀 Split content into {len(parts)} parts")
-                                    
-                                    # Yield each part separately for smoother streaming
-                                    for part in parts:
-                                        if part.strip():  # Skip empty parts
-                                            yield ChatStep(role="assistant", content=part)
-                                            content_yielded = True
+                                    if current_part:
+                                        parts.append(current_part)
+                                
+                                if not parts:
+                                    parts = [new_content]
+                                
+                                for part in parts:
+                                    if part.strip():
+                                        yield ChatStep(role="assistant", content=part)
                             else:
-                                # Small enough to yield directly
                                 yield ChatStep(role="assistant", content=new_content)
-                                content_yielded = True
+                                
                     else:
-                        # Handle AIResponse format
+                        # Handle AIResponse format (Anthropic style)
                         if hasattr(chunk, "content") and chunk.content:
                             # Handle both string and non-string content
                             content_chunk = chunk.content
@@ -1094,329 +1162,182 @@ class BaseAgent:
                                 if not current_content and not in_tool_calling_phase:
                                     in_tool_calling_phase = False
                                     print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
+                                
+                                # Calculate the delta/new content only
+                                new_content = ""
+                                
+                                if content_chunk.startswith(previous_content):
+                                    # Extract only the new part
+                                    new_content = content_chunk[len(previous_content):]
+                                    if debug_delta:
+                                        print(f"[{agent_id}] 🔄 Simple prefix match: '{new_content}'")
+                                else:
+                                    # More complex case - find where content diverges
+                                    # Find the longest common prefix to identify what's new
+                                    common_length = 0
+                                    for i in range(min(len(previous_content), len(content_chunk))):
+                                        if previous_content[i] == content_chunk[i]:
+                                            common_length += 1
+                                        else:
+                                            break
                                     
-                                    # Calculate the delta/new content only
-                                    new_content = ""
-                                    
-                                    if content_chunk.startswith(previous_content):
-                                        # Extract only the new part
-                                        new_content = content_chunk[len(previous_content):]
+                                    if common_length > 0:
+                                        # Extract the new content using the common prefix
+                                        new_content = content_chunk[common_length:]
                                         if debug_delta:
-                                            print(f"[{agent_id}] 🔄 Simple prefix match: '{new_content}'")
+                                            print(f"[{agent_id}] 🔄 Prefix match at position {common_length}: '{new_content}'")
                                     else:
-                                        # More complex case - find where content diverges
-                                        # Find the longest common prefix to identify what's new
-                                        common_length = 0
-                                        for i in range(min(len(previous_content), len(content_chunk))):
-                                            if previous_content[i] == content_chunk[i]:
-                                                common_length += 1
-                                            else:
-                                                break
-                                        
-                                        if common_length > 0:
-                                            # Extract the new content using the common prefix
-                                            new_content = content_chunk[common_length:]
+                                        # This shouldn't happen often, but handle the case where content
+                                        # completely changes or is reorganized
+                                        if len(content_chunk) > len(current_content):
+                                            new_content = content_chunk[len(current_content):]
                                             if debug_delta:
-                                                print(f"[{agent_id}] 🔄 Prefix match at position {common_length}: '{new_content}'")
+                                                print(f"[{agent_id}] 🔄 Using length difference: {len(new_content)} chars")
                                         else:
-                                            # This shouldn't happen often, but handle the case where content
-                                            # completely changes or is reorganized
-                                            if len(content_chunk) > len(current_content):
-                                                new_content = content_chunk[len(current_content):]
-                                                if debug_delta:
-                                                    print(f"[{agent_id}] 🔄 Using length difference: {len(new_content)} chars")
-                                            else:
-                                                # Last resort - yield the whole chunk and update tracking
-                                                new_content = content_chunk
-                                                if debug_delta:
-                                                    print(f"[{agent_id}] 🔄 Fallback to full chunk: {len(new_content)} chars")
+                                            # Last resort - yield the whole chunk and update tracking
+                                            new_content = content_chunk
+                                            if debug_delta:
+                                                print(f"[{agent_id}] 🔄 Fallback to full chunk: {len(new_content)} chars")
+                                
+                                # Update tracking for next iteration
+                                previous_content = content_chunk
+                                current_content = content_chunk
+                                
+                                if new_content:
+                                    if debug_streaming:
+                                        print(f"[{agent_id}] 💬 Streaming delta: '{new_content[:30]}{'...' if len(new_content) > 30 else ''}'")
                                     
-                                    # Update tracking for next iteration
-                                    previous_content = content_chunk
-                                    current_content = content_chunk
-                                    
-                                    if new_content:
-                                        if debug_streaming:
-                                            print(f"[{agent_id}] 💬 Streaming delta: '{new_content[:30]}{'...' if len(new_content) > 30 else ''}'")
+                                    # For longer content, split into chunks for smoother streaming
+                                    if len(new_content) > 15:
+                                        # Split on sentences or newlines first for natural breaks
+                                        parts = []
                                         
-                                        # For longer content, split into chunks for smoother streaming
-                                        if len(new_content) > 15:
-                                            # Split on sentences or newlines first for natural breaks
-                                            parts = []
+                                        # First try to split by sentence/paragraph
+                                        if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
+                                            import re
+                                            # Split on sentence boundaries or newlines
+                                            pattern = r'([.!?]|\n)'
+                                            pieces = re.split(pattern, new_content)
                                             
-                                            # First try to split by sentence/paragraph
-                                            if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
-                                                import re
-                                                # Split on sentence boundaries or newlines
-                                                pattern = r'([.!?]|\n)'
-                                                pieces = re.split(pattern, new_content)
-                                                
-                                                i = 0
-                                                while i < len(pieces) - 1:
-                                                    # Group sentence with its punctuation
-                                                    if i + 1 < len(pieces):
-                                                        sentence = pieces[i] + pieces[i+1]
-                                                        if sentence.strip():  # Only add non-empty
-                                                            parts.append(sentence)
-                                                        i += 2
-                                                    else:
-                                                        if pieces[i].strip():
-                                                            parts.append(pieces[i])
-                                                        i += 1
-                                            else:
-                                                # If no sentence breaks, split at word boundaries
-                                                words = new_content.split(' ')
-                                                current_part = ""
-                                                
-                                                for word in words:
-                                                    if len(current_part) + len(word) + 1 <= 20:
-                                                        if current_part:
-                                                            current_part += ' ' + word
-                                                        else:
-                                                            current_part = word
-                                                    else:
-                                                        if current_part:
-                                                            parts.append(current_part)
-                                                        current_part = word
-                                                
-                                                # Add the last part if any
-                                                if current_part:
-                                                    parts.append(current_part)
-                                            
-                                            # If splitting failed, fallback to original
-                                            if not parts:
-                                                parts = [new_content]
-                                            
-                                            if debug_streaming:
-                                                print(f"[{agent_id}] 🔀 Split delta into {len(parts)} parts")
-                                            
-                                            # Yield each part separately for smoother streaming
-                                            for part in parts:
-                                                if part.strip():  # Skip empty parts
-                                                    yield ChatStep(role="assistant", content=part)
-                                                    content_yielded = True
+                                            i = 0
+                                            while i < len(pieces) - 1:
+                                                # Group sentence with its punctuation
+                                                if i + 1 < len(pieces):
+                                                    sentence = pieces[i] + pieces[i+1]
+                                                    if sentence.strip():  # Only add non-empty
+                                                        parts.append(sentence)
+                                                    i += 2
+                                                else:
+                                                    if pieces[i].strip():
+                                                        parts.append(pieces[i])
+                                                    i += 1
                                         else:
-                                            # Small enough to yield directly
-                                            yield ChatStep(role="assistant", content=new_content)
-                                    content_yielded = True
+                                            # If no sentence breaks, split at word boundaries
+                                            words = new_content.split(' ')
+                                            current_part = ""
+                                            
+                                            for word in words:
+                                                if len(current_part) + len(word) + 1 <= 20:
+                                                    if current_part:
+                                                        current_part += ' ' + word
+                                                    else:
+                                                        current_part = word
+                                                else:
+                                                    if current_part:
+                                                        parts.append(current_part)
+                                                    current_part = word
+                                            
+                                            # Add the last part if any
+                                            if current_part:
+                                                parts.append(current_part)
+                                        
+                                        # If splitting failed, fallback to original
+                                        if not parts:
+                                            parts = [new_content]
+                                        
+                                        if debug_streaming:
+                                            print(f"[{agent_id}] 🔀 Split delta into {len(parts)} parts")
+                                        
+                                        # Yield each part separately for smoother streaming
+                                        for part in parts:
+                                            if part.strip():  # Skip empty parts
+                                                yield ChatStep(role="assistant", content=part)
+                                    else:
+                                        # Small enough to yield directly
+                                        yield ChatStep(role="assistant", content=new_content)
                             else:
                                 # Handle non-string content (log it but don't yield)
                                 print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
                         
                         if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                            # Handle tool calls in AIResponse format
-                            for tool_call_chunk in chunk.tool_calls:
-                                index = getattr(tool_call_chunk, 'index', 0)
+                            # Handle tool calls from direct AIResponse format
+                            completed_calls = []
+                            for tool_call in chunk.tool_calls:
+                                completed_calls.append({
+                                    'id': getattr(tool_call, 'id', f"call_{int(time.time()*1000)}"),
+                                    'name': tool_call.name,
+                                    'arguments': tool_call.args if hasattr(tool_call, 'args') else {}
+                                })
+                            
+                            # Execute completed tool calls
+                            for tool_call in completed_calls:
+                                name = tool_call['name']
+                                args = tool_call['arguments']
+                                tool_call_id = tool_call['id']
                                 
-                                # Ensure we have a slot for this tool call
-                                while len(accumulated_tool_calls) <= index:
-                                    accumulated_tool_calls.append({
-                                        "id": "",
-                                        "type": "function", 
-                                        "function": {"name": "", "arguments": ""}
-                                    })
-                                    
-                                current_tool_call = accumulated_tool_calls[index]
+                                print(f"[{agent_id}] 🔧 Executing AIResponse tool call: {name} with args: {args}")
                                 
-                                # Accumulate the tool call properties - FIX: Don't concatenate IDs
-                                if hasattr(tool_call_chunk, 'id') and tool_call_chunk.id and not current_tool_call["id"]:
-                                    # Only set ID once - OpenAI sends complete ID in first chunk
-                                    current_tool_call["id"] = tool_call_chunk.id
-                                # FIX: Use correct OpenAI format attributes
-                                if tool_call_chunk.function and tool_call_chunk.function.name:
-                                    current_tool_call["function"]["name"] += tool_call_chunk.function.name
-                                if tool_call_chunk.function and tool_call_chunk.function.arguments:
-                                    current_tool_call["function"]["arguments"] += tool_call_chunk.function.arguments
-                                
-                                print(f"[{agent_id}] 🔧 OpenAI tool call {index}: id='{current_tool_call['id'][:20]}...', name='{current_tool_call['function']['name']}', args_length={len(current_tool_call['function']['arguments'])}")
+                                try:
+                                    tool_fn = tool_functions.get(name)
+                                    if tool_fn:
+                                        if name in mutating_tools:
+                                            mutating_calls += 1
+                                        
+                                        if isinstance(args, dict):
+                                            result = tool_fn(**args)
+                                        elif isinstance(args, list):
+                                            result = tool_fn(*args)
+                                        else:
+                                            result = tool_fn(args)
+                                            
+                                        # Add tool call and result to messages
+                                        messages.append({
+                                            "role": "assistant",
+                                            "tool_calls": [{
+                                                "id": tool_call_id,
+                                                "type": "function",
+                                                "function": {"name": name, "arguments": json.dumps(args)}
+                                            }]
+                                        })
+                                        messages.append({
+                                            "role": "tool",
+                                            "tool_call_id": tool_call_id,
+                                            "content": json.dumps(result) if result is not None else "null"
+                                        })
+                                        
+                                        yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
+                                        
+                                    else:
+                                        print(f"[{agent_id}] ❌ Unknown tool: {name}")
+                                        
+                                except Exception as e:
+                                    print(f"[{agent_id}] ❌ Tool execution error: {e}")
                 
-                # Check if we should terminate the stream
-                if stream_finished:
-                    print(f"[{agent_id}] 🏁 Breaking chunk loop - stream finished")
+                # Determine if we should continue or finish
+                if current_content.strip():
+                    # We got text content, so we're likely in the final response
+                    final_text_buffer += current_content
+                    print(f"[{agent_id}] 💬 Final text response received, finishing iteration")
                     break
-                
-                # Process accumulated tool calls after streaming is complete
-                if accumulated_tool_calls:
-                    print(f"[{agent_id}] 🛠️ Processing {len(accumulated_tool_calls)} accumulated tool calls")
                     
-                    # Validate tool call IDs to prevent OpenAI 400 errors
-                    for i, tool_call in enumerate(accumulated_tool_calls):
-                        if not tool_call["id"] or len(tool_call["id"]) > 40:
-                            # Generate a valid ID if missing or too long
-                            new_id = f"call_{int(time.time()*1000)}_{i}"[:40]
-                            print(f"[{agent_id}] 🔧 Fixed invalid tool call ID: '{tool_call['id'][:50]}...' -> '{new_id}'")
-                            tool_call["id"] = new_id
-                        
-                        # Ensure function name is present
-                        if not tool_call["function"]["name"]:
-                            print(f"[{agent_id}] ❌ Skipping tool call with empty function name")
-                            continue
-                    
-                    # Filter out invalid tool calls
-                    valid_tool_calls = [tc for tc in accumulated_tool_calls if tc["function"]["name"]]
-                    
-                    if not valid_tool_calls:
-                        print(f"[{agent_id}] ⚠️ No valid tool calls found, continuing without tools")
-                        continue
-                    
-                    # Add the assistant message with tool calls to conversation
-                    msg = {
-                        "role": "assistant",
-                        "tool_calls": valid_tool_calls
-                    }
-                    messages.append(msg)
-                    
-                    # Process each tool call
-                    for tool_call in valid_tool_calls:
-                        function_name = tool_call["function"]["name"]
-                        function_args_str = tool_call["function"]["arguments"]
-                        tool_call_id = tool_call["id"]
-                        
-                        print(f"[{agent_id}] 🔧 Processing tool call: {function_name}")
-                        print(f"[{agent_id}] 📝 Arguments: {function_args_str[:200]}...")
-                        
-                        # Find the function
-                        fn = None
-                        for t in self.tools:
-                            if t["name"] == function_name:
-                                fn = t["func"]
-                                break
-                        
-                        if fn is None:
-                            print(f"[{agent_id}] ❌ Function {function_name} not found")
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": json.dumps({"error": f"Function '{function_name}' not found"})
-                            })
-                            continue
-                        
-                        # Parse arguments
-                        try:
-                            if function_args_str.strip():
-                                args = safe_json_loads(function_args_str)
-                            else:
-                                args = {}
-                            
-                            # Execute the function
-                            fn_start = time.time()
-                            result = fn(**args) if isinstance(args, dict) else fn(args)
-                            fn_time = time.time() - fn_start
-                            
-                            print(f"[{agent_id}] ✅ {function_name} executed in {fn_time:.2f}s")
-                            
-                            # Add tool result to conversation
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": json.dumps(result)
-                            })
-                            
-                            # Collect updates if applicable
-                            if isinstance(result, dict):
-                                if "updates" in result and isinstance(result["updates"], list):
-                                    collected_updates.extend(result["updates"])
-                                elif "cell" in result:
-                                    collected_updates.append(result)
-                                
-                                # Handle early exit for apply_updates_and_reply
-                                if "reply" in result:
-                                    total_time = time.time() - start_time
-                                    print(f"[{agent_id}] ✅ Early exit via apply_updates_and_reply in {total_time:.2f}s")
-                                    
-                                    # Stream updates
-                                    if collected_updates:
-                                        for update in collected_updates:
-                                            yield ChatStep(
-                                                role="tool",
-                                                content=f"Updating {update.get('cell', 'cell')}...",
-                                                toolResult=update,
-                                                toolCall=type('obj', (object,), {'name': 'set_cell'})()
-                                            )
-                                            await asyncio.sleep(0.1)
-                                    
-                                    # Yield the final reply
-                                    yield ChatStep(role="assistant", content=result['reply'])
-                                    return
-                            
-                        except Exception as e:
-                            print(f"[{agent_id}] ❌ Error executing {function_name}: {str(e)}")
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": json.dumps({"error": str(e)})
-                            })
-                    
-                    # Continue the loop for another iteration with updated messages
-                    continue
-                
-                # Handle legacy function calls (deprecated but might still be used)
-                elif is_function_call and function_name and function_args:
-                    print(f"[{agent_id}] 🔧 Processing legacy function call: {function_name}")
-                    
-                    try:
-                        args = safe_json_loads(function_args) if function_args.strip() else {}
-                        
-                        # Find and execute the function (same logic as above)
-                        fn = None
-                        for t in self.tools:
-                            if t["name"] == function_name:
-                                fn = t["func"]
-                                break
-                        
-                        if fn:
-                            result = fn(**args) if isinstance(args, dict) else fn(args)
-                            # Add to messages and continue (similar to above)
-                            call_id = f"call_{int(time.time()*1000)}"
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "content": json.dumps(result)
-                            })
-                            continue
-                        
-                    except Exception as e:
-                        print(f"[{agent_id}] ❌ Error with legacy function call: {str(e)}")
-                
-                # If we got a final text answer, we're done
-                if current_content:
-                    total_time = time.time() - start_time
-                    print(f"[{agent_id}] ✅ Streaming completed in {total_time:.2f}s")
-                    return
-                
-                # Check if we successfully completed streaming without tool calls
-                if stream_finished and content_yielded and not accumulated_tool_calls:
-                    total_time = time.time() - start_time  
-                    print(f"[{agent_id}] ✅ Streaming completed (no tool calls) in {total_time:.2f}s")
-                    return
-            
             except Exception as e:
                 print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")
-                traceback.print_exc()  # Add stack trace for better debugging
-                
-                # Check for specific OpenAI errors that indicate we should break the loop
-                error_str = str(e)
-                if "string too long" in error_str or "tool_calls" in error_str or "400" in error_str:
-                    print(f"[{agent_id}] 🛑 Detected tool call validation error, breaking iteration loop")
-                    # Clean up messages to remove problematic tool calls
-                    messages = [m for m in messages if not (m.get("role") == "assistant" and "tool_calls" in m)]
-                    yield ChatStep(role="assistant", content="I encountered a technical issue with tool calls. Let me provide a direct response instead.")
-                    return
-                
+                import traceback
+                traceback.print_exc()
                 yield ChatStep(role="assistant", content=f"\nError communicating with AI service: {str(e)}")
                 return
         
-        # If we get here, we've exceeded the maximum iterations
-        total_time = time.time() - start_time
-        print(f"[{agent_id}] ⚠️ Reached maximum iterations ({max_iterations}) after {total_time:.2f}s")
-        
-        # Add a system message to reset context for the next prompt
-        messages.append({"role": "system",
-                         "content": "Previous request exhausted tool iterations. "
-                                    "Start a new plan from scratch."})
-        
-        yield ChatStep(
-            role="assistant",
-            content="[max-tool-iterations exceeded] I've reached the maximum number of operations allowed. Please simplify your request or break it into smaller steps."
-        )
-        return
+        # Final status update
+        end_time = time.time()
+        elapsed = end_time - start_time
+        print(f"[{agent_id}] ✅ Tool loop completed in {elapsed:.2f}s with {iterations} iterations, {mutating_calls} mutations")
