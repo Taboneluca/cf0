@@ -839,6 +839,8 @@ async def process_message_streaming(
                 if len(args) == 1 and isinstance(args[0], str) and not kwargs:
                     # Handle the case where a single string argument is passed
                     # This happens with some tools when called with just a string
+                    print(f"[{request_id}] 🔄 Handling single string argument: '{args[0]}'")
+                    
                     if name == "set_cell":
                         # For set_cell, we need cell and value parameters
                         # Check if the string is in "A1=value" format
@@ -910,6 +912,17 @@ async def process_message_streaming(
                         except TypeError as e:
                             print(f"[{request_id}] ⚠️ Error calling {name}: {str(e)}")
                             return {"error": f"Invalid parameters for {name}: {str(e)}"}
+                elif len(args) == 0 and len(kwargs) == 0:
+                    # Handle completely empty tool calls
+                    print(f"[{request_id}] ⚠️ Empty tool call detected for {name}")
+                    if name == "set_cell":
+                        return {"error": "set_cell requires cell and value parameters. Example: set_cell(cell='A1', value='Hello')"}
+                    elif name == "set_cells":
+                        return {"error": "set_cells requires updates parameter. Example: set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])"}
+                    elif name == "apply_updates_and_reply":
+                        return {"error": "apply_updates_and_reply requires updates parameter. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"}
+                    else:
+                        return {"error": f"The {name} tool requires parameters. Please provide the necessary arguments."}
                 elif name == "set_cell" and len(args) == 2:
                     # Handle case where set_cell is called with (cell, value) positional args
                     cell_ref = args[0]

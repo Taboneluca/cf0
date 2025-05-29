@@ -949,11 +949,33 @@ class BaseAgent:
                         if hasattr(delta, "function_call") and delta.function_call and not is_function_call:
                             is_function_call = True
                             function_name = delta.function_call.name
+                            function_args = ""  # Reset function args
                             print(f"[{agent_id}] 🔧 Starting function call: {function_name}")
                         
                         # Accumulate function arguments
                         if is_function_call and hasattr(delta, "function_call") and delta.function_call and hasattr(delta.function_call, "arguments") and delta.function_call.arguments:
                             function_args += delta.function_call.arguments
+                            print(f"[{agent_id}] 📝 Accumulating args: '{delta.function_call.arguments}' -> total: '{function_args}'")
+                        
+                        # Handle tool_calls for GPT-4 style responses
+                        if hasattr(delta, "tool_calls") and delta.tool_calls:
+                            if not is_function_call:
+                                is_function_call = True
+                                first_tool = delta.tool_calls[0]
+                                function_name = first_tool.function.name if hasattr(first_tool, 'function') else first_tool.name
+                                function_args = ""  # Reset function args
+                                print(f"[{agent_id}] 🔧 Starting tool call: {function_name}")
+                            
+                            # Accumulate arguments from tool calls
+                            for tool_call in delta.tool_calls:
+                                if hasattr(tool_call, 'function') and hasattr(tool_call.function, 'arguments'):
+                                    function_args += tool_call.function.arguments or ""
+                                    print(f"[{agent_id}] 📝 Accumulating tool args: '{tool_call.function.arguments}' -> total: '{function_args}'")
+                                elif hasattr(tool_call, 'args'):
+                                    # Handle direct args format
+                                    if isinstance(tool_call.args, str):
+                                        function_args += tool_call.args
+                                        print(f"[{agent_id}] 📝 Accumulating direct args: '{tool_call.args}' -> total: '{function_args}'")
                         
                         # Accumulate content for text response
                         if hasattr(delta, "content") and delta.content:
@@ -1154,11 +1176,19 @@ class BaseAgent:
                                 is_function_call = True
                                 first_tool = chunk.tool_calls[0]
                                 function_name = first_tool.name
-                                function_args = json.dumps(first_tool.args)
-                                print(f"[{agent_id}] 🔧 Starting function call (AIResponse): {function_name}")
-                            else:
-                                # Log that we're ignoring duplicate tool call detection
-                                print(f"[{agent_id}] 🔄 Ignoring duplicate tool call detection for: {function_name}")
+                                function_args = ""  # Reset function args
+                                print(f"[{agent_id}] 🔧 Starting tool call: {function_name}")
+                            
+                            # Accumulate arguments from tool calls
+                            for tool_call in chunk.tool_calls:
+                                if hasattr(tool_call, 'function') and hasattr(tool_call.function, 'arguments'):
+                                    function_args += tool_call.function.arguments or ""
+                                    print(f"[{agent_id}] 📝 Accumulating tool args: '{tool_call.function.arguments}' -> total: '{function_args}'")
+                                elif hasattr(tool_call, 'args'):
+                                    # Handle direct args format
+                                    if isinstance(tool_call.args, str):
+                                        function_args += tool_call.args
+                                        print(f"[{agent_id}] 📝 Accumulating direct args: '{tool_call.args}' -> total: '{function_args}'")
                 
                 if is_function_call:
                     # Need to add a proper tool_calls entry for OpenAI to reference later
@@ -1236,6 +1266,18 @@ class BaseAgent:
                                     "content": json.dumps({"error": "No cell reference provided for set_cell. Please specify cell and value."})
                                 })
                                 continue
+                            elif function_name == "set_cells":
+                                print(f"[{agent_id}] 🔄 Skipping empty set_cells call")
+                                call_id = tool_call_id if 'tool_call_id' in locals() else f"call_{int(time.time()*1000)}"
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": json.dumps({"error": "No updates provided for set_cells. Please provide specific cell updates."})
+                                })
+                                continue
+                            else:
+                                # For other functions, try to provide empty args
+                                args = {}
                         
                     except ValueError as e:
                         print(f"[{agent_id}] ❌ Error parsing function arguments: {str(e)}")
