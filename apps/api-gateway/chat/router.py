@@ -315,35 +315,107 @@ async def process_message(
                 
                 # Special handling for apply_updates_and_reply
                 if name == "apply_updates_and_reply":
-                    # Check if args is empty or contains empty string
+                    # Enhanced validation
                     if (len(args) == 1 and isinstance(args[0], str) and args[0].strip() == "") or \
                        (len(args) == 0 and len(kwargs) == 0):
-                        error_msg = "apply_updates_and_reply requires updates array with at least one update. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"
-                        print(f"[{request_id}] ❌ Empty call to apply_updates_and_reply detected")
-                        return {"error": error_msg, "suggestion": "Use set_cell for individual updates or provide multiple updates"}
+                        return {
+                            "error": "Empty arguments provided",
+                            "suggestion": "apply_updates_and_reply requires both 'updates' array and 'reply' text",
+                            "example": {
+                                "updates": [{"cell": "A1", "value": "Example"}],
+                                "reply": "Added example to A1"
+                            }
+                        }
+                    
+                    # Validate updates array in kwargs
+                    if 'updates' in kwargs:
+                        updates = kwargs.get('updates', [])
+                        if not isinstance(updates, list):
+                            return {
+                                "error": "updates must be an array",
+                                "received": type(updates).__name__,
+                                "example": {"updates": [{"cell": "A1", "value": "Text"}]}
+                            }
+                        
+                        if len(updates) == 0:
+                            return {
+                                "error": "updates array cannot be empty",
+                                "suggestion": "Add at least one cell update",
+                                "example": {"updates": [{"cell": "A1", "value": "Sample"}]}
+                            }
+                        
+                        # Validate each update
+                        for i, update in enumerate(updates):
+                            if not isinstance(update, dict):
+                                return {
+                                    "error": f"Update {i} must be an object",
+                                    "received": type(update).__name__,
+                                    "example": {"cell": "A1", "value": "Text"}
+                                }
+                            
+                            if 'cell' not in update:
+                                return {
+                                    "error": f"Update {i} missing 'cell' field",
+                                    "update": update,
+                                    "required_fields": ["cell", "value"]
+                                }
+                            
+                            if 'value' not in update:
+                                return {
+                                    "error": f"Update {i} missing 'value' field", 
+                                    "update": update,
+                                    "required_fields": ["cell", "value"]
+                                }
                     
                     # If updates is in kwargs but empty
                     if 'updates' in kwargs and (not kwargs['updates'] or len(kwargs['updates']) == 0):
-                        return {"error": "Empty updates array provided. Must include at least one cell update."}
+                        return {
+                            "error": "Empty updates array provided",
+                            "suggestion": "Must include at least one cell update",
+                            "example": {"updates": [{"cell": "A1", "value": "Sample"}]}
+                        }
                     
                     # Handle single string argument case for apply_updates_and_reply
                     if len(args) == 1 and isinstance(args[0], str):
                         print(f"[{request_id}] 🔄 Handling single string argument: {repr(args[0])}")
                         if args[0].strip() == "":
                             print(f"[{request_id}] 🔧 apply_updates_and_reply called with 0 updates")
-                            return {"error": "apply_updates_and_reply requires both updates array and reply text, not a single string."}
+                            return {
+                                "error": "apply_updates_and_reply requires both updates array and reply text, not a single string",
+                                "suggestion": "Use proper arguments format",
+                                "example": {
+                                    "updates": [{"cell": "A1", "value": "Text"}],
+                                    "reply": "Added text to A1"
+                                }
+                            }
                 
                 # Handle completely empty tool calls
                 elif len(args) == 0 and len(kwargs) == 0:
                     print(f"[{request_id}] ⚠️ Empty tool call detected for {name}")
                     if name == "set_cell":
-                        return {"error": "set_cell requires cell and value parameters. Example: set_cell(cell='A1', value='Hello')"}
+                        return {
+                            "error": "set_cell requires cell and value parameters",
+                            "example": "set_cell(cell='A1', value='Hello')",
+                            "required_params": ["cell", "value"]
+                        }
                     elif name == "set_cells":
-                        return {"error": "set_cells requires updates parameter. Example: set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])"}
+                        return {
+                            "error": "set_cells requires updates parameter",
+                            "example": "set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])",
+                            "required_params": ["updates"]
+                        }
                     elif name == "apply_updates_and_reply":
-                        return {"error": "apply_updates_and_reply requires updates parameter. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"}
+                        return {
+                            "error": "apply_updates_and_reply requires updates and reply parameters",
+                            "example": "apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')",
+                            "required_params": ["updates", "reply"]
+                        }
                     else:
-                        return {"error": f"The {name} tool requires parameters. Please provide the necessary arguments."}
+                        return {
+                            "error": f"The {name} tool requires parameters",
+                            "suggestion": "Please provide the necessary arguments",
+                            "hint": "Check the tool documentation for required parameters"
+                        }
                 
                 # Tools that need special handling
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
@@ -969,35 +1041,107 @@ async def process_message_streaming(
                 
                 # Special handling for apply_updates_and_reply
                 if name == "apply_updates_and_reply":
-                    # Check if args is empty or contains empty string
+                    # Enhanced validation
                     if (len(args) == 1 and isinstance(args[0], str) and args[0].strip() == "") or \
                        (len(args) == 0 and len(kwargs) == 0):
-                        error_msg = "apply_updates_and_reply requires updates array with at least one update. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"
-                        print(f"[{request_id}] ❌ Empty call to apply_updates_and_reply detected")
-                        return {"error": error_msg, "suggestion": "Use set_cell for individual updates or provide multiple updates"}
+                        return {
+                            "error": "Empty arguments provided",
+                            "suggestion": "apply_updates_and_reply requires both 'updates' array and 'reply' text",
+                            "example": {
+                                "updates": [{"cell": "A1", "value": "Example"}],
+                                "reply": "Added example to A1"
+                            }
+                        }
+                    
+                    # Validate updates array in kwargs
+                    if 'updates' in kwargs:
+                        updates = kwargs.get('updates', [])
+                        if not isinstance(updates, list):
+                            return {
+                                "error": "updates must be an array",
+                                "received": type(updates).__name__,
+                                "example": {"updates": [{"cell": "A1", "value": "Text"}]}
+                            }
+                        
+                        if len(updates) == 0:
+                            return {
+                                "error": "updates array cannot be empty",
+                                "suggestion": "Add at least one cell update",
+                                "example": {"updates": [{"cell": "A1", "value": "Sample"}]}
+                            }
+                        
+                        # Validate each update
+                        for i, update in enumerate(updates):
+                            if not isinstance(update, dict):
+                                return {
+                                    "error": f"Update {i} must be an object",
+                                    "received": type(update).__name__,
+                                    "example": {"cell": "A1", "value": "Text"}
+                                }
+                            
+                            if 'cell' not in update:
+                                return {
+                                    "error": f"Update {i} missing 'cell' field",
+                                    "update": update,
+                                    "required_fields": ["cell", "value"]
+                                }
+                            
+                            if 'value' not in update:
+                                return {
+                                    "error": f"Update {i} missing 'value' field", 
+                                    "update": update,
+                                    "required_fields": ["cell", "value"]
+                                }
                     
                     # If updates is in kwargs but empty
                     if 'updates' in kwargs and (not kwargs['updates'] or len(kwargs['updates']) == 0):
-                        return {"error": "Empty updates array provided. Must include at least one cell update."}
+                        return {
+                            "error": "Empty updates array provided",
+                            "suggestion": "Must include at least one cell update",
+                            "example": {"updates": [{"cell": "A1", "value": "Sample"}]}
+                        }
                     
                     # Handle single string argument case for apply_updates_and_reply
                     if len(args) == 1 and isinstance(args[0], str):
                         print(f"[{request_id}] 🔄 Handling single string argument: {repr(args[0])}")
                         if args[0].strip() == "":
                             print(f"[{request_id}] 🔧 apply_updates_and_reply called with 0 updates")
-                            return {"error": "apply_updates_and_reply requires both updates array and reply text, not a single string."}
+                            return {
+                                "error": "apply_updates_and_reply requires both updates array and reply text, not a single string",
+                                "suggestion": "Use proper arguments format",
+                                "example": {
+                                    "updates": [{"cell": "A1", "value": "Text"}],
+                                    "reply": "Added text to A1"
+                                }
+                            }
                 
                 # Handle completely empty tool calls
                 elif len(args) == 0 and len(kwargs) == 0:
                     print(f"[{request_id}] ⚠️ Empty tool call detected for {name}")
                     if name == "set_cell":
-                        return {"error": "set_cell requires cell and value parameters. Example: set_cell(cell='A1', value='Hello')"}
+                        return {
+                            "error": "set_cell requires cell and value parameters",
+                            "example": "set_cell(cell='A1', value='Hello')",
+                            "required_params": ["cell", "value"]
+                        }
                     elif name == "set_cells":
-                        return {"error": "set_cells requires updates parameter. Example: set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])"}
+                        return {
+                            "error": "set_cells requires updates parameter",
+                            "example": "set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])",
+                            "required_params": ["updates"]
+                        }
                     elif name == "apply_updates_and_reply":
-                        return {"error": "apply_updates_and_reply requires updates parameter. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"}
+                        return {
+                            "error": "apply_updates_and_reply requires updates and reply parameters",
+                            "example": "apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')",
+                            "required_params": ["updates", "reply"]
+                        }
                     else:
-                        return {"error": f"The {name} tool requires parameters. Please provide the necessary arguments."}
+                        return {
+                            "error": f"The {name} tool requires parameters",
+                            "suggestion": "Please provide the necessary arguments",
+                            "hint": "Check the tool documentation for required parameters"
+                        }
                 
                 # Tools that need special handling
                 financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]

@@ -14,7 +14,10 @@ type StreamEvent =
   | { type: 'update', payload: any }
   | { type: 'pending', updates: any[] }
   | { type: 'complete', sheet: any }
-  | { type: 'error', error: string };
+  | { type: 'error', error: string }
+  | { type: 'tool_start', payload: { id: string, name: string } }
+  | { type: 'tool_complete', payload: { id: string, result: any, updates?: any[] } }
+  | { type: 'tool_error', payload: { id: string, error: any, name: string } };
 
 // Enable more detailed debug logging for streaming
 const DEBUG_STREAMING = true;
@@ -42,6 +45,10 @@ export function useChatStream(
   
   // Track current streaming content for incremental updates
   const streamingContentRef = useRef<string>('');
+  
+  // Add tool call tracking
+  const toolCallBuffer = useRef<Map<string, any>>(new Map());
+  const [toolCallStatus, setToolCallStatus] = useState<Map<string, string>>(new Map());
   
   // Add a function to scroll to bottom of messages
   const scrollToBottom = useCallback(() => {
@@ -129,6 +136,82 @@ export function useChatStream(
     if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Rejecting ${pendingUpdates.length} pending updates`);
     setPendingUpdates([]);
   }, [pendingUpdates]);
+
+  // Helper function to apply tool updates to the sheet
+  const applyUpdatesToSheet = useCallback((updates: any[]) => {
+    if (!wb || !updates || updates.length === 0) return;
+    
+    const sheetId = wb.active;
+    const sheet = { ...wb.data[sheetId] };
+    
+    updates.forEach(update => {
+      if (!update || !update.cell) return;
+      
+      const value = update.new_value ?? update.value ?? update.new;
+      if (value === undefined) return;
+      
+      // Convert "B4" -> row 3, col 1 (zero-based)
+      const match = String(update.cell).match(/^([A-Za-z]+)(\d+)$/);
+      if (!match) return;
+      const [, colLetters, rowStr] = match;
+      
+      const row = parseInt(rowStr, 10) - 1;
+      const col = colLetters
+        .toUpperCase()
+        .split('')
+        .reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+      
+      // Ensure the sheet has necessary structures
+      if (!sheet.rows) sheet.rows = [];
+      if (!sheet.columns) sheet.columns = [];
+      if (!sheet.cells) sheet.cells = {};
+      
+      // Expand rows/columns arrays if needed
+      while (sheet.rows.length <= row) {
+        sheet.rows.push(sheet.rows.length + 1);
+      }
+      
+      while (sheet.columns.length <= col) {
+        const colNum = sheet.columns.length;
+        const colLetter = String.fromCharCode(65 + colNum);
+        sheet.columns.push(colLetter);
+      }
+      
+      sheet.cells[`${row},${col}`] = { value };
+    });
+    
+    // Update the workbook context
+    dispatch({
+      type: "UPDATE_SHEET",
+      payload: { id: sheetId, data: sheet }
+    });
+    
+    if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Applied ${updates.length} updates to sheet`);
+  }, [wb, dispatch]);
+
+  // Helper function to handle tool errors gracefully
+  const handleToolError = useCallback((toolName: string, error: any) => {
+    if (DEBUG_STREAMING) {
+      console.warn(`[Stream DEBUG] Tool ${toolName} failed:`, error);
+    }
+    
+    // Show user-friendly error message
+    let errorMessage = `Tool ${toolName} encountered an issue`;
+    
+    if (typeof error === 'object' && error.error) {
+      errorMessage = error.error;
+      
+      // If there's an example, show it to help the user
+      if (error.example) {
+        console.log(`[Stream DEBUG] Example for ${toolName}:`, error.example);
+      }
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+    
+    // Don't break the stream, just log the error
+    console.warn(`Tool error: ${errorMessage}`);
+  }, []);
 
   // Helper function for updating message content that forces re-render
   const updateMessageContent = useCallback((id: string, text: string) => {
@@ -448,6 +531,58 @@ export function useChatStream(
               setIsStreaming(false);
               if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Error: ${event.error}`);
             }
+            else if (event.type === 'tool_start') {
+              // Handle tool start
+              toolCallBuffer.current.set(event.payload.id, {
+                name: event.payload.name,
+                startTime: Date.now()
+              });
+              setToolCallStatus(prev => {
+                const newStatus = new Map(prev);
+                newStatus.set(event.payload.id, 'started');
+                return newStatus;
+              });
+            }
+            else if (event.type === 'tool_complete') {
+              // Handle tool complete
+              const toolData = toolCallBuffer.current.get(event.payload.id);
+              if (toolData) {
+                const result = event.payload.result;
+                const updates = event.payload.updates || [];
+                const toolResult = {
+                  name: toolData.name,
+                  result,
+                  updates
+                };
+                toolCallBuffer.current.delete(event.payload.id);
+                setToolCallStatus(prev => {
+                  const newStatus = new Map(prev);
+                  newStatus.set(event.payload.id, 'completed');
+                  return newStatus;
+                });
+                setPendingUpdates(prev => [...prev, ...updates]);
+              }
+            }
+            else if (event.type === 'tool_error') {
+              // Handle tool error
+              const toolData = toolCallBuffer.current.get(event.payload.id);
+              if (toolData) {
+                const error = event.payload.error;
+                const toolName = event.payload.name || toolData.name;
+                
+                // Use the helper function for consistent error handling
+                handleToolError(toolName, error);
+                
+                toolCallBuffer.current.delete(event.payload.id);
+                setToolCallStatus(prev => {
+                  const newStatus = new Map(prev);
+                  newStatus.set(event.payload.id, 'error');
+                  return newStatus;
+                });
+                
+                // Don't add errors to pending updates, just handle them gracefully
+              }
+            }
           } catch (e) {
             console.error('Error parsing SSE event', e);
           }
@@ -507,6 +642,8 @@ export function useChatStream(
     isStreaming,
     pendingUpdates,
     applyPendingUpdates,
-    rejectPendingUpdates
+    rejectPendingUpdates,
+    applyUpdatesToSheet,
+    handleToolError
   };
 } 

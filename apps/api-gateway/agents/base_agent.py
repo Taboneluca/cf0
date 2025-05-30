@@ -81,44 +81,63 @@ class StreamingToolCallHandler:
                     if hasattr(tc_delta.function, 'arguments') and tc_delta.function.arguments:
                         tool_call['args_buffer'] += tc_delta.function.arguments
                 
-                # CRITICAL FIX: Better completion detection
-                # Check if we have a complete JSON object or empty arguments
-                if tool_call['name'] and not tool_call['completed']:
-                    # Try to parse to see if it's complete JSON
-                    if tool_call['args_buffer'].strip():
+                # Enhanced completion detection
+                if (hasattr(tc_delta, 'function') and tc_delta.function and 
+                    hasattr(tc_delta.function, 'arguments')):
+                    
+                    # Check for completion signals
+                    is_complete = False
+                    
+                    # Signal 1: Empty arguments after non-empty buffer
+                    if (tc_delta.function.arguments == '' and 
+                        tool_call['args_buffer'] and 
+                        not tool_call['completed']):
+                        is_complete = True
+                    
+                    # Signal 2: Closing brace/bracket for JSON
+                    elif tool_call['args_buffer']:
+                        buffer = tool_call['args_buffer'].strip()
+                        if ((buffer.startswith('{') and buffer.endswith('}')) or
+                            (buffer.startswith('[') and buffer.endswith(']'))):
+                            # Attempt to parse to verify JSON is complete
+                            try:
+                                json.loads(buffer)
+                                is_complete = True
+                            except json.JSONDecodeError:
+                                pass
+                    
+                    if is_complete:
+                        tool_call['completed'] = True
                         try:
-                            parsed_args = json.loads(tool_call['args_buffer'])
-                            # Successfully parsed - mark as complete
-                            tool_call['completed'] = True
+                            # Parse arguments with better error handling
+                            args_str = tool_call['args_buffer'].strip()
                             
-                            # Validate apply_updates_and_reply has required fields
-                            if tool_call['name'] == 'apply_updates_and_reply':
-                                if not isinstance(parsed_args, dict) or not parsed_args.get('updates'):
-                                    print(f"Invalid apply_updates_and_reply arguments: {parsed_args}")
-                                    parsed_args = {'error': 'apply_updates_and_reply requires non-empty updates array'}
-                            
+                            # Handle empty or malformed arguments
+                            if not args_str or args_str == '""' or args_str == "''":
+                                # For apply_updates_and_reply, provide a helpful error structure
+                                if tool_call['name'] == 'apply_updates_and_reply':
+                                    parsed_args = {
+                                        "error": "Empty arguments provided",
+                                        "updates": [],
+                                        "reply": "Error: No updates provided"
+                                    }
+                                else:
+                                    parsed_args = {"error": "Empty arguments provided"}
+                            else:
+                                parsed_args = json.loads(args_str)
+                                
                             completed.append({
                                 'id': call_id,
                                 'name': tool_call['name'],
                                 'arguments': parsed_args
                             })
-                        except json.JSONDecodeError:
-                            # Not complete yet, continue accumulating
-                            pass
-                    elif hasattr(tc_delta.function, 'arguments') and tc_delta.function.arguments == '':
-                        # Empty arguments case - mark complete with error for critical tools
-                        tool_call['completed'] = True
-                        if tool_call['name'] == 'apply_updates_and_reply':
+                        except json.JSONDecodeError as e:
+                            print(f"Failed to parse tool call arguments: {tool_call['args_buffer']}")
+                            # Provide structured error for better handling
                             completed.append({
                                 'id': call_id,
                                 'name': tool_call['name'],
-                                'arguments': {'error': 'apply_updates_and_reply requires updates and reply parameters'}
-                            })
-                        else:
-                            completed.append({
-                                'id': call_id,
-                                'name': tool_call['name'],
-                                'arguments': {}
+                                'arguments': {"error": f"JSON parse error: {str(e)}"}
                             })
         
         return completed
@@ -139,7 +158,7 @@ class StreamingToolCallHandler:
                     completed.append({
                         'id': call_id,
                         'name': tool_call['name'],
-                        'arguments': {}
+                        'arguments': {"error": "Failed to parse arguments"}
                     })
                 tool_call['completed'] = True
         return completed
@@ -240,6 +259,64 @@ def _airesponse_to_message(resp: AIResponse):
                 ]
             return data
     return _PseudoMsg(resp)
+
+class ToolCallRetryManager:
+    """Manages retry logic for failed tool calls with intelligent prompting"""
+    
+    def __init__(self, max_retries: int = 3):
+        self.max_retries = max_retries
+        self.retry_counts = {}
+        self.last_errors = {}
+    
+    def should_retry(self, tool_name: str, error: str) -> bool:
+        """Determine if we should retry a failed tool call"""
+        key = f"{tool_name}:{error}"
+        
+        self.retry_counts[key] = self.retry_counts.get(key, 0) + 1
+        self.last_errors[tool_name] = error
+        
+        return self.retry_counts[key] <= self.max_retries
+    
+    def get_retry_prompt(self, tool_name: str, error: str) -> str:
+        """Generate an intelligent retry prompt based on the error"""
+        retry_num = self.retry_counts.get(f"{tool_name}:{error}", 1)
+        
+        if "empty arguments" in error.lower() or "json parse error" in error.lower():
+            if tool_name == "apply_updates_and_reply":
+                return f"""Retry {retry_num}/{self.max_retries}: The apply_updates_and_reply tool requires:
+1. updates: An array of cell updates, each with 'cell' and 'value'
+2. reply: A text explanation of the changes
+
+Correct example:
+apply_updates_and_reply(
+    updates=[
+        {{"cell": "A1", "value": "Product"}},
+        {{"cell": "B1", "value": "Price"}}
+    ],
+    reply="Added product headers"
+)
+
+Please provide the complete arguments."""
+            
+            elif tool_name == "set_cell":
+                return f"""Retry {retry_num}/{self.max_retries}: The set_cell tool requires both parameters:
+- cell: The cell reference (e.g., 'A1')
+- value: The value to set
+
+Example: set_cell(cell='A1', value='Hello')"""
+            
+            elif tool_name == "set_cells":
+                return f"""Retry {retry_num}/{self.max_retries}: The set_cells tool requires:
+- updates: An array of cell updates
+
+Example: set_cells(updates=[{{"cell": "A1", "value": "Hello"}}, {{"cell": "B1", "value": "World"}}])"""
+        
+        return f"Retry {retry_num}/{self.max_retries}: Tool {tool_name} failed with: {error}. Please check the parameters and try again."
+    
+    def reset(self):
+        """Reset retry counts for a new conversation"""
+        self.retry_counts.clear()
+        self.last_errors.clear()
 
 class ChatStep(BaseModel):
     role: str                       # "assistant" | "tool"
@@ -553,7 +630,7 @@ class BaseAgent:
                     if mutating_calls > 5 and name not in {"set_cells", 
                                                           "apply_updates_and_reply",
                                                           "set_cell"}:
-                        print(f"[{agent_calls}] ⚠️ High # of single-cell mutations – consider batching.")
+                        print(f"[{agent_id}] ⚠️ High # of single-cell mutations – consider batching.")
                         # NO hard stop any more
 
                 # Invoke the Python function
@@ -958,6 +1035,9 @@ class BaseAgent:
         print(f"[{agent_id}] 🛠️ Available tools: {[tool['name'] for tool in self.tools]}")
         print(f"[{agent_id}] 📝 Message preview: {user_message[:150]}{'...' if len(user_message) > 150 else ''}")
         
+        # Initialize retry manager
+        retry_manager = ToolCallRetryManager()
+        
         # Prepare the basic message structure with system prompt
         print(f"[{agent_id}] 📋 Preparing system message")
         system_message = {"role": "system", "content": self.system_prompt}
@@ -1071,47 +1151,97 @@ class BaseAgent:
                             
                             print(f"[{agent_id}] 🔧 Executing completed tool call: {name} with args: {args}")
                             
-                            # In stream_run method around line 1040, handle empty or problematic args
-                            if args is None or args == "" or (isinstance(args, dict) and len(args) == 0):
-                                print(f"[{agent_id}] ⚠️ Empty args detected for {name}")
+                            # Enhanced argument validation
+                            if isinstance(args, dict) and 'error' in args:
+                                # Handle parsing errors
+                                error_msg = args.get('error', 'Unknown error')
+                                print(f"[{agent_id}] ❌ Tool call parsing error: {error_msg}")
                                 
-                                # Track consecutive empty calls to break infinite loops
-                                error_key = f"{name}_empty_args"
-                                error_count[error_key] = error_count.get(error_key, 0) + 1
-                                
-                                if error_count[error_key] > 2:
-                                    print(f"[{agent_id}] 🛑 Breaking loop - {error_key} repeated {error_count[error_key]} times")
+                                # Check if we should retry
+                                if retry_manager.should_retry(name, error_msg):
+                                    retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
+                                    messages.append({
+                                        "role": "system",
+                                        "content": retry_prompt
+                                    })
+                                    print(f"[{agent_id}] 🔄 Scheduling retry for {name}")
+                                    continue
+                                else:
+                                    print(f"[{agent_id}] 🛑 Max retries exceeded for {name}")
+                                    # Send error feedback but don't break the stream
                                     yield ChatStep(
                                         role="assistant",
-                                        content=f"I'm having trouble with the {name} operation. Please provide specific instructions for what you'd like me to update in the spreadsheet."
+                                        content=f"Sorry, I'm having trouble with the {name} tool. Let me try a different approach."
                                     )
-                                    return
-                                
-                                # Add a system message to force proper retry
-                                if name == "apply_updates_and_reply":
-                                    retry_message = f"""The tool call to {name} failed because empty arguments were provided. 
-                                    
-For apply_updates_and_reply, you MUST provide:
-- updates: array of cell updates, each with 'cell' and 'value'
-- reply: explanation of what was done
-
-Example: apply_updates_and_reply(updates=[{{"cell": "A1", "value": "Title"}}], reply="Added title")
-
-Please retry with proper arguments or use set_cell for individual updates."""
-                                else:
-                                    retry_message = f"""The tool call to {name} failed because empty arguments were provided. 
-                                    
-Please retry with specific parameters required for this tool."""
-                                
-                                messages.append({
-                                    "role": "system",
-                                    "content": retry_message
-                                })
-                                
-                                # Skip this tool call and continue to next iteration
-                                continue
+                                    continue
                             
-                            # Execute the tool
+                            # Validate non-empty arguments for critical tools
+                            if name == "apply_updates_and_reply":
+                                if not args or not isinstance(args, dict):
+                                    args = {}
+                                
+                                updates = args.get('updates', [])
+                                reply = args.get('reply', '')
+                                
+                                if not updates or not isinstance(updates, list) or len(updates) == 0:
+                                    print(f"[{agent_id}] ⚠️ Empty updates for apply_updates_and_reply")
+                                    
+                                    error_msg = "Empty updates array"
+                                    if retry_manager.should_retry(name, error_msg):
+                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
+                                        messages.append({
+                                            "role": "system",
+                                            "content": retry_prompt
+                                        })
+                                        continue
+                                    else:
+                                        yield ChatStep(
+                                            role="assistant",
+                                            content="I'll use individual cell updates instead of batch updates."
+                                        )
+                                        continue
+                                
+                                # Validate each update in the array
+                                valid_updates = []
+                                for update in updates:
+                                    if isinstance(update, dict) and 'cell' in update and 'value' in update:
+                                        valid_updates.append(update)
+                                    else:
+                                        print(f"[{agent_id}] ⚠️ Invalid update format: {update}")
+                                
+                                if len(valid_updates) != len(updates):
+                                    print(f"[{agent_id}] ⚠️ Some updates were invalid, using {len(valid_updates)}/{len(updates)}")
+                                    args['updates'] = valid_updates
+                                
+                                if not valid_updates:
+                                    error_msg = "No valid updates found"
+                                    if retry_manager.should_retry(name, error_msg):
+                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
+                                        messages.append({
+                                            "role": "system", 
+                                            "content": retry_prompt
+                                        })
+                                        continue
+                                    else:
+                                        continue
+                            
+                            elif name == "set_cell":
+                                if not args or not isinstance(args, dict):
+                                    args = {}
+                                
+                                if 'cell' not in args or 'value' not in args:
+                                    error_msg = "Missing cell or value parameter"
+                                    if retry_manager.should_retry(name, error_msg):
+                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
+                                        messages.append({
+                                            "role": "system",
+                                            "content": retry_prompt
+                                        })
+                                        continue
+                                    else:
+                                        continue
+                            
+                            # Execute the tool with validated arguments
                             try:
                                 tool_fn = tool_functions.get(name)
                                 if tool_fn:
@@ -1152,6 +1282,20 @@ Please retry with specific parameters required for this tool."""
                                 if error_count[error_msg] > 3:
                                     print(f"[{agent_id}] 🛑 Too many repeated errors, breaking")
                                     break
+                                
+                                # Check if we should retry this error
+                                if retry_manager.should_retry(name, error_msg):
+                                    retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
+                                    messages.append({
+                                        "role": "system",
+                                        "content": f"Tool execution failed: {error_msg}. {retry_prompt}"
+                                    })
+                                else:
+                                    # Send error feedback
+                                    yield ChatStep(
+                                        role="assistant",
+                                        content=f"I encountered an error with {name}: {error_msg}. Let me try a different approach."
+                                    )
                         
                         # Handle regular content
                         if hasattr(delta, "content") and delta.content:
