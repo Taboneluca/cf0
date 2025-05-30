@@ -47,19 +47,34 @@ class StreamingToolCallHandler:
     def __init__(self):
         self.tool_calls = {}  # id -> {name, args_buffer}
         self.completed_calls = []
+        self.debug = os.getenv("DEBUG_STREAMING_TOOLS", "0") == "1"
     
     def process_delta(self, delta) -> List[Dict[str, Any]]:
         """Process a streaming delta and return completed tool calls"""
         completed = []
         
+        if self.debug:
+            print(f"🔍 [StreamingToolCallHandler] Processing delta: {delta}")
+            print(f"🔍 [StreamingToolCallHandler] Delta has tool_calls: {hasattr(delta, 'tool_calls')}")
+            if hasattr(delta, 'tool_calls'):
+                print(f"🔍 [StreamingToolCallHandler] Tool calls count: {len(delta.tool_calls) if delta.tool_calls else 0}")
+        
         if hasattr(delta, 'tool_calls') and delta.tool_calls:
-            for tc_delta in delta.tool_calls:
+            for i, tc_delta in enumerate(delta.tool_calls):
+                if self.debug:
+                    print(f"🔍 [StreamingToolCallHandler] Processing tool call {i}: {tc_delta}")
+                
                 call_id = getattr(tc_delta, 'id', None)
                 index = getattr(tc_delta, 'index', 0)
+                
+                if self.debug:
+                    print(f"🔍 [StreamingToolCallHandler] Tool call ID: {call_id}, Index: {index}")
                 
                 # Use index as fallback ID if no ID provided
                 if call_id is None:
                     call_id = f"call_{index}_{int(time.time()*1000)}"
+                    if self.debug:
+                        print(f"🔍 [StreamingToolCallHandler] Generated fallback ID: {call_id}")
                 
                 # Initialize tool call if not exists
                 if call_id not in self.tool_calls:
@@ -69,17 +84,28 @@ class StreamingToolCallHandler:
                         'args_buffer': '',
                         'completed': False
                     }
+                    if self.debug:
+                        print(f"🔍 [StreamingToolCallHandler] Initialized new tool call: {call_id}")
                 
                 tool_call = self.tool_calls[call_id]
                 
                 # Handle function name
                 if hasattr(tc_delta, 'function') and tc_delta.function:
                     if hasattr(tc_delta.function, 'name') and tc_delta.function.name:
+                        old_name = tool_call['name']
                         tool_call['name'] = tc_delta.function.name
+                        if self.debug and old_name != tool_call['name']:
+                            print(f"🔍 [StreamingToolCallHandler] Tool name set/updated: {old_name} -> {tool_call['name']}")
                     
                     # Accumulate arguments
                     if hasattr(tc_delta.function, 'arguments') and tc_delta.function.arguments:
+                        old_buffer = tool_call['args_buffer']
                         tool_call['args_buffer'] += tc_delta.function.arguments
+                        if self.debug:
+                            print(f"🔍 [StreamingToolCallHandler] Args buffer updated:")
+                            print(f"   Previous: '{old_buffer}'")
+                            print(f"   Added: '{tc_delta.function.arguments}'")
+                            print(f"   New buffer: '{tool_call['args_buffer']}'")
                 
                 # Enhanced completion detection
                 if (hasattr(tc_delta, 'function') and tc_delta.function and 
@@ -87,12 +113,14 @@ class StreamingToolCallHandler:
                     
                     # Check for completion signals
                     is_complete = False
+                    completion_reason = ""
                     
                     # Signal 1: Empty arguments after non-empty buffer
                     if (tc_delta.function.arguments == '' and 
                         tool_call['args_buffer'] and 
                         not tool_call['completed']):
                         is_complete = True
+                        completion_reason = "Empty arguments signal"
                     
                     # Signal 2: Closing brace/bracket for JSON
                     elif tool_call['args_buffer']:
@@ -103,17 +131,35 @@ class StreamingToolCallHandler:
                             try:
                                 json.loads(buffer)
                                 is_complete = True
-                            except json.JSONDecodeError:
-                                pass
+                                completion_reason = "Valid JSON structure detected"
+                            except json.JSONDecodeError as e:
+                                if self.debug:
+                                    print(f"🔍 [StreamingToolCallHandler] JSON not yet complete: {e}")
+                    
+                    if self.debug:
+                        print(f"🔍 [StreamingToolCallHandler] Completion check:")
+                        print(f"   Is complete: {is_complete}")
+                        print(f"   Reason: {completion_reason}")
+                        print(f"   Current buffer: '{tool_call['args_buffer']}'")
+                        print(f"   Already completed: {tool_call['completed']}")
                     
                     if is_complete:
                         tool_call['completed'] = True
+                        if self.debug:
+                            print(f"🔍 [StreamingToolCallHandler] Marking tool call {call_id} as completed")
+                        
                         try:
                             # Parse arguments with better error handling
                             args_str = tool_call['args_buffer'].strip()
                             
+                            if self.debug:
+                                print(f"🔍 [StreamingToolCallHandler] Parsing arguments: '{args_str}'")
+                            
                             # Handle empty or malformed arguments
                             if not args_str or args_str == '""' or args_str == "''":
+                                if self.debug:
+                                    print(f"🔍 [StreamingToolCallHandler] Empty/malformed arguments detected")
+                                
                                 # For apply_updates_and_reply, provide a helpful error structure
                                 if tool_call['name'] == 'apply_updates_and_reply':
                                     parsed_args = {
@@ -123,22 +169,41 @@ class StreamingToolCallHandler:
                                     }
                                 else:
                                     parsed_args = {"error": "Empty arguments provided"}
+                                
+                                if self.debug:
+                                    print(f"🔍 [StreamingToolCallHandler] Generated error args: {parsed_args}")
                             else:
                                 parsed_args = json.loads(args_str)
+                                if self.debug:
+                                    print(f"🔍 [StreamingToolCallHandler] Successfully parsed args: {parsed_args}")
                                 
                             completed.append({
                                 'id': call_id,
                                 'name': tool_call['name'],
                                 'arguments': parsed_args
                             })
+                            
+                            if self.debug:
+                                print(f"🔍 [StreamingToolCallHandler] Added to completed calls: {call_id}")
+                                
                         except json.JSONDecodeError as e:
-                            print(f"Failed to parse tool call arguments: {tool_call['args_buffer']}")
+                            print(f"❌ [StreamingToolCallHandler] Failed to parse tool call arguments: {tool_call['args_buffer']}")
+                            print(f"❌ [StreamingToolCallHandler] JSON Error: {str(e)}")
+                            
                             # Provide structured error for better handling
                             completed.append({
                                 'id': call_id,
                                 'name': tool_call['name'],
                                 'arguments': {"error": f"JSON parse error: {str(e)}"}
                             })
+                            
+                            if self.debug:
+                                print(f"🔍 [StreamingToolCallHandler] Added error call to completed: {call_id}")
+        
+        if self.debug and completed:
+            print(f"🔍 [StreamingToolCallHandler] Returning {len(completed)} completed calls:")
+            for call in completed:
+                print(f"   - {call['name']} ({call['id']}): {call['arguments']}")
         
         return completed
     
@@ -1078,8 +1143,10 @@ class BaseAgent:
         # Enable debug flags for tracing different aspects of streaming
         debug_streaming = os.getenv("DEBUG_STREAMING", "0") == "1"
         debug_delta = os.getenv("DEBUG_STREAMING_DELTA", "0") == "1"
+        debug_tools = os.getenv("DEBUG_STREAMING_TOOLS", "0") == "1"
         
         print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
+        print(f"[{agent_id}] 🐛 Debug flags: streaming={debug_streaming}, delta={debug_delta}, tools={debug_tools}")
         in_tool_calling_phase = True
         
         # Create tool function mapping for easy lookup
@@ -1134,14 +1201,36 @@ class BaseAgent:
                 # Wrap the stream with our guard to protect against infinite loops
                 guarded_stream = wrap_stream_with_guard(stream)
                 
+                chunk_count = 0
+                tool_call_chunks = 0
+                content_chunks = 0
+                
                 # Process streaming chunks
                 async for chunk in guarded_stream:
+                    chunk_count += 1
+                    
+                    if debug_streaming:
+                        print(f"[{agent_id}] 📦 Chunk #{chunk_count}: {type(chunk)}")
+                    
                     # Check if this is an OpenAI-style response
                     if hasattr(chunk, "choices") and chunk.choices:
                         delta = chunk.choices[0].delta
                         
+                        if debug_delta:
+                            print(f"[{agent_id}] 🔍 Processing OpenAI-style delta: {delta}")
+                            print(f"[{agent_id}] 🔍 Delta attributes: {dir(delta)}")
+                            if hasattr(delta, 'tool_calls'):
+                                print(f"[{agent_id}] 🔍 Delta has tool_calls: {delta.tool_calls}")
+                            if hasattr(delta, 'content'):
+                                print(f"[{agent_id}] 🔍 Delta has content: '{delta.content}'")
+                        
                         # Process tool calls using the new handler
                         completed_calls = tool_handler.process_delta(delta)
+                        
+                        if completed_calls:
+                            tool_call_chunks += 1
+                            if debug_tools:
+                                print(f"[{agent_id}] 🔧 Got {len(completed_calls)} completed tool calls in chunk #{chunk_count}")
                         
                         # Execute any completed tool calls
                         for tool_call in completed_calls:
@@ -1150,6 +1239,13 @@ class BaseAgent:
                             tool_call_id = tool_call['id']
                             
                             print(f"[{agent_id}] 🔧 Executing completed tool call: {name} with args: {args}")
+                            
+                            if debug_tools:
+                                print(f"[{agent_id}] 🔍 Tool call details:")
+                                print(f"   Name: {name}")
+                                print(f"   ID: {tool_call_id}")
+                                print(f"   Args type: {type(args)}")
+                                print(f"   Args content: {args}")
                             
                             # Enhanced argument validation
                             if isinstance(args, dict) and 'error' in args:
@@ -1183,6 +1279,13 @@ class BaseAgent:
                                 updates = args.get('updates', [])
                                 reply = args.get('reply', '')
                                 
+                                if debug_tools:
+                                    print(f"[{agent_id}] 🔍 apply_updates_and_reply validation:")
+                                    print(f"   Updates: {updates}")
+                                    print(f"   Updates type: {type(updates)}")
+                                    print(f"   Updates length: {len(updates) if isinstance(updates, list) else 'N/A'}")
+                                    print(f"   Reply: '{reply}'")
+                                
                                 if not updates or not isinstance(updates, list) or len(updates) == 0:
                                     print(f"[{agent_id}] ⚠️ Empty updates for apply_updates_and_reply")
                                     
@@ -1193,21 +1296,25 @@ class BaseAgent:
                                             "role": "system",
                                             "content": retry_prompt
                                         })
+                                        print(f"[{agent_id}] 🔄 Retry scheduled for empty updates")
                                         continue
                                     else:
                                         yield ChatStep(
                                             role="assistant",
                                             content="I'll use individual cell updates instead of batch updates."
                                         )
+                                        print(f"[{agent_id}] 🔄 Switching to individual updates approach")
                                         continue
                                 
                                 # Validate each update in the array
                                 valid_updates = []
-                                for update in updates:
+                                for j, update in enumerate(updates):
                                     if isinstance(update, dict) and 'cell' in update and 'value' in update:
                                         valid_updates.append(update)
+                                        if debug_tools:
+                                            print(f"[{agent_id}] ✅ Valid update {j}: {update}")
                                     else:
-                                        print(f"[{agent_id}] ⚠️ Invalid update format: {update}")
+                                        print(f"[{agent_id}] ⚠️ Invalid update format {j}: {update}")
                                 
                                 if len(valid_updates) != len(updates):
                                     print(f"[{agent_id}] ⚠️ Some updates were invalid, using {len(valid_updates)}/{len(updates)}")
@@ -1221,16 +1328,25 @@ class BaseAgent:
                                             "role": "system", 
                                             "content": retry_prompt
                                         })
+                                        print(f"[{agent_id}] 🔄 Retry scheduled for invalid updates")
                                         continue
                                     else:
+                                        print(f"[{agent_id}] 🛑 Skipping tool call due to invalid updates")
                                         continue
                             
                             elif name == "set_cell":
                                 if not args or not isinstance(args, dict):
                                     args = {}
                                 
+                                if debug_tools:
+                                    print(f"[{agent_id}] 🔍 set_cell validation:")
+                                    print(f"   Args: {args}")
+                                    print(f"   Has 'cell': {'cell' in args}")
+                                    print(f"   Has 'value': {'value' in args}")
+                                
                                 if 'cell' not in args or 'value' not in args:
                                     error_msg = "Missing cell or value parameter"
+                                    print(f"[{agent_id}] ❌ set_cell missing parameters: {error_msg}")
                                     if retry_manager.should_retry(name, error_msg):
                                         retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
                                         messages.append({
@@ -1247,6 +1363,9 @@ class BaseAgent:
                                 if tool_fn:
                                     if name in mutating_tools:
                                         mutating_calls += 1
+                                        print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
+                                    
+                                    execution_start = time.time()
                                     
                                     if isinstance(args, dict):
                                         result = tool_fn(**args)
@@ -1254,6 +1373,12 @@ class BaseAgent:
                                         result = tool_fn(*args)
                                     else:
                                         result = tool_fn(args)
+                                    
+                                    execution_time = time.time() - execution_start
+                                    
+                                    if debug_tools:
+                                        print(f"[{agent_id}] ✅ Tool {name} executed in {execution_time:.3f}s")
+                                        print(f"[{agent_id}] 📤 Tool result: {result}")
                                         
                                     # Add tool call and result to messages
                                     messages.append({
@@ -1277,6 +1402,9 @@ class BaseAgent:
                                     
                             except Exception as e:
                                 print(f"[{agent_id}] ❌ Tool execution error: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                
                                 error_msg = str(e)
                                 error_count[error_msg] = error_count.get(error_msg, 0) + 1
                                 if error_count[error_msg] > 3:
@@ -1296,247 +1424,70 @@ class BaseAgent:
                                         role="assistant",
                                         content=f"I encountered an error with {name}: {error_msg}. Let me try a different approach."
                                     )
+                
+                # Handle regular content (OpenAI format)
+                if hasattr(delta, "content") and delta.content:
+                    content_chunks += 1
+                    new_content = delta.content
+                    
+                    if debug_streaming:
+                        print(f"[{agent_id}] 💬 Content chunk #{content_chunks}: '{new_content}'")
+                    
+                    if in_tool_calling_phase:
+                        # We've transitioned from tool calling to final answer
+                        in_tool_calling_phase = False
+                        print(f"[{agent_id}] 💬 Transitioning to final answer")
+                    
+                    current_content += new_content
+                    
+                    # Yield content in smaller chunks for smoother streaming
+                    if len(new_content) > 15:
+                        # Split by sentence, newline or at word boundaries
+                        parts = []
                         
-                        # Handle regular content
-                        if hasattr(delta, "content") and delta.content:
-                            new_content = delta.content
+                        if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
+                            import re
+                            pattern = r'([.!?]|\n)'
+                            pieces = re.split(pattern, new_content)
                             
-                            if debug_streaming:
-                                print(f"[{agent_id}] 💬 Streaming chunk: '{new_content}'")
-                            
-                            if in_tool_calling_phase:
-                                # We've transitioned from tool calling to final answer
-                                in_tool_calling_phase = False
-                                print(f"[{agent_id}] 💬 Transitioning to final answer")
-                            
-                            current_content += new_content
-                            
-                            # Yield content in smaller chunks for smoother streaming
-                            if len(new_content) > 15:
-                                # Split by sentence, newline or at word boundaries
-                                parts = []
-                                
-                                if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
-                                    import re
-                                    pattern = r'([.!?]|\n)'
-                                    pieces = re.split(pattern, new_content)
-                                    
-                                    i = 0
-                                    while i < len(pieces) - 1:
-                                        if i + 1 < len(pieces):
-                                            sentence = pieces[i] + pieces[i+1]
-                                            if sentence.strip():
-                                                parts.append(sentence)
-                                            i += 2
-                                        else:
-                                            if pieces[i].strip():
-                                                parts.append(pieces[i])
-                                            i += 1
+                            i = 0
+                            while i < len(pieces) - 1:
+                                if i + 1 < len(pieces):
+                                    sentence = pieces[i] + pieces[i+1]
+                                    if sentence.strip():
+                                        parts.append(sentence)
+                                    i += 2
                                 else:
-                                    # Split at word boundaries
-                                    words = new_content.split(' ')
-                                    current_part = ""
-                                    
-                                    for word in words:
-                                        if len(current_part) + len(word) + 1 <= 20:
-                                            if current_part:
-                                                current_part += ' ' + word
-                                            else:
-                                                current_part = word
-                                        else:
-                                            if current_part:
-                                                parts.append(current_part)
-                                            current_part = word
-                                    
+                                    if pieces[i].strip():
+                                        parts.append(pieces[i])
+                                    i += 1
+                        else:
+                            # Split at word boundaries
+                            words = new_content.split(' ')
+                            current_part = ""
+                            
+                            for word in words:
+                                if len(current_part) + len(word) + 1 <= 20:
+                                    if current_part:
+                                        current_part += ' ' + word
+                                    else:
+                                        current_part = word
+                                else:
                                     if current_part:
                                         parts.append(current_part)
-                                
-                                if not parts:
-                                    parts = [new_content]
-                                
-                                for part in parts:
-                                    if part.strip():
-                                        yield ChatStep(role="assistant", content=part)
-                            else:
-                                yield ChatStep(role="assistant", content=new_content)
-                                
-                    else:
-                        # Handle AIResponse format (Anthropic style)
-                        if hasattr(chunk, "content") and chunk.content:
-                            # Handle both string and non-string content
-                            content_chunk = chunk.content
-                            # Check if content is a string before trying to process it as one
-                            if isinstance(content_chunk, str):
-                                if not current_content and not in_tool_calling_phase:
-                                    in_tool_calling_phase = False
-                                    print(f"[{agent_id}] 💬 Transitioning to final answer (AIResponse)")
-                                
-                                # Calculate the delta/new content only
-                                new_content = ""
-                                
-                                if content_chunk.startswith(previous_content):
-                                    # Extract only the new part
-                                    new_content = content_chunk[len(previous_content):]
-                                    if debug_delta:
-                                        print(f"[{agent_id}] 🔄 Simple prefix match: '{new_content}'")
-                                else:
-                                    # More complex case - find where content diverges
-                                    # Find the longest common prefix to identify what's new
-                                    common_length = 0
-                                    for i in range(min(len(previous_content), len(content_chunk))):
-                                        if previous_content[i] == content_chunk[i]:
-                                            common_length += 1
-                                        else:
-                                            break
-                                    
-                                    if common_length > 0:
-                                        # Extract the new content using the common prefix
-                                        new_content = content_chunk[common_length:]
-                                        if debug_delta:
-                                            print(f"[{agent_id}] 🔄 Prefix match at position {common_length}: '{new_content}'")
-                                    else:
-                                        # This shouldn't happen often, but handle the case where content
-                                        # completely changes or is reorganized
-                                        if len(content_chunk) > len(current_content):
-                                            new_content = content_chunk[len(current_content):]
-                                            if debug_delta:
-                                                print(f"[{agent_id}] 🔄 Using length difference: {len(new_content)} chars")
-                                        else:
-                                            # Last resort - yield the whole chunk and update tracking
-                                            new_content = content_chunk
-                                            if debug_delta:
-                                                print(f"[{agent_id}] 🔄 Fallback to full chunk: {len(new_content)} chars")
-                                
-                                # Update tracking for next iteration
-                                previous_content = content_chunk
-                                current_content = content_chunk
-                                
-                                if new_content:
-                                    if debug_streaming:
-                                        print(f"[{agent_id}] 💬 Streaming delta: '{new_content[:30]}{'...' if len(new_content) > 30 else ''}'")
-                                    
-                                    # For longer content, split into chunks for smoother streaming
-                                    if len(new_content) > 15:
-                                        # Split on sentences or newlines first for natural breaks
-                                        parts = []
-                                        
-                                        # First try to split by sentence/paragraph
-                                        if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
-                                            import re
-                                            # Split on sentence boundaries or newlines
-                                            pattern = r'([.!?]|\n)'
-                                            pieces = re.split(pattern, new_content)
-                                            
-                                            i = 0
-                                            while i < len(pieces) - 1:
-                                                # Group sentence with its punctuation
-                                                if i + 1 < len(pieces):
-                                                    sentence = pieces[i] + pieces[i+1]
-                                                    if sentence.strip():  # Only add non-empty
-                                                        parts.append(sentence)
-                                                    i += 2
-                                                else:
-                                                    if pieces[i].strip():
-                                                        parts.append(pieces[i])
-                                                    i += 1
-                                        else:
-                                            # If no sentence breaks, split at word boundaries
-                                            words = new_content.split(' ')
-                                            current_part = ""
-                                            
-                                            for word in words:
-                                                if len(current_part) + len(word) + 1 <= 20:
-                                                    if current_part:
-                                                        current_part += ' ' + word
-                                                    else:
-                                                        current_part = word
-                                                else:
-                                                    if current_part:
-                                                        parts.append(current_part)
-                                                    current_part = word
-                                            
-                                            # Add the last part if any
-                                            if current_part:
-                                                parts.append(current_part)
-                                        
-                                        # If splitting failed, fallback to original
-                                        if not parts:
-                                            parts = [new_content]
-                                        
-                                        if debug_streaming:
-                                            print(f"[{agent_id}] 🔀 Split delta into {len(parts)} parts")
-                                        
-                                        # Yield each part separately for smoother streaming
-                                        for part in parts:
-                                            if part.strip():  # Skip empty parts
-                                                yield ChatStep(role="assistant", content=part)
-                                    else:
-                                        # Small enough to yield directly
-                                        yield ChatStep(role="assistant", content=new_content)
-                            else:
-                                # Handle non-string content (log it but don't yield)
-                                print(f"[{agent_id}] ⚠️ Non-string content received: {type(content_chunk)}")
-                        
-                        if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                            # Handle tool calls from direct AIResponse format
-                            completed_calls = []
-                            for tool_call in chunk.tool_calls:
-                                completed_calls.append({
-                                    'id': getattr(tool_call, 'id', f"call_{int(time.time()*1000)}"),
-                                    'name': tool_call.name,
-                                    'arguments': tool_call.args if hasattr(tool_call, 'args') else {}
-                                })
+                                    current_part = word
                             
-                            # Execute completed tool calls
-                            for tool_call in completed_calls:
-                                name = tool_call['name']
-                                args = tool_call['arguments']
-                                tool_call_id = tool_call['id']
-                                
-                                print(f"[{agent_id}] 🔧 Executing AIResponse tool call: {name} with args: {args}")
-                                
-                                try:
-                                    tool_fn = tool_functions.get(name)
-                                    if tool_fn:
-                                        if name in mutating_tools:
-                                            mutating_calls += 1
-                                        
-                                        if isinstance(args, dict):
-                                            result = tool_fn(**args)
-                                        elif isinstance(args, list):
-                                            result = tool_fn(*args)
-                                        else:
-                                            result = tool_fn(args)
-                                            
-                                        # Add tool call and result to messages
-                                        messages.append({
-                                            "role": "assistant",
-                                            "tool_calls": [{
-                                                "id": tool_call_id,
-                                                "type": "function",
-                                                "function": {"name": name, "arguments": json.dumps(args)}
-                                            }]
-                                        })
-                                        messages.append({
-                                            "role": "tool",
-                                            "tool_call_id": tool_call_id,
-                                            "content": json.dumps(result) if result is not None else "null"
-                                        })
-                                        
-                                        yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
-                                        
-                                    else:
-                                        print(f"[{agent_id}] ❌ Unknown tool: {name}")
-                                        
-                                except Exception as e:
-                                    print(f"[{agent_id}] ❌ Tool execution error: {e}")
-                
-                # Determine if we should continue or finish
-                if current_content.strip():
-                    # We got text content, so we're likely in the final response
-                    final_text_buffer += current_content
-                    print(f"[{agent_id}] 💬 Final text response received, finishing iteration")
-                    break
+                            if current_part:
+                                parts.append(current_part)
+                        
+                        if not parts:
+                            parts = [new_content]
+                        
+                        for part in parts:
+                            if part.strip():
+                                yield ChatStep(role="assistant", content=part)
+                    else:
+                        yield ChatStep(role="assistant", content=new_content)
                     
             except Exception as e:
                 print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")

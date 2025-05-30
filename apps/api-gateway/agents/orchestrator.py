@@ -315,19 +315,32 @@ class Orchestrator:
         """
         start_time = time.time()
         request_id = f"orch-stream-{int(start_time*1000)}"
-        print(f"[{request_id}] 🎭 Orchestrator.stream_run: mode={mode}, model={self.llm.model}")
-        print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
-        print(f"[{request_id}] 📚 History: {len(history) if history else 0} messages")
+        debug_orchestrator = os.getenv("DEBUG_STREAMING", "0") == "1"
+        
+        if debug_orchestrator:
+            print(f"[{request_id}] 🎭 Orchestrator.stream_run: mode={mode}, model={self.llm.model}")
+            print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
+            print(f"[{request_id}] 📚 History: {len(history) if history else 0} messages")
+            print(f"[{request_id}] 🔍 LLM Provider: {getattr(self.llm, 'name', 'unknown')}")
+            print(f"[{request_id}] 🔍 LLM Model: {getattr(self.llm, 'model', 'unknown')}")
+            print(f"[{request_id}] 🔍 LLM Supports Tool Calls: {getattr(self.llm, 'supports_tool_calls', 'unknown')}")
         
         # Get the appropriate agent and prepare it with context awareness
-        print(f"[{request_id}] 🔍 Getting agent for mode: {mode}")
+        if debug_orchestrator:
+            print(f"[{request_id}] 🔍 Getting agent for mode: {mode}")
         agent = self.get_agent(mode)
-        print(f"[{request_id}] ✅ Agent obtained: {agent.__class__.__name__}")
+        if debug_orchestrator:
+            print(f"[{request_id}] ✅ Agent obtained: {agent.__class__.__name__}")
+            print(f"[{request_id}] 🔧 Agent LLM: {agent.llm.__class__.__name__}")
         
         # Apply context-aware preparation
         agent = self._prepare_context_aware_agent(agent, mode, message, history)
-        print(f"[{request_id}] 🧠 Context-aware agent preparation completed")
-        print(f"[{request_id}] 🔧 Agent has {len(agent.tools)} tools available")
+        if debug_orchestrator:
+            print(f"[{request_id}] 🧠 Context-aware agent preparation completed")
+            print(f"[{request_id}] 🔧 Agent has {len(agent.tools)} tools available:")
+            for i, tool in enumerate(agent.tools):
+                print(f"[{request_id}]   {i+1}. {tool['name']}")
+            print(f"[{request_id}] 📝 System prompt length: {len(agent.system_prompt)} chars")
         
         # Apply legacy financial model tool filtering for llama-70b model
         if hasattr(self.llm, 'model') and (
@@ -340,6 +353,10 @@ class Orchestrator:
             
             # Only provide financial model tools if explicitly mentioned
             should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
+            
+            if debug_orchestrator:
+                print(f"[{request_id}] 🔍 Llama-70b detected, checking for financial keywords")
+                print(f"[{request_id}] 🔍 Should include model tools: {should_include_model_tools}")
             
             if not should_include_model_tools:
                 # Filter out financial model tools from agent's tools
@@ -357,19 +374,25 @@ class Orchestrator:
                     fallback_prompt=agent.system_prompt,
                     tools=filtered_tools
                 )
-                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
+                if debug_orchestrator:
+                    print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
+                    print(f"[{request_id}] 🔧 Tools after filtering: {len(agent.tools)}")
         
         # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
-        print(f"[{request_id}] 🚀 Calling agent.stream_run...")
+        if debug_orchestrator:
+            print(f"[{request_id}] 🚀 Calling agent.stream_run...")
         agent_stream = agent.stream_run(message, history)
-        print(f"[{request_id}] ✅ Agent.stream_run returned: {type(agent_stream)}")
+        if debug_orchestrator:
+            print(f"[{request_id}] ✅ Agent.stream_run returned: {type(agent_stream)}")
         
         # Verify we got an actual async generator
         if not inspect.isasyncgen(agent_stream):
             if inspect.isawaitable(agent_stream):
-                print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
+                if debug_orchestrator:
+                    print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
                 agent_stream = await agent_stream
-                print(f"[{request_id}] 🔄 After awaiting: {type(agent_stream)}")
+                if debug_orchestrator:
+                    print(f"[{request_id}] 🔄 After awaiting: {type(agent_stream)}")
                 if not inspect.isasyncgen(agent_stream):
                     print(f"[{request_id}] ❌ Agent still did not return an async generator after awaiting")
                     raise TypeError("Agent.stream_run did not return an async generator")
@@ -378,21 +401,69 @@ class Orchestrator:
                 raise TypeError("Agent.stream_run did not return an async generator")
             
         # Now wrap it with the guard
-        print(f"[{request_id}] 🛡️ Wrapping stream with guard")
+        if debug_orchestrator:
+            print(f"[{request_id}] 🛡️ Wrapping stream with guard")
         guarded_stream = wrap_stream_with_guard(agent_stream)
-        print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
+        if debug_orchestrator:
+            print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
         
         step_count = 0
-        async for step in guarded_stream:
-            step_count += 1
-            print(f"[{request_id}] 📦 Stream step #{step_count}: {type(step)} - {str(step)[:100]}{'...' if len(str(step)) > 100 else ''}")
-            # Convert string to ChatStep if needed for consistency
-            if isinstance(step, str):
-                yield ChatStep(role="assistant", content=step)
-            else:
-                yield step
+        tool_steps = 0
+        content_steps = 0
+        error_steps = 0
         
-        print(f"[{request_id}] ✅ Orchestrator stream completed in {time.time() - start_time:.2f}s")
+        try:
+            async for step in guarded_stream:
+                step_count += 1
+                
+                if debug_orchestrator:
+                    step_preview = str(step)[:100] + ('...' if len(str(step)) > 100 else '')
+                    print(f"[{request_id}] 📦 Stream step #{step_count}: {type(step)} - {step_preview}")
+                
+                # Track step types for debugging
+                if hasattr(step, 'role'):
+                    if step.role == 'tool':
+                        tool_steps += 1
+                        if debug_orchestrator:
+                            tool_name = getattr(step.toolCall, 'name', 'unknown') if hasattr(step, 'toolCall') else 'unknown'
+                            print(f"[{request_id}] 🔧 Tool step #{tool_steps}: {tool_name}")
+                            if hasattr(step, 'toolResult'):
+                                result_preview = str(step.toolResult)[:100] + ('...' if len(str(step.toolResult)) > 100 else '')
+                                print(f"[{request_id}] 📤 Tool result: {result_preview}")
+                    elif step.role == 'assistant':
+                        content_steps += 1
+                        if hasattr(step, 'content') and step.content:
+                            if debug_orchestrator:
+                                content_preview = step.content[:50] + ('...' if len(step.content) > 50 else '')
+                                print(f"[{request_id}] 💬 Content step #{content_steps}: '{content_preview}'")
+                elif isinstance(step, str):
+                    content_steps += 1
+                    if debug_orchestrator:
+                        content_preview = step[:50] + ('...' if len(step) > 50 else '')
+                        print(f"[{request_id}] 💬 String content #{content_steps}: '{content_preview}'")
+                
+                # Convert string to ChatStep if needed for consistency
+                if isinstance(step, str):
+                    yield ChatStep(role="assistant", content=step)
+                else:
+                    yield step
+                    
+        except Exception as e:
+            error_steps += 1
+            print(f"[{request_id}] ❌ Error in orchestrator stream: {e}")
+            import traceback
+            traceback.print_exc()
+            # Yield error as content
+            yield ChatStep(role="assistant", content=f"Error in processing: {str(e)}")
+        
+        elapsed = time.time() - start_time
+        if debug_orchestrator:
+            print(f"[{request_id}] ✅ Orchestrator stream completed in {elapsed:.2f}s")
+            print(f"[{request_id}] 📊 Stream statistics:")
+            print(f"[{request_id}]   Total steps: {step_count}")
+            print(f"[{request_id}]   Tool steps: {tool_steps}")
+            print(f"[{request_id}]   Content steps: {content_steps}")
+            print(f"[{request_id}]   Error steps: {error_steps}")
 
     def _prepare_context_aware_agent(self, agent: BaseAgent, mode: str, message: str, history: List[Dict[str, Any]] = None) -> BaseAgent:
         """
@@ -404,17 +475,6 @@ class Orchestrator:
         
         # Add sheet context
         agent.add_system_message(self.sheet_context)
-        
-        # Add critical tool usage instructions for all modes
-        agent.add_system_message("""
-CRITICAL TOOL USAGE RULES:
-1. NEVER call apply_updates_and_reply with empty arguments or empty updates array
-2. ALWAYS provide both 'updates' and 'reply' parameters for apply_updates_and_reply
-3. Each update must have 'cell' and 'value' fields
-4. Example: apply_updates_and_reply(updates=[{"cell": "A1", "value": "Revenue"}], reply="Added header")
-5. If you have no updates to make, use regular text response instead of calling tools
-6. For single cell updates, use set_cell(cell="A1", value="data") directly
-""")
         
         if mode == "ask":
             agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
@@ -437,6 +497,22 @@ The user is referencing previous conversation content with intent to {intent_ana
 PREVIOUS CONTEXT TO IMPLEMENT:
 {implementation_context}
 
+CRITICAL EXECUTION RULES:
+1. DO NOT call apply_updates_and_reply with empty arguments
+2. ALWAYS provide specific cell references (e.g., "A1", "B2") and values
+3. When building a financial model from the context above:
+   - Extract ALL specific cells, labels, and formulas mentioned
+   - Start with headers in row 1 (A1, B1, C1, etc.)
+   - Build the model cell by cell using set_cell
+   - Use apply_updates_and_reply ONLY when you have multiple specific updates ready
+4. Example of CORRECT usage:
+   apply_updates_and_reply(updates=[
+       {{"cell": "A1", "value": "Revenue"}},
+       {{"cell": "B1", "value": "2024"}},
+       {{"cell": "B2", "value": 1500}}
+   ], reply="Built revenue model")
+5. NEVER call apply_updates_and_reply with empty updates array or without arguments
+
 EXECUTION INSTRUCTIONS:
 1. Analyze the above context to understand EXACTLY what needs to be built/implemented
 2. Extract all specific details: labels, formulas, data sources, structure, formatting
@@ -445,8 +521,8 @@ EXECUTION INSTRUCTIONS:
 5. Implement using proper tool calls with exact cell references and values
 6. If formulas are mentioned, use allow_formula=True parameter
 7. Build the complete structure step by step, starting with headers/labels
-8. Use set_cell for individual updates or apply_updates_and_reply for batches
-9. Do NOT ask for clarification - proceed with implementation based on the context
+8. Do NOT ask for clarification - proceed with implementation based on the context
+9. If multiple options exist, choose the most comprehensive and industry-standard approach
 
 IMMEDIATE ACTION: Build the model described in the context using specific tool calls.
 """
@@ -459,6 +535,11 @@ IMMEDIATE ACTION: Build the model described in the context using specific tool c
 CONTEXT REFERENCE DETECTED: The user is referring to something from previous conversation.
 Look at the conversation history to understand what they want you to implement or build.
 Extract the most detailed specification or plan from recent messages and execute it.
+
+CRITICAL: When making tool calls:
+- NEVER call apply_updates_and_reply with empty arguments
+- Always provide specific cell references and values
+- Use set_cell for individual updates when uncertain
 """)
                 print(f"🔗 Context reference detected but no clear implementation context found")
         else:

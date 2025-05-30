@@ -20,12 +20,22 @@ type StreamEvent =
   | { type: 'tool_error', payload: { id: string, error: any, name: string } };
 
 // Enable more detailed debug logging for streaming
-const DEBUG_STREAMING = true;
+const DEBUG_STREAMING = process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEBUG_STREAMING === '1';
+const DEBUG_SSE = process.env.NEXT_PUBLIC_DEBUG_SSE === '1';
+const DEBUG_TOOLS = process.env.NEXT_PUBLIC_DEBUG_TOOLS === '1';
 
 // Function to format time elapsed since last event
 const formatTimeSince = (lastEventTime: number): string => {
   const elapsed = Date.now() - lastEventTime;
   return `${elapsed}ms`;
+};
+
+// Add detailed logging helper
+const debugLog = (category: string, message: string, data?: any) => {
+  if (!DEBUG_STREAMING) return;
+  
+  const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+  console.log(`[${timestamp}] 🔍 [${category}] ${message}`, data ? data : '');
 };
 
 export function useChatStream(
@@ -243,7 +253,7 @@ export function useChatStream(
 
   const sendMessage = useCallback(async (message: string, contexts: string[] = [], model?: string) => {
     if (!wb || !wb.wid || !wb.active || loading) {
-      if (DEBUG_STREAMING) console.log('[Stream DEBUG] Cannot send message - workbook not ready', { wb, loading });
+      debugLog('VALIDATION', 'Cannot send message - workbook not ready', { wb, loading });
       return;
     }
     
@@ -252,7 +262,13 @@ export function useChatStream(
     debugLastChunkTime.current = Date.now();
     streamingContentRef.current = '';
     
-    if (DEBUG_STREAMING) console.log('[Stream DEBUG] Starting new streaming request', { message, mode, wid: wb.wid, sid: wb.active });
+    debugLog('STREAM_START', 'Starting new streaming request', { 
+      message: message.slice(0, 100) + (message.length > 100 ? '...' : ''), 
+      mode, 
+      wid: wb.wid, 
+      sid: wb.active,
+      model 
+    });
     
     // Cancel any existing stream
     cancelStream();
@@ -284,7 +300,7 @@ export function useChatStream(
     // Fallback: If no start event is received within 2 seconds, switch to streaming anyway
     const fallbackTimer = setTimeout(() => {
       if (currentMessageIdRef.current === id) {
-        if (DEBUG_STREAMING) console.log('[Stream DEBUG] Fallback: switching to streaming status after 2s delay');
+        debugLog('FALLBACK', 'Switching to streaming status after 2s delay');
         setMessages(prev => {
           const newMessages = [...prev];
           const index = newMessages.findIndex(m => m.id === id);
@@ -303,6 +319,8 @@ export function useChatStream(
     
     try {
       const url = '/api/chat/stream';
+      
+      debugLog('HTTP_REQUEST', 'Sending HTTP request', { url, mode, wid: wb.wid, sid: wb.active, model });
       
       const response = await fetch(url, {
         method: 'POST',
@@ -324,7 +342,10 @@ export function useChatStream(
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
-      if (DEBUG_STREAMING) console.log('[Stream DEBUG] Stream connection established');
+      debugLog('HTTP_RESPONSE', 'Stream connection established', { 
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries())
+      });
       
       // Stream handle
       const reader = response.body?.getReader();
@@ -336,6 +357,8 @@ export function useChatStream(
       
       // For streaming performance analysis
       let totalCharsReceived = 0;
+      let totalEvents = 0;
+      let eventsByType: Record<string, number> = {};
       
       while (true) {
         const { done, value } = await reader.read();
@@ -346,11 +369,15 @@ export function useChatStream(
         buffer += chunk;
         totalCharsReceived += chunk.length;
         
-        if (DEBUG_STREAMING) {
+        if (DEBUG_SSE) {
           const now = Date.now();
           const timeSinceLastChunk = now - debugLastChunkTime.current;
           debugChunkCount.current++;
-          console.log(`[Stream DEBUG] Raw chunk #${debugChunkCount.current}, length: ${chunk.length}, after: ${timeSinceLastChunk}ms`);
+          debugLog('SSE_CHUNK', `Raw chunk #${debugChunkCount.current}`, {
+            length: chunk.length,
+            timeSince: `${timeSinceLastChunk}ms`,
+            preview: chunk.slice(0, 100) + (chunk.length > 100 ? '...' : '')
+          });
           debugLastChunkTime.current = now;
         }
         
@@ -373,9 +400,16 @@ export function useChatStream(
           const eventType = buffer.substring(eventStart + 7, eventEnd).trim();
           const eventData = buffer.substring(dataIndex + 6, dataEnd).trim();
           
-          if (DEBUG_STREAMING) {
+          totalEvents++;
+          eventsByType[eventType] = (eventsByType[eventType] || 0) + 1;
+          
+          if (DEBUG_SSE) {
             const timeSinceLast = formatTimeSince(debugLastChunkTime.current);
-            console.log(`[Stream DEBUG] Received event: ${eventType} (data length: ${eventData.length}) after ${timeSinceLast}`);
+            debugLog('SSE_EVENT', `Event #${totalEvents}: ${eventType}`, {
+              dataLength: eventData.length,
+              timeSince: timeSinceLast,
+              preview: eventData.slice(0, 200) + (eventData.length > 200 ? '...' : '')
+            });
             debugLastChunkTime.current = Date.now();
           }
           
@@ -386,10 +420,14 @@ export function useChatStream(
               type: eventType as any
             };
             
+            debugLog('EVENT_PARSED', `Processing ${eventType} event`, event);
+            
             // Process the event based on type
             if (event.type === 'start') {
               // Clear fallback timer since we got the real start event
               clearTimeout(fallbackTimer);
+              
+              debugLog('STREAM_STARTED', 'Stream officially started');
               
               // Just mark that streaming has started
               setMessages(prev => {
@@ -408,19 +446,22 @@ export function useChatStream(
               // Add the new text to the current content
               const newContent = streamingContentRef.current + event.text;
               
+              debugLog('CONTENT_CHUNK', 'Received text chunk', {
+                newText: event.text,
+                totalLength: newContent.length,
+                chunkLength: event.text.length
+              });
+              
               // Update with immediate rendering
               updateMessageContent(id, newContent);
-              
-              // Add extra debug for the chunk content
-              if (DEBUG_STREAMING) {
-                console.log(`[Stream DEBUG] Chunk content: "${event.text}"`);
-              }
               
               // Give React a chance to flush before parsing the next event
               // eslint-disable-next-line no-await-in-loop
               await yieldToDom();
             }
             else if (event.type === 'update') {
+              debugLog('TOOL_UPDATE', 'Received tool update', event.payload);
+              
               // Add to pending updates and immediately apply the update
               setPendingUpdates(prev => {
                 const newUpdates = [...prev, event.payload];
@@ -472,7 +513,11 @@ export function useChatStream(
                     payload: { id: sheetId, data: sheet }
                   });
                   
-                  if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Auto-applied streaming update to ${update.cell}`);
+                  debugLog('SHEET_UPDATE', 'Auto-applied streaming update', {
+                    cell: update.cell,
+                    value,
+                    sheetId
+                  });
                 }
                 
                 return newUpdates;
@@ -481,6 +526,13 @@ export function useChatStream(
             else if (event.type === 'complete') {
               // Clear fallback timer
               clearTimeout(fallbackTimer);
+              
+              debugLog('STREAM_COMPLETE', 'Stream completed', {
+                totalChars: totalCharsReceived,
+                totalEvents,
+                eventsByType,
+                sheet: !!event.sheet
+              });
               
               // Stream is complete
               setMessages(prev => {
@@ -503,17 +555,16 @@ export function useChatStream(
                   type: 'UPDATE_SHEET',
                   payload: { id: wb.active, data: sheetUI }
                 });
+                debugLog('FINAL_SHEET_UPDATE', 'Applied final sheet state');
               }
               
               setIsStreaming(false);
-              
-              if (DEBUG_STREAMING) {
-                console.log(`[Stream DEBUG] Stream complete - received ${totalCharsReceived} total characters in ${debugChunkCount.current} chunks (${eventCount} events parsed in last chunk)`);
-              }
             }
             else if (event.type === 'error') {
               // Clear fallback timer
               clearTimeout(fallbackTimer);
+              
+              debugLog('STREAM_ERROR', 'Stream error received', { error: event.error });
               
               // Handle error
               setMessages(prev => {
@@ -529,9 +580,10 @@ export function useChatStream(
                 return newMessages;
               });
               setIsStreaming(false);
-              if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Error: ${event.error}`);
             }
             else if (event.type === 'tool_start') {
+              debugLog('TOOL_START', 'Tool execution started', event.payload);
+              
               // Handle tool start
               toolCallBuffer.current.set(event.payload.id, {
                 name: event.payload.name,
@@ -544,6 +596,8 @@ export function useChatStream(
               });
             }
             else if (event.type === 'tool_complete') {
+              debugLog('TOOL_COMPLETE', 'Tool execution completed', event.payload);
+              
               // Handle tool complete
               const toolData = toolCallBuffer.current.get(event.payload.id);
               if (toolData) {
@@ -561,9 +615,13 @@ export function useChatStream(
                   return newStatus;
                 });
                 setPendingUpdates(prev => [...prev, ...updates]);
+                
+                debugLog('TOOL_UPDATES', 'Added tool updates to pending', { count: updates.length });
               }
             }
             else if (event.type === 'tool_error') {
+              debugLog('TOOL_ERROR', 'Tool execution failed', event.payload);
+              
               // Handle tool error
               const toolData = toolCallBuffer.current.get(event.payload.id);
               if (toolData) {
@@ -585,6 +643,7 @@ export function useChatStream(
             }
           } catch (e) {
             console.error('Error parsing SSE event', e);
+            debugLog('PARSE_ERROR', 'Failed to parse SSE event', { error: e, eventData });
           }
           
           // Remove the processed event from the buffer
@@ -594,12 +653,20 @@ export function useChatStream(
           eventStart = buffer.indexOf('event: ');
         }
       }
+      
+      debugLog('STREAM_FINAL', 'Stream processing completed', {
+        totalChars: totalCharsReceived,
+        totalEvents,
+        eventsByType
+      });
+      
     } catch (e) {
       // Clear fallback timer in case of any error
       clearTimeout(fallbackTimer);
       
       if ((e as Error).name === 'AbortError') {
-        if (DEBUG_STREAMING) console.log('[Stream DEBUG] Stream aborted by user');
+        debugLog('STREAM_ABORTED', 'Stream aborted by user');
+        
         // The request was aborted, handle gracefully
         setMessages(prev => {
           const newMessages = [...prev];
@@ -617,6 +684,8 @@ export function useChatStream(
         });
       } else {
         console.error('Error in streaming', e);
+        debugLog('STREAM_ERROR', 'Error in streaming process', { error: e });
+        
         setMessages(prev => {
           const newMessages = [...prev];
           const index = newMessages.findIndex(m => m.id === id);
@@ -634,7 +703,7 @@ export function useChatStream(
     } finally {
       abortControllerRef.current = null;
     }
-  }, [wb, loading, dispatch, mode, cancelStream, setMessages, updateMessageContent]);
+  }, [wb, loading, dispatch, mode, cancelStream, setMessages, updateMessageContent, handleToolError]);
 
   return {
     sendMessage,
