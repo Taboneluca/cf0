@@ -72,6 +72,17 @@ export function useChatStream(
   const toolCallBuffer = useRef<Map<string, any>>(new Map());
   const [toolCallStatus, setToolCallStatus] = useState<Map<string, string>>(new Map());
   
+  // Track processed chunks to prevent duplicates
+  const processedChunks = useRef(new Set<string>());
+  
+  // Add streaming status tracking
+  const streamingStats = useRef({
+    chunksReceived: 0,
+    bytesReceived: 0,
+    lastChunkTime: 0,
+    averageChunkDelay: 0
+  });
+  
   // Add a function to scroll to bottom of messages
   const scrollToBottom = useCallback(() => {
     if (typeof document !== 'undefined') {
@@ -439,6 +450,16 @@ export function useChatStream(
             
             debugLog('EVENT_PARSED', `Processing ${eventType} event`, event);
             
+            // Generate unique chunk ID
+            const chunkId = `${event.type}-${event.type === 'chunk' ? event.text?.slice(0, 20) : 'no-text'}-${Date.now()}`;
+            
+            if (processedChunks.current.has(chunkId)) {
+              debugLog('DUPLICATE_CHUNK', 'Duplicate chunk detected and skipped', { chunkId });
+              return;
+            }
+            
+            processedChunks.current.add(chunkId);
+            
             // Process the event based on type
             if (event.type === 'start') {
               // Clear fallback timer since we got the real start event
@@ -460,6 +481,28 @@ export function useChatStream(
               });
             }
             else if (event.type === 'chunk') {
+              // Add more granular debug logging for chunk processing
+              const processStreamChunk = async (chunk: any) => {
+                const chunkReceiveTime = performance.now();
+                
+                debugLog('CHUNK_RECEIVED', 'Raw chunk received', {
+                  chunkSize: chunk.length,
+                  chunkPreview: chunk.slice(0, 100),
+                  timestamp: chunkReceiveTime
+                });
+                
+                // Process and render immediately - don't wait for buffering
+                if (chunk.type === 'chunk' && chunk.text) {
+                  // Force immediate DOM update
+                  updateMessageContent(id, streamingContentRef.current + chunk.text);
+                  
+                  debugLog('CHUNK_RENDERED', 'Chunk rendered to DOM', {
+                    renderTime: performance.now() - chunkReceiveTime,
+                    totalContent: streamingContentRef.current.length
+                  });
+                }
+              };
+              
               // Add the new text to the current content
               const newContent = streamingContentRef.current + event.text;
               

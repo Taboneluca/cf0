@@ -17,6 +17,7 @@ from llm.chat_types import AIResponse, Message
 from llm.catalog import normalise, normalize_model_name  # Import the normalize_model_name function
 from llm import wrap_stream_with_guard
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
 load_dotenv()
 MAX_RETRIES = 3
@@ -50,162 +51,66 @@ class StreamingToolCallHandler:
         self.debug = os.getenv("DEBUG_STREAMING_TOOLS", "0") == "1"
     
     def process_delta(self, delta) -> List[Dict[str, Any]]:
-        """Process a streaming delta and return completed tool calls"""
-        completed = []
+        """Enhanced delta processing with better error handling"""
+        completed_calls = []
         
         if self.debug:
-            print(f"🔍 [StreamingToolCallHandler] Processing delta: {delta}")
-            print(f"🔍 [StreamingToolCallHandler] Delta has tool_calls: {hasattr(delta, 'tool_calls')}")
-            if hasattr(delta, 'tool_calls'):
-                print(f"🔍 [StreamingToolCallHandler] Tool calls count: {len(delta.tool_calls) if delta.tool_calls else 0}")
+            print(f"[StreamingToolCallHandler] Processing delta: {delta}")
+            print(f"[StreamingToolCallHandler] Delta type: {type(delta)}")
+            print(f"[StreamingToolCallHandler] Delta attributes: {dir(delta)}")
         
+        # Handle OpenAI format tool calls
         if hasattr(delta, 'tool_calls') and delta.tool_calls:
-            for i, tc_delta in enumerate(delta.tool_calls):
-                if self.debug:
-                    print(f"🔍 [StreamingToolCallHandler] Processing tool call {i}: {tc_delta}")
-                
-                call_id = getattr(tc_delta, 'id', None)
-                index = getattr(tc_delta, 'index', 0)
-                
-                if self.debug:
-                    print(f"🔍 [StreamingToolCallHandler] Tool call ID: {call_id}, Index: {index}")
-                
-                # Use index as fallback ID if no ID provided
-                if call_id is None:
-                    call_id = f"call_{index}_{int(time.time()*1000)}"
+            for tool_call_delta in delta.tool_calls:
+                # Validate tool call structure
+                if not hasattr(tool_call_delta, 'function'):
                     if self.debug:
-                        print(f"🔍 [StreamingToolCallHandler] Generated fallback ID: {call_id}")
+                        print(f"[StreamingToolCallHandler] Skipping malformed tool call: {tool_call_delta}")
+                    continue
                 
-                # Initialize tool call if not exists
-                if call_id not in self.tool_calls:
-                    self.tool_calls[call_id] = {
-                        'id': call_id,
-                        'name': '',
-                        'args_buffer': '',
-                        'completed': False
-                    }
-                    if self.debug:
-                        print(f"🔍 [StreamingToolCallHandler] Initialized new tool call: {call_id}")
-                
-                tool_call = self.tool_calls[call_id]
-                
-                # Handle function name
-                if hasattr(tc_delta, 'function') and tc_delta.function:
-                    if hasattr(tc_delta.function, 'name') and tc_delta.function.name:
-                        old_name = tool_call['name']
-                        tool_call['name'] = tc_delta.function.name
-                        if self.debug and old_name != tool_call['name']:
-                            print(f"🔍 [StreamingToolCallHandler] Tool name set/updated: {old_name} -> {tool_call['name']}")
+                # Check for function arguments
+                if hasattr(tool_call_delta.function, 'arguments'):
+                    args_chunk = tool_call_delta.function.arguments
                     
-                    # Accumulate arguments
-                    if hasattr(tc_delta.function, 'arguments') and tc_delta.function.arguments:
-                        old_buffer = tool_call['args_buffer']
-                        tool_call['args_buffer'] += tc_delta.function.arguments
+                    # Skip empty argument chunks
+                    if not args_chunk or args_chunk.strip() == '':
                         if self.debug:
-                            print(f"🔍 [StreamingToolCallHandler] Args buffer updated:")
-                            print(f"   Previous: '{old_buffer}'")
-                            print(f"   Added: '{tc_delta.function.arguments}'")
-                            print(f"   New buffer: '{tool_call['args_buffer']}'")
-                
-                # Enhanced completion detection
-                if (hasattr(tc_delta, 'function') and tc_delta.function and 
-                    hasattr(tc_delta.function, 'arguments')):
+                            print(f"[StreamingToolCallHandler] Skipping empty arguments chunk")
+                        continue
                     
-                    # Check for completion signals
-                    is_complete = False
-                    completion_reason = ""
+                    # Accumulate arguments properly
+                    tool_id = tool_call_delta.id
+                    if tool_id not in self.tool_calls:
+                        self.tool_calls[tool_id] = {
+                            'name': tool_call_delta.function.name,
+                            'arguments': '',
+                            'id': tool_id
+                        }
                     
-                    # Signal 1: Empty arguments after non-empty buffer
-                    if (tc_delta.function.arguments == '' and 
-                        tool_call['args_buffer'] and 
-                        not tool_call['completed']):
-                        is_complete = True
-                        completion_reason = "Empty arguments signal"
+                    self.tool_calls[tool_id]['arguments'] += args_chunk
                     
-                    # Signal 2: Closing brace/bracket for JSON
-                    elif tool_call['args_buffer']:
-                        buffer = tool_call['args_buffer'].strip()
-                        if ((buffer.startswith('{') and buffer.endswith('}')) or
-                            (buffer.startswith('[') and buffer.endswith(']'))):
-                            # Attempt to parse to verify JSON is complete
-                            try:
-                                json.loads(buffer)
-                                is_complete = True
-                                completion_reason = "Valid JSON structure detected"
-                            except json.JSONDecodeError as e:
-                                if self.debug:
-                                    print(f"🔍 [StreamingToolCallHandler] JSON not yet complete: {e}")
-                    
-                    if self.debug:
-                        print(f"🔍 [StreamingToolCallHandler] Completion check:")
-                        print(f"   Is complete: {is_complete}")
-                        print(f"   Reason: {completion_reason}")
-                        print(f"   Current buffer: '{tool_call['args_buffer']}'")
-                        print(f"   Already completed: {tool_call['completed']}")
-                    
-                    if is_complete:
-                        tool_call['completed'] = True
-                        if self.debug:
-                            print(f"🔍 [StreamingToolCallHandler] Marking tool call {call_id} as completed")
+                    # Check if arguments are complete
+                    try:
+                        # Attempt to parse JSON to check completeness
+                        parsed_args = json.loads(self.tool_calls[tool_id]['arguments'])
                         
-                        try:
-                            # Parse arguments with better error handling
-                            args_str = tool_call['args_buffer'].strip()
+                        # Validate parsed arguments
+                        if isinstance(parsed_args, dict) and len(parsed_args) > 0:
+                            completed_call = self.tool_calls.pop(tool_id)
+                            completed_call['arguments'] = parsed_args
+                            completed_calls.append(completed_call)
                             
                             if self.debug:
-                                print(f"🔍 [StreamingToolCallHandler] Parsing arguments: '{args_str}'")
-                            
-                            # Handle empty or malformed arguments
-                            if not args_str or args_str == '""' or args_str == "''":
-                                if self.debug:
-                                    print(f"🔍 [StreamingToolCallHandler] Empty/malformed arguments detected")
-                                
-                                # For apply_updates_and_reply, provide a helpful error structure
-                                if tool_call['name'] == 'apply_updates_and_reply':
-                                    parsed_args = {
-                                        "error": "Empty arguments provided",
-                                        "updates": [],
-                                        "reply": "Error: No updates provided"
-                                    }
-                                else:
-                                    parsed_args = {"error": "Empty arguments provided"}
-                                
-                                if self.debug:
-                                    print(f"🔍 [StreamingToolCallHandler] Generated error args: {parsed_args}")
-                            else:
-                                parsed_args = json.loads(args_str)
-                                if self.debug:
-                                    print(f"🔍 [StreamingToolCallHandler] Successfully parsed args: {parsed_args}")
-                                
-                            completed.append({
-                                'id': call_id,
-                                'name': tool_call['name'],
-                                'arguments': parsed_args
-                            })
-                            
+                                print(f"[StreamingToolCallHandler] Completed tool call: {completed_call}")
+                        else:
                             if self.debug:
-                                print(f"🔍 [StreamingToolCallHandler] Added to completed calls: {call_id}")
-                                
-                        except json.JSONDecodeError as e:
-                            print(f"❌ [StreamingToolCallHandler] Failed to parse tool call arguments: {tool_call['args_buffer']}")
-                            print(f"❌ [StreamingToolCallHandler] JSON Error: {str(e)}")
-                            
-                            # Provide structured error for better handling
-                            completed.append({
-                                'id': call_id,
-                                'name': tool_call['name'],
-                                'arguments': {"error": f"JSON parse error: {str(e)}"}
-                            })
-                            
-                            if self.debug:
-                                print(f"🔍 [StreamingToolCallHandler] Added error call to completed: {call_id}")
+                                print(f"[StreamingToolCallHandler] Empty or invalid arguments: {parsed_args}")
+                    except json.JSONDecodeError:
+                        # Arguments not complete yet
+                        if self.debug:
+                            print(f"[StreamingToolCallHandler] Arguments incomplete, continuing accumulation")
         
-        if self.debug and completed:
-            print(f"🔍 [StreamingToolCallHandler] Returning {len(completed)} completed calls:")
-            for call in completed:
-                print(f"   - {call['name']} ({call['id']}): {call['arguments']}")
-        
-        return completed
+        return completed_calls
     
     def force_complete_all(self) -> List[Dict[str, Any]]:
         """Force complete all pending tool calls"""
@@ -328,14 +233,32 @@ def _airesponse_to_message(resp: AIResponse):
 class ToolCallRetryManager:
     """Manages retry logic for failed tool calls with intelligent prompting"""
     
-    def __init__(self, max_retries: int = 3):
+    def __init__(self, max_retries: int = 3, max_consecutive_errors: int = 5):
         self.max_retries = max_retries
+        self.max_consecutive_errors = max_consecutive_errors
         self.retry_counts = {}
         self.last_errors = {}
-    
+        self.consecutive_error_count = 0
+        self.last_error_signature = None
+        
     def should_retry(self, tool_name: str, error: str) -> bool:
         """Determine if we should retry a failed tool call"""
         key = f"{tool_name}:{error}"
+        
+        # Create error signature for circuit breaker
+        error_signature = f"{tool_name}:{error[:50]}"  # First 50 chars
+        
+        # Check for consecutive identical errors (circuit breaker)
+        if error_signature == self.last_error_signature:
+            self.consecutive_error_count += 1
+        else:
+            self.consecutive_error_count = 1
+            self.last_error_signature = error_signature
+        
+        # Circuit breaker: Stop if too many consecutive identical errors
+        if self.consecutive_error_count >= self.max_consecutive_errors:
+            print(f"[CIRCUIT_BREAKER] Stopping after {self.consecutive_error_count} consecutive identical errors")
+            return False
         
         self.retry_counts[key] = self.retry_counts.get(key, 0) + 1
         self.last_errors[tool_name] = error
@@ -346,6 +269,19 @@ class ToolCallRetryManager:
         """Generate an intelligent retry prompt based on the error"""
         retry_num = self.retry_counts.get(f"{tool_name}:{error}", 1)
         
+        # Special handling for repeated empty argument errors
+        if "empty" in error.lower() and self.consecutive_error_count >= 3:
+            return f"""CRITICAL: You have made {self.consecutive_error_count} consecutive empty tool calls. 
+
+STOP calling {tool_name} with empty arguments. 
+
+Instead:
+1. If you need to set a cell, use: set_cell(cell='A1', value='50')  
+2. If you're trying to build something, describe what you want instead of using tools
+3. If confused, just provide a text response without any tool calls
+
+Do NOT repeat the same empty tool call."""
+            
         if "empty arguments" in error.lower() or "json parse error" in error.lower():
             if tool_name == "apply_updates_and_reply":
                 return f"""Retry {retry_num}/{self.max_retries}: The apply_updates_and_reply tool requires:
@@ -365,7 +301,7 @@ Please provide the complete arguments."""
             
             elif tool_name == "set_cell":
                 return f"""Retry {retry_num}/{self.max_retries}: The set_cell tool requires both parameters:
-- cell: The cell reference (e.g., 'A1')
+- cell: The cell reference (e.g., 'A1')  
 - value: The value to set
 
 Example: set_cell(cell='A1', value='Hello')"""
@@ -382,6 +318,12 @@ Example: set_cells(updates=[{{"cell": "A1", "value": "Hello"}}, {{"cell": "B1", 
         """Reset retry counts for a new conversation"""
         self.retry_counts.clear()
         self.last_errors.clear()
+        self.consecutive_error_count = 0
+        self.last_error_signature = None
+    
+    def is_circuit_broken(self) -> bool:
+        """Check if circuit breaker is active"""
+        return self.consecutive_error_count >= self.max_consecutive_errors
 
 class ChatStep(BaseModel):
     role: str                       # "assistant" | "tool"
@@ -389,6 +331,26 @@ class ChatStep(BaseModel):
     toolCall: dict | None = None    # {name, args}
     toolResult: Any | None = None   # dict or list or any value returned by Python fn
     usage: dict | None = None       # token counts etc.
+
+class StreamingMetrics:
+    def __init__(self):
+        self.chunk_count = 0
+        self.tool_call_count = 0
+        self.error_count = 0
+        self.start_time = time.time()
+        self.chunk_times = []
+    
+    def log_chunk(self, chunk_type: str, size: int):
+        self.chunk_count += 1
+        chunk_time = time.time()
+        self.chunk_times.append(chunk_time)
+        
+        # Log inter-chunk timing
+        if len(self.chunk_times) > 1:
+            inter_chunk_time = chunk_time - self.chunk_times[-2]
+            print(f"[METRICS] Inter-chunk time: {inter_chunk_time:.3f}s")
+        
+        print(f"[METRICS] Chunk #{self.chunk_count} - Type: {chunk_type}, Size: {size}")
 
 class BaseAgent:
     def __init__(
@@ -495,6 +457,9 @@ class BaseAgent:
         }
         
         print(f"[{agent_id}] 🔄 Starting tool loop with max_iterations={max_iterations}")
+        
+        # Prevent infinite tool call loops
+        tool_call_attempts = defaultdict(int)
         
         while iterations < max_iterations:
             iterations += 1
@@ -828,6 +793,7 @@ class BaseAgent:
             elif msg.content:
                 print(f"[{agent_id}] 💬 Model returned direct response, length: {len(msg.content)}")
                 
+                
                 # Check for Groq Llama models function-call text format
                 if isinstance(msg.content, str) and msg.content.lstrip().startswith("<function="):
                     function_match = re.search(r'<function=([a-zA-Z0-9_]+)[>,](.*)', msg.content.strip())
@@ -1157,6 +1123,15 @@ class BaseAgent:
             loop_start = time.time()
             print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations}")
             
+            # CHECK CIRCUIT BREAKER - Exit if too many consecutive errors
+            if retry_manager.is_circuit_broken():
+                print(f"[{agent_id}] 🔥 CIRCUIT BREAKER ACTIVATED - Stopping due to repeated errors")
+                yield ChatStep(
+                    role="assistant",
+                    content="I'm having trouble with tool calls and need to stop to prevent errors. Let me help you with a direct response instead."
+                )
+                return
+            
             # Initialize streaming tool call handler for this iteration
             tool_handler = StreamingToolCallHandler()
             current_content = ""
@@ -1239,6 +1214,48 @@ class BaseAgent:
                             tool_call_id = tool_call['id']
                             
                             print(f"[{agent_id}] 🔧 Executing completed tool call: {name} with args: {args}")
+                            
+                            # EARLY VALIDATION - Reject obviously empty or malformed calls
+                            if not args or (isinstance(args, dict) and len(args) == 0):
+                                print(f"[{agent_id}] ⚠️ Rejecting tool call with completely empty arguments")
+                                error_msg = "Empty arguments provided"
+                                if not retry_manager.should_retry(name, error_msg):
+                                    print(f"[{agent_id}] 🛑 Circuit breaker: stopping retry loop for {name}")
+                                    # Add strong instruction to stop making empty calls
+                                    messages.append({
+                                        "role": "system",
+                                        "content": f"STOP: Tool {name} has failed multiple times with empty arguments. Do NOT call this tool again without proper arguments. Provide a text response instead."
+                                    })
+                                    continue
+                                else:
+                                    retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
+                                    messages.append({
+                                        "role": "system",
+                                        "content": retry_prompt
+                                    })
+                                    continue
+                            
+                            # Specific validation for problematic tools
+                            if name == "set_cell":
+                                if isinstance(args, dict):
+                                    cell = args.get('cell', '') or args.get('cell_ref', '')
+                                    value = args.get('value', '')
+                                    if not cell or not str(cell).strip():
+                                        print(f"[{agent_id}] ⚠️ Rejecting set_cell with empty cell reference")
+                                        error_msg = "Empty cell reference"
+                                        if not retry_manager.should_retry(name, error_msg):
+                                            messages.append({
+                                                "role": "system",
+                                                "content": "STOP: set_cell requires a valid cell reference like 'A1'. Do not call set_cell with empty arguments. Provide a text response instead."
+                                            })
+                                            continue
+                                        else:
+                                            retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
+                                            messages.append({
+                                                "role": "system",
+                                                "content": retry_prompt
+                                            })
+                                            continue
                             
                             if debug_tools:
                                 print(f"[{agent_id}] 🔍 Tool call details:")

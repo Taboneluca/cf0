@@ -271,24 +271,24 @@ async def process_message(
             
             try:
                 # Validate updates parameter
-            if updates is None:
-                updates = []
+                if updates is None:
+                    updates = []
                 
                 # Check for empty updates list
                 if not updates or len(updates) == 0:
-                    print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates.")
+                    print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update.")
                     return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
+                        
+                if not reply:
+                    reply = "Updates applied."
                     
-            if not reply:
-                reply = "Updates applied."
+                # Apply the updates
+                result = set_cells_with_xref(updates=updates)
                 
-            # Apply the updates
-            result = set_cells_with_xref(updates=updates)
-            
-            # Add our reply
-            result["reply"] = reply
-            
-            return result
+                # Add our reply
+                result["reply"] = reply
+                
+                return result
             except Exception as e:
                 # Better error handling - log the error and return a proper error response
                 print(f"[{request_id}] ❌ Error in apply_updates_and_reply: {str(e)}")
@@ -312,6 +312,26 @@ async def process_message(
                 print(f"[{request_id}] 📝 Kwargs type: {type(kwargs)}")
                 print(f"[{request_id}] 📝 Kwargs content: {kwargs}")
                 print(f"[{request_id}] 📝 Kwargs length: {len(kwargs)}")
+                
+                # CRITICAL: Immediate rejection of obviously empty calls to prevent infinite loops
+                if len(args) == 0 and len(kwargs) == 0:
+                    print(f"[{request_id}] 🚨 EMPTY CALL REJECTED: {name} called with no arguments")
+                    return {
+                        "error": f"EMPTY_CALL_REJECTED",
+                        "message": f"Tool {name} called with no arguments. This call has been rejected to prevent infinite loops.",
+                        "suggestion": f"Provide proper arguments for {name}",
+                        "stop_retrying": True
+                    }
+                
+                # Check for single empty string argument (common infinite loop pattern)
+                if len(args) == 1 and isinstance(args[0], str) and args[0].strip() == "":
+                    print(f"[{request_id}] 🚨 EMPTY STRING REJECTED: {name} called with empty string")
+                    return {
+                        "error": f"EMPTY_STRING_REJECTED", 
+                        "message": f"Tool {name} called with empty string argument. This call has been rejected to prevent infinite loops.",
+                        "suggestion": f"Provide valid arguments for {name}",
+                        "stop_retrying": True
+                    }
                 
                 # Special handling for apply_updates_and_reply
                 if name == "apply_updates_and_reply":
@@ -548,7 +568,7 @@ async def process_message(
                                         # Debug the formula parsing
                                         if DEBUG_FORMULA_PARSING:
                                             print(f"[{request_id}] 📐 Parsing LaTeX formula: {formula.strip()}")
-                                            print(f"[{request_id}] �� Raw formula: {repr(formula)}")
+                                            print(f"[{request_id}]  Raw formula: {repr(formula)}")
                                         return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
                                     except Exception as e:
                                         print(f"[{request_id}] ⚠️ LaTeX formula handling failed: {str(e)}")
@@ -682,7 +702,7 @@ async def process_message(
             "list_sheets": partial(list_sheets, wid=wid),
             "get_sheet_summary": partial(get_sheet_summary, wid=wid),
         }.items():
-            tool_functions[name] = create_streaming_wrapper(fn, name)
+            tool_functions[name] = create_streaming_wrapper(fn, name, sheet)
         
         # Add template tools only if enabled
         if ENABLE_TEMPLATES:
@@ -695,7 +715,7 @@ async def process_message(
             }
             # Add the template tools wrapper
             for name, fn in template_functions.items():
-                tool_functions[name] = create_streaming_wrapper(fn, name)
+                tool_functions[name] = create_streaming_wrapper(fn, name, sheet)
         
         # For ask mode, restrict to read-only tools
         if mode == "ask":
@@ -997,24 +1017,24 @@ async def process_message_streaming(
             
             try:
                 # Validate updates parameter
-            if updates is None:
-                updates = []
-                
-                # Check for empty updates list
-                if not updates or len(updates) == 0:
-                    print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates.")
-                    return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
+                if updates is None:
+                    updates = []
                     
-            if not reply:
-                reply = "Updates applied."
+                    # Check for empty updates list
+                    if not updates or len(updates) == 0:
+                        print(f"[{request_id}] ❌ Empty updates error: apply_updates_and_reply requires at least one update.")
+                        return {"error": "apply_updates_and_reply requires at least one update. Use individual tools like set_cell for single updates."}
+                    
+                if not reply:
+                    reply = "Updates applied."
+                    
+                # Apply the updates
+                result = set_cells_with_xref(updates=updates)
                 
-            # Apply the updates
-            result = set_cells_with_xref(updates=updates)
-            
-            # Add our reply
-            result["reply"] = reply
-            
-            return result
+                # Add our reply
+                result["reply"] = reply
+                
+                return result
             except Exception as e:
                 # Better error handling - log the error and return a proper error response
                 print(f"[{request_id}] ❌ Error in apply_updates_and_reply: {str(e)}")
@@ -1038,6 +1058,26 @@ async def process_message_streaming(
                 print(f"[{request_id}] 📝 Kwargs type: {type(kwargs)}")
                 print(f"[{request_id}] 📝 Kwargs content: {kwargs}")
                 print(f"[{request_id}] 📝 Kwargs length: {len(kwargs)}")
+                
+                # CRITICAL: Immediate rejection of obviously empty calls to prevent infinite loops
+                if len(args) == 0 and len(kwargs) == 0:
+                    print(f"[{request_id}] 🚨 EMPTY CALL REJECTED: {name} called with no arguments")
+                    return {
+                        "error": f"EMPTY_CALL_REJECTED",
+                        "message": f"Tool {name} called with no arguments. This call has been rejected to prevent infinite loops.",
+                        "suggestion": f"Provide proper arguments for {name}",
+                        "stop_retrying": True
+                    }
+                
+                # Check for single empty string argument (common infinite loop pattern)
+                if len(args) == 1 and isinstance(args[0], str) and args[0].strip() == "":
+                    print(f"[{request_id}] 🚨 EMPTY STRING REJECTED: {name} called with empty string")
+                    return {
+                        "error": f"EMPTY_STRING_REJECTED", 
+                        "message": f"Tool {name} called with empty string argument. This call has been rejected to prevent infinite loops.",
+                        "suggestion": f"Provide valid arguments for {name}",
+                        "stop_retrying": True
+                    }
                 
                 # Special handling for apply_updates_and_reply
                 if name == "apply_updates_and_reply":
@@ -1274,7 +1314,7 @@ async def process_message_streaming(
                                         # Debug the formula parsing
                                         if DEBUG_FORMULA_PARSING:
                                             print(f"[{request_id}] 📐 Parsing LaTeX formula: {formula.strip()}")
-                                            print(f"[{request_id}] �� Raw formula: {repr(formula)}")
+                                            print(f"[{request_id}]  Raw formula: {repr(formula)}")
                                         return tool_fn(updates=[{"cell": cell_ref.strip(), "value": formula.strip()}])
                                     except Exception as e:
                                         print(f"[{request_id}] ⚠️ LaTeX formula handling failed: {str(e)}")
@@ -1408,7 +1448,7 @@ async def process_message_streaming(
             "list_sheets": partial(list_sheets, wid=wid),
             "get_sheet_summary": partial(get_sheet_summary, wid=wid),
         }.items():
-            tool_functions[name] = create_streaming_wrapper(fn, name)
+            tool_functions[name] = create_streaming_wrapper(fn, name, sheet)
         
         # Add template tools only if enabled
         if ENABLE_TEMPLATES:
@@ -1421,7 +1461,7 @@ async def process_message_streaming(
             }
             # Add the template tools wrapper
             for name, fn in template_functions.items():
-                tool_functions[name] = create_streaming_wrapper(fn, name)
+                tool_functions[name] = create_streaming_wrapper(fn, name, sheet)
         
         # For ask mode, restrict to read-only tools
         if mode == "ask":

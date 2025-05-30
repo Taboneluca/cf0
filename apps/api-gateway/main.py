@@ -338,72 +338,118 @@ async def stream_chat(req: ChatRequest):
             name: sheet.to_dict() for name, sheet in wb.all_sheets().items()
         }
         
-        # Define the streaming generator
-        async def event_generator():
-            request_id = f"sse-{int(time.time()*1000)}"
-            print(f"[{request_id}] 🚀 Starting SSE stream for mode={req.mode}, wid={req.wid}, sid={req.sid}")
-            
-            # Send the initial 'start' event (important for clients to initialize state)
-            start_event = f"event: start\ndata: {json.dumps({'type': 'start'})}\n\n"
-            yield start_event
-            print(f"[{request_id}] 📤 Sent start event")
-            
-            # Detect which provider we're using (for logging purposes)
-            provider = "default"
-            if req.model:
-                provider = req.model.split(":")[0] if ":" in req.model else req.model
-                
-            # Process the message with streaming
-            async for chunk in process_message_streaming(
-                req.mode, 
-                req.message, 
-                req.wid, 
-                req.sid, 
-                sheet,
-                workbook_metadata={
-                    "sheets": wb.list_sheets(),
-                    "active": req.sid,
-                    "all_sheets_data": all_sheets_data,
-                    "contexts": req.contexts
-                },
-                model=req.model
-            ):
-                # Each chunk already has a 'type' field that determines the event
-                event_type = chunk.get('type', 'chunk')
-                
-                # Format and send as Server-Sent Event
-                sse_payload = f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
-                yield sse_payload
-                
-                # Force immediate flush for real-time streaming
-                await asyncio.sleep(0)  # Yield control to allow immediate flush
-                
-                # Print debug info about the event
-                if event_type == 'chunk' and 'text' in chunk:
-                    # For text chunks, print a sample (useful for verifying token-by-token streaming)
-                    text_preview = chunk['text'].replace('\n', '\\n')[:30]
-                    print(f"[{request_id}] 💬 {provider} text chunk[{len(chunk['text'])}]: '{text_preview}...'")
-                elif event_type == 'update':
-                    print(f"[{request_id}] 🔄 {provider} update event: {json.dumps(chunk)[:40]}...")
-                elif event_type == 'pending':
-                    print(f"[{request_id}] 📝 {provider} pending updates: {len(chunk.get('updates', []))} items")
-                elif event_type == 'complete':
-                    print(f"[{request_id}] ✅ {provider} completion event")
-                elif event_type == 'error':
-                    print(f"[{request_id}] ❌ {provider} error event: {chunk.get('error', 'Unknown error')}")
-            
-            print(f"[{request_id}] ✅ SSE stream completed for {provider}")
+        # Track error patterns to prevent infinite loops
+        error_count = {}
+        consecutive_errors = 0
+        last_error_signature = None
+        max_consecutive_errors = 10
         
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"  # Helps with NGINX buffering
-            }
-        )
+        try:
+            async def event_generator():
+                request_id = f"sse-{int(time.time()*1000)}"
+                print(f"[{request_id}] 🚀 Starting SSE stream for mode={req.mode}, wid={req.wid}, sid={req.sid}")
+                
+                # Send the initial 'start' event (important for clients to initialize state)
+                start_event = f"event: start\ndata: {json.dumps({'type': 'start'})}\n\n"
+                yield start_event
+                print(f"[{request_id}] 📤 Sent start event")
+                
+                # Detect which provider we're using (for logging purposes)
+                provider = "default"
+                if req.model:
+                    provider = req.model.split(":")[0] if ":" in req.model else req.model
+                    
+                # Process the message with streaming
+                async for chunk in process_message_streaming(
+                    req.mode, 
+                    req.message, 
+                    req.wid, 
+                    req.sid, 
+                    sheet,
+                    workbook_metadata={
+                        "sheets": wb.list_sheets(),
+                        "active": req.sid,
+                        "all_sheets_data": all_sheets_data,
+                        "contexts": req.contexts
+                    },
+                    model=req.model
+                ):
+                    # Basic error tracking and loop prevention
+                    if isinstance(chunk, dict) and "error" in chunk:
+                        error_signature = str(chunk.get("error", ""))[:50]  # First 50 chars
+                        
+                        if error_signature == last_error_signature:
+                            consecutive_errors += 1
+                        else:
+                            consecutive_errors = 1
+                            last_error_signature = error_signature
+                        
+                        # Circuit breaker for repeated errors
+                        if consecutive_errors >= max_consecutive_errors:
+                            print(f"[{request_id}] 🔥 SSE Circuit breaker: Stopping after {consecutive_errors} consecutive errors")
+                            # Send a final error message and break
+                            error_payload = {
+                                "type": "error",
+                                "error": "Too many repeated errors - stopping to prevent infinite loop"
+                            }
+                            sse_payload = f"event: error\ndata: {json.dumps(error_payload)}\n\n"
+                            yield sse_payload
+                            break
+                    
+                    # Determine event type and prepare chunk for SSE
+                    if isinstance(chunk, dict):
+                        if "type" in chunk:
+                            event_type = chunk["type"]
+                        elif "error" in chunk:
+                            event_type = "error"
+                        else:
+                            event_type = "chunk"
+                    else:
+                        event_type = "chunk"
+                        # Wrap string content in proper format
+                        chunk = {"type": "chunk", "text": str(chunk)}
+                    
+                    # Format and send as Server-Sent Event
+                    sse_payload = f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
+                    yield sse_payload
+                    
+                    # Force immediate flush for real-time streaming
+                    await asyncio.sleep(0)  # Yield control to allow immediate flush
+                    
+                    # Print debug info about the event
+                    if event_type == 'chunk' and 'text' in chunk:
+                        # For text chunks, print a sample (useful for verifying token-by-token streaming)
+                        text_preview = chunk['text'].replace('\n', '\\n')[:30]
+                        print(f"[{request_id}] 💬 {provider} text chunk[{len(chunk['text'])}]: '{text_preview}...'")
+                    elif event_type == 'error':
+                        print(f"[{request_id}] ❌ {provider} error: {chunk.get('error', 'Unknown error')}")
+                    elif event_type in ['update', 'tool_start', 'tool_complete']:
+                        print(f"[{request_id}] 🔧 {provider} {event_type}: {str(chunk)[:100]}...")
+                    else:
+                        print(f"[{request_id}] 📦 {provider} {event_type} event")
+                
+                print(f"[{request_id}] ✅ SSE stream completed for {provider}")
+            
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no"  # Helps with NGINX buffering
+                }
+            )
         
+        except Exception as e:
+            print(f"Error processing streaming chat request: {str(e)}")
+            # Return an error event
+            async def error_generator():
+                yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            return StreamingResponse(
+                error_generator(),
+                media_type="text/event-stream"
+            )
+
     except Exception as e:
         print(f"Error processing streaming chat request: {str(e)}")
         # Return an error event

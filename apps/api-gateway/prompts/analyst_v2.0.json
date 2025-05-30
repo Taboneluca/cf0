@@ -43,5 +43,13 @@
       ],
       "assistant_reply": "Created income statement headers in A1:A3. Ready to add data in column B."
     }
-  ]
+  ],
+  "tools": {
+    "critical_rules": [
+      "ALWAYS provide complete arguments when calling tools",
+      "For set_cell: MUST include both 'cell' and 'value' parameters",
+      "NEVER call tools with empty strings or missing arguments",
+      "Example: set_cell(cell='A1', value=50) NOT set_cell('')"
+    ]
+  }
 } 
