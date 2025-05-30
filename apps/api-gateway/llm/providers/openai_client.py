@@ -230,9 +230,16 @@ class OpenAIClient(LLMClient):
                     async for chunk in response_stream:
                         delta = chunk.choices[0].delta
                         
-                        # Handle new content
+                        # Handle new content - CRITICAL: Only yield the delta, not accumulated
                         if delta.content:
-                            current_content += delta.content
+                            new_content_delta = delta.content  # This is already a delta from OpenAI
+                            current_content += new_content_delta  # Track total for tool calls if needed
+                            
+                            # Yield only the NEW content delta
+                            yield AIResponse(
+                                content=new_content_delta,  # Send only the delta
+                                tool_calls=[]  # Don't send tool calls with content deltas
+                            )
                         
                         # Handle tool calls
                         if hasattr(delta, "tool_calls") and delta.tool_calls:
@@ -254,29 +261,31 @@ class OpenAIClient(LLMClient):
                                         
                                     if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
                                         current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
-                        
-                        # Convert current state to AIResponse
-                        tool_calls = []
-                        for tc_data in current_tool_calls.values():
-                            # Only add if we have a name
-                            if tc_data["name"]:
-                                # Try to parse arguments as JSON
-                                args = tc_data["arguments"]
-                                try:
-                                    args = json.loads(args)
-                                except:
-                                    pass  # Keep as string if not valid JSON
-                                    
-                                tool_calls.append(ToolCall(
-                                    name=tc_data["name"],
-                                    args=args,
-                                    id=tc_data["id"]
-                                ))
-                        
-                        yield AIResponse(
-                            content=current_content,
-                            tool_calls=tool_calls
-                        )
+                            
+                            # Convert completed tool calls to AIResponse
+                            tool_calls = []
+                            for tc_data in current_tool_calls.values():
+                                # Only add if we have a name and completed arguments
+                                if tc_data["name"] and tc_data["arguments"]:
+                                    # Try to parse arguments as JSON
+                                    args = tc_data["arguments"]
+                                    try:
+                                        args = json.loads(args)
+                                        # Only yield tool calls when arguments are complete JSON
+                                        tool_calls.append(ToolCall(
+                                            name=tc_data["name"],
+                                            args=args,
+                                            id=tc_data["id"]
+                                        ))
+                                    except json.JSONDecodeError:
+                                        pass  # Keep accumulating until valid JSON
+                            
+                            # Only yield tool calls when we have complete ones
+                            if tool_calls:
+                                yield AIResponse(
+                                    content="",  # No content with tool calls
+                                    tool_calls=tool_calls
+                                )
                     break  # Success, exit retry loop
                 except RateLimitError as e:
                     retry_count += 1

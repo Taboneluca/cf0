@@ -65,13 +65,6 @@ export function useChatStream(
   const debugChunkCount = useRef(0);
   const debugLastChunkTime = useRef(Date.now());
   
-  // Track current streaming content for incremental updates
-  const streamingContentRef = useRef<string>('');
-  
-  // Add tool call tracking
-  const toolCallBuffer = useRef<Map<string, any>>(new Map());
-  const [toolCallStatus, setToolCallStatus] = useState<Map<string, string>>(new Map());
-  
   // Track processed chunks to prevent duplicates
   const processedChunks = useRef(new Set<string>());
   
@@ -246,39 +239,6 @@ export function useChatStream(
     console.warn(`Tool error: ${errorMessage}`);
   }, []);
 
-  // Helper function for updating message content that forces re-render
-  const updateMessageContent = useCallback((id: string, text: string) => {
-    streamingContentRef.current = text;
-    
-    setMessages(prev => {
-      // Create a new array with all messages
-      const newMessages = [...prev];
-      
-      // Find the message index
-      const index = newMessages.findIndex(m => m.id === id);
-      if (index >= 0) {
-        // Create a new message object with updated content
-        // Force React to see this as a completely new object by updating timestamp
-        newMessages[index] = {
-          ...newMessages[index],
-          content: text,
-          status: 'streaming' as const,
-          // Update timestamp to force re-render - React will see this as a new state
-          timestamp: Date.now()
-        };
-      }
-      
-      return newMessages;
-    });
-    
-    // Force immediate scroll to bottom after each update
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        scrollToBottom();
-      });
-    });
-  }, [setMessages, scrollToBottom]);
-
   const sendMessage = useCallback(async (message: string, contexts: string[] = [], model?: string) => {
     if (!wb || !wb.wid || !wb.active || loading) {
       debugLog('VALIDATION', 'Cannot send message - workbook not ready', { wb, loading });
@@ -288,7 +248,6 @@ export function useChatStream(
     // Reset debugging counters and streaming content
     debugChunkCount.current = 0;
     debugLastChunkTime.current = Date.now();
-    streamingContentRef.current = '';
     
     debugLog('STREAM_START', 'Starting new streaming request', { 
       message: message.slice(0, 100) + (message.length > 100 ? '...' : ''), 
@@ -481,46 +440,39 @@ export function useChatStream(
               });
             }
             else if (event.type === 'chunk') {
-              // Add more granular debug logging for chunk processing
-              const processStreamChunk = async (chunk: any) => {
-                const chunkReceiveTime = performance.now();
-                
-                debugLog('CHUNK_RECEIVED', 'Raw chunk received', {
-                  chunkSize: chunk.length,
-                  chunkPreview: chunk.slice(0, 100),
-                  timestamp: chunkReceiveTime
-                });
-                
-                // Process and render immediately - don't wait for buffering
-                if (chunk.type === 'chunk' && chunk.text) {
-                  // Force immediate DOM update
-                  updateMessageContent(id, streamingContentRef.current + chunk.text);
-                  
-                  debugLog('CHUNK_RENDERED', 'Chunk rendered to DOM', {
-                    renderTime: performance.now() - chunkReceiveTime,
-                    totalContent: streamingContentRef.current.length
-                  });
-                }
-              };
-              
-              // Add the new text to the current content
-              const newContent = streamingContentRef.current + event.text;
+              // CRITICAL FIX: Don't accumulate here - just append the new text
+              const newText = event.text;
               
               debugLog('CONTENT_CHUNK', 'Received text chunk', {
                 newText: event.text,
-                totalLength: newContent.length,
                 chunkLength: event.text.length
               });
               
-              // Update with immediate rendering
-              updateMessageContent(id, newContent);
+              // Update the message by appending the new content
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  // Get existing content and append new text
+                  const existingContent = newMessages[index].content || '';
+                  const updatedContent = existingContent + newText;
+                  
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    content: updatedContent,
+                    status: 'streaming' as const,
+                    timestamp: Date.now()
+                  };
+                }
+                return newMessages;
+              });
               
-              // Force immediate UI update for better streaming experience
-              // Only yield if we have accumulated enough content or reached natural break points
-              if (event.text.length > 5 || event.text.includes('\n') || event.text.includes('.') || event.text.includes('!') || event.text.includes('?')) {
-                // eslint-disable-next-line no-await-in-loop
-                await yieldToDom();
-              }
+              // Force immediate scroll after content update
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  scrollToBottom();
+                });
+              });
             }
             else if (event.type === 'update') {
               debugLog('TOOL_UPDATE', 'Received tool update', event.payload);
@@ -647,61 +599,27 @@ export function useChatStream(
             else if (event.type === 'tool_start') {
               debugLog('TOOL_START', 'Tool execution started', event.payload);
               
-              // Handle tool start
-              toolCallBuffer.current.set(event.payload.id, {
-                name: event.payload.name,
-                startTime: Date.now()
-              });
-              setToolCallStatus(prev => {
-                const newStatus = new Map(prev);
-                newStatus.set(event.payload.id, 'started');
-                return newStatus;
-              });
+              // Simple logging only - no complex tracking needed
             }
             else if (event.type === 'tool_complete') {
               debugLog('TOOL_COMPLETE', 'Tool execution completed', event.payload);
               
-              // Handle tool complete
-              const toolData = toolCallBuffer.current.get(event.payload.id);
-              if (toolData) {
-                const result = event.payload.result;
-                const updates = event.payload.updates || [];
-                const toolResult = {
-                  name: toolData.name,
-                  result,
-                  updates
-                };
-                toolCallBuffer.current.delete(event.payload.id);
-                setToolCallStatus(prev => {
-                  const newStatus = new Map(prev);
-                  newStatus.set(event.payload.id, 'completed');
-                  return newStatus;
-                });
+              // Handle tool complete results
+              const updates = event.payload.updates || [];
+              if (updates.length > 0) {
                 setPendingUpdates(prev => [...prev, ...updates]);
-                
                 debugLog('TOOL_UPDATES', 'Added tool updates to pending', { count: updates.length });
               }
             }
             else if (event.type === 'tool_error') {
               debugLog('TOOL_ERROR', 'Tool execution failed', event.payload);
               
-              // Handle tool error
-              const toolData = toolCallBuffer.current.get(event.payload.id);
-              if (toolData) {
-                const error = event.payload.error;
-                const toolName = event.payload.name || toolData.name;
-                
-                // Use the helper function for consistent error handling
+              // Handle tool error gracefully
+              const error = event.payload.error;
+              const toolName = event.payload.name;
+              
+              if (toolName && error) {
                 handleToolError(toolName, error);
-                
-                toolCallBuffer.current.delete(event.payload.id);
-                setToolCallStatus(prev => {
-                  const newStatus = new Map(prev);
-                  newStatus.set(event.payload.id, 'error');
-                  return newStatus;
-                });
-                
-                // Don't add errors to pending updates, just handle them gracefully
               }
             }
           } catch (e) {
@@ -766,7 +684,7 @@ export function useChatStream(
     } finally {
       abortControllerRef.current = null;
     }
-  }, [wb, loading, dispatch, mode, cancelStream, setMessages, updateMessageContent, handleToolError]);
+  }, [wb, loading, dispatch, mode, cancelStream, setMessages, handleToolError]);
 
   return {
     sendMessage,

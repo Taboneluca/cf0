@@ -234,7 +234,7 @@ class AnthropicClient(LLMClient):
             
             # Process each streaming event by directly iterating the stream object
             async for event in with_stream:
-                new_content = None
+                new_content_delta = None
                 new_tool_data = None
                 
                 # Process different types of events from Claude's streaming API
@@ -245,8 +245,14 @@ class AnthropicClient(LLMClient):
                 elif event.type == "content_block_delta":
                     # Handle content delta (the most common event type)
                     if hasattr(event, "delta") and hasattr(event.delta, "text"):
-                        new_content = event.delta.text
-                        current_content += new_content
+                        new_content_delta = event.delta.text  # This is the NEW text only
+                        current_content += new_content_delta  # Track total for context
+                        
+                        # CRITICAL FIX: Yield the delta immediately
+                        yield AIResponse(
+                            content=new_content_delta,  # Send only the delta
+                            tool_calls=[]  # Don't send tool calls with content deltas
+                        )
                 
                 elif event.type == "content_block_stop":
                     # Content block completed
@@ -277,8 +283,8 @@ class AnthropicClient(LLMClient):
                     }
                     new_tool_data = True
                     
-                # If we have new content or tool data, emit an AIResponse
-                if new_content or new_tool_data:
+                # If we have new tool data, emit an AIResponse with tool calls
+                if new_tool_data:
                     # Convert current state to AIResponse
                     tool_calls = []
                     for tc_data in current_tool_calls.values():
@@ -290,8 +296,9 @@ class AnthropicClient(LLMClient):
                                 id=tc_data["id"]
                             ))
                     
+                    # Only yield tool calls (content is already yielded above)
                     yield AIResponse(
-                        content=current_content,
+                        content="",  # No content with tool calls
                         tool_calls=tool_calls
                     )
         except Exception as e:
