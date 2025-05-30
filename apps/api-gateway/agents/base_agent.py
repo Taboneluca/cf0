@@ -1424,71 +1424,151 @@ class BaseAgent:
                                         role="assistant",
                                         content=f"I encountered an error with {name}: {error_msg}. Let me try a different approach."
                                     )
-                
-                # Handle regular content (OpenAI format)
-                if hasattr(delta, "content") and delta.content:
-                    content_chunks += 1
-                    new_content = delta.content
-                    
-                    if debug_streaming:
-                        print(f"[{agent_id}] 💬 Content chunk #{content_chunks}: '{new_content}'")
-                    
-                    if in_tool_calling_phase:
-                        # We've transitioned from tool calling to final answer
-                        in_tool_calling_phase = False
-                        print(f"[{agent_id}] 💬 Transitioning to final answer")
-                    
-                    current_content += new_content
-                    
-                    # Yield content in smaller chunks for smoother streaming
-                    if len(new_content) > 15:
-                        # Split by sentence, newline or at word boundaries
-                        parts = []
                         
-                        if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
-                            import re
-                            pattern = r'([.!?]|\n)'
-                            pieces = re.split(pattern, new_content)
+                        # Handle regular content (OpenAI format) - MOVED INSIDE THE CORRECT BLOCK
+                        if hasattr(delta, "content") and delta.content:
+                            content_chunks += 1
+                            new_content = delta.content
                             
-                            i = 0
-                            while i < len(pieces) - 1:
-                                if i + 1 < len(pieces):
-                                    sentence = pieces[i] + pieces[i+1]
-                                    if sentence.strip():
-                                        parts.append(sentence)
-                                    i += 2
-                                else:
-                                    if pieces[i].strip():
-                                        parts.append(pieces[i])
-                                    i += 1
-                        else:
-                            # Split at word boundaries
-                            words = new_content.split(' ')
-                            current_part = ""
+                            if debug_streaming:
+                                print(f"[{agent_id}] 💬 Content chunk #{content_chunks}: '{new_content}'")
                             
-                            for word in words:
-                                if len(current_part) + len(word) + 1 <= 20:
-                                    if current_part:
-                                        current_part += ' ' + word
-                                    else:
-                                        current_part = word
+                            if in_tool_calling_phase:
+                                # We've transitioned from tool calling to final answer
+                                in_tool_calling_phase = False
+                                print(f"[{agent_id}] 💬 Transitioning to final answer")
+                            
+                            current_content += new_content
+                            
+                            # Yield content in smaller chunks for smoother streaming
+                            if len(new_content) > 15:
+                                # Split by sentence, newline or at word boundaries
+                                parts = []
+                                
+                                if '.' in new_content or '!' in new_content or '?' in new_content or '\n' in new_content:
+                                    import re
+                                    pattern = r'([.!?]|\n)'
+                                    pieces = re.split(pattern, new_content)
+                                    
+                                    i = 0
+                                    while i < len(pieces) - 1:
+                                        if i + 1 < len(pieces):
+                                            sentence = pieces[i] + pieces[i+1]
+                                            if sentence.strip():
+                                                parts.append(sentence)
+                                            i += 2
+                                        else:
+                                            if pieces[i].strip():
+                                                parts.append(pieces[i])
+                                            i += 1
                                 else:
+                                    # Split at word boundaries
+                                    words = new_content.split(' ')
+                                    current_part = ""
+                                    
+                                    for word in words:
+                                        if len(current_part) + len(word) + 1 <= 20:
+                                            if current_part:
+                                                current_part += ' ' + word
+                                            else:
+                                                current_part = word
+                                        else:
+                                            if current_part:
+                                                parts.append(current_part)
+                                            current_part = word
+                                    
                                     if current_part:
                                         parts.append(current_part)
-                                    current_part = word
-                            
-                            if current_part:
-                                parts.append(current_part)
-                        
-                        if not parts:
-                            parts = [new_content]
-                        
-                        for part in parts:
-                            if part.strip():
-                                yield ChatStep(role="assistant", content=part)
-                    else:
-                        yield ChatStep(role="assistant", content=new_content)
+                                
+                                if not parts:
+                                    parts = [new_content]
+                                
+                                for part in parts:
+                                    if part.strip():
+                                        yield ChatStep(role="assistant", content=part)
+                            else:
+                                yield ChatStep(role="assistant", content=new_content)
                     
+                    # Handle AIResponse format (for providers that return our standard format)
+                    elif hasattr(chunk, 'content') or hasattr(chunk, 'tool_calls'):
+                        # This is for providers that return AIResponse directly
+                        if hasattr(chunk, 'content') and chunk.content:
+                            content_chunks += 1
+                            new_content = chunk.content
+                            
+                            if debug_streaming:
+                                print(f"[{agent_id}] 💬 Content chunk #{content_chunks} (AIResponse): '{new_content}'")
+                            
+                            if in_tool_calling_phase:
+                                in_tool_calling_phase = False
+                                print(f"[{agent_id}] 💬 Transitioning to final answer")
+                            
+                            current_content += new_content
+                            yield ChatStep(role="assistant", content=new_content)
+                        
+                        # Handle tool calls in AIResponse format
+                        if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
+                            for tool_call in chunk.tool_calls:
+                                # Process tool calls from AIResponse format
+                                name = tool_call.name
+                                args = tool_call.args
+                                tool_call_id = tool_call.id or f"call_{tool_call_chunks}"
+                                
+                                print(f"[{agent_id}] 🔧 Executing tool call from AIResponse: {name} with args: {args}")
+                                
+                                # Execute using the same validation and execution logic
+                                try:
+                                    tool_fn = tool_functions.get(name)
+                                    if tool_fn:
+                                        if name in mutating_tools:
+                                            mutating_calls += 1
+                                            print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
+                                        
+                                        execution_start = time.time()
+                                        
+                                        if isinstance(args, dict):
+                                            result = tool_fn(**args)
+                                        elif isinstance(args, list):
+                                            result = tool_fn(*args)
+                                        else:
+                                            result = tool_fn(args)
+                                        
+                                        execution_time = time.time() - execution_start
+                                        
+                                        if debug_tools:
+                                            print(f"[{agent_id}] ✅ Tool {name} executed in {execution_time:.3f}s")
+                                            print(f"[{agent_id}] 📤 Tool result: {result}")
+                                            
+                                        # Add tool call and result to messages
+                                        messages.append({
+                                            "role": "assistant",
+                                            "tool_calls": [{
+                                                "id": tool_call_id,
+                                                "type": "function",
+                                                "function": {"name": name, "arguments": json.dumps(args)}
+                                            }]
+                                        })
+                                        messages.append({
+                                            "role": "tool",
+                                            "tool_call_id": tool_call_id,
+                                            "content": json.dumps(result) if result is not None else "null"
+                                        })
+                                        
+                                        yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
+                                        
+                                    else:
+                                        print(f"[{agent_id}] ❌ Unknown tool: {name}")
+                                        
+                                except Exception as e:
+                                    print(f"[{agent_id}] ❌ Tool execution error: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    
+                                    # Send error feedback
+                                    yield ChatStep(
+                                        role="assistant",
+                                        content=f"I encountered an error with {name}: {str(e)}. Let me try a different approach."
+                                    )
             except Exception as e:
                 print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")
                 import traceback

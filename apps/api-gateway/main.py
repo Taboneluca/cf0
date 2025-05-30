@@ -375,8 +375,8 @@ async def stream_chat(req: ChatRequest):
                 sse_payload = f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
                 yield sse_payload
                 
-                # Yield control to allow uvicorn to flush the response
-                await asyncio.sleep(0)
+                # Force immediate flush for real-time streaming
+                await asyncio.sleep(0)  # Yield control to allow immediate flush
                 
                 # Print debug info about the event
                 if event_type == 'chunk' and 'text' in chunk:
@@ -391,11 +391,6 @@ async def stream_chat(req: ChatRequest):
                     print(f"[{request_id}] ✅ {provider} completion event")
                 elif event_type == 'error':
                     print(f"[{request_id}] ❌ {provider} error event: {chunk.get('error', 'Unknown error')}")
-                    
-                # Add a small delay between chunks to ensure proper streaming
-                # This helps prevent buffering on the client side
-                # Make the delay very small for better real-time experience
-                await asyncio.sleep(0.01)  # 10ms delay between chunks
             
             print(f"[{request_id}] ✅ SSE stream completed for {provider}")
         

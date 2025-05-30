@@ -1488,10 +1488,14 @@ async def process_message_streaming(
                     # Format the text chunk and stream it
                     content_buffer += chunk
                     yield {"type": "chunk", "text": chunk}
+                    # Force immediate flush for real-time streaming
+                    await asyncio.sleep(0)  # Yield control to event loop
                 elif hasattr(chunk, "role") and chunk.role == "assistant" and hasattr(chunk, "content") and chunk.content:
                     # Format the text chunk and stream it
                     content_buffer += chunk.content
                     yield {"type": "chunk", "text": chunk.content}
+                    # Force immediate flush for real-time streaming
+                    await asyncio.sleep(0)  # Yield control to event loop
                 elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
                     # For tool results, we stream an indicator and trigger UI update
                     tool_result = chunk.toolResult
@@ -1506,6 +1510,8 @@ async def process_message_streaming(
                         
                         # Stream the update info to client for live updates
                         yield {"type": "update", "payload": tool_result}
+                        # Force immediate flush for tool updates
+                        await asyncio.sleep(0)  # Yield control to event loop
             
             # Save conversation history (optimistic, we have a complete response)
             if content_buffer:

@@ -3,9 +3,21 @@ import { useWorkbook } from '@/context/workbook-context';
 import { Message } from '@/types/spreadsheet';
 import { backendSheetToUI } from '@/utils/transform';
 
-// Utility function to yield to the DOM
+// Utility function to yield to the DOM - improved for better streaming performance
 const yieldToDom = (): Promise<void> => {
-  return new Promise(resolve => setTimeout(resolve, 0));
+  return new Promise(resolve => {
+    // Use double requestAnimationFrame for better performance and smoother rendering
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    } else {
+      // Fallback for environments without requestAnimationFrame
+      setTimeout(resolve, 0);
+    }
+  });
 };
 
 type StreamEvent = 
@@ -234,21 +246,26 @@ export function useChatStream(
       // Find the message index
       const index = newMessages.findIndex(m => m.id === id);
       if (index >= 0) {
-        // Create a new message object with updated content and a new timestamp
-        // The timestamp forces React to see this as a new state value
+        // Create a new message object with updated content
+        // Force React to see this as a completely new object by updating timestamp
         newMessages[index] = {
           ...newMessages[index],
           content: text,
           status: 'streaming' as const,
-          timestamp: Date.now() // Force re-render
+          // Update timestamp to force re-render - React will see this as a new state
+          timestamp: Date.now()
         };
       }
       
       return newMessages;
     });
     
-    // Ensure the UI scrolls to show new content
-    requestAnimationFrame(scrollToBottom);
+    // Force immediate scroll to bottom after each update
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    });
   }, [setMessages, scrollToBottom]);
 
   const sendMessage = useCallback(async (message: string, contexts: string[] = [], model?: string) => {
@@ -455,9 +472,12 @@ export function useChatStream(
               // Update with immediate rendering
               updateMessageContent(id, newContent);
               
-              // Give React a chance to flush before parsing the next event
-              // eslint-disable-next-line no-await-in-loop
-              await yieldToDom();
+              // Force immediate UI update for better streaming experience
+              // Only yield if we have accumulated enough content or reached natural break points
+              if (event.text.length > 5 || event.text.includes('\n') || event.text.includes('.') || event.text.includes('!') || event.text.includes('?')) {
+                // eslint-disable-next-line no-await-in-loop
+                await yieldToDom();
+              }
             }
             else if (event.type === 'update') {
               debugLog('TOOL_UPDATE', 'Received tool update', event.payload);
