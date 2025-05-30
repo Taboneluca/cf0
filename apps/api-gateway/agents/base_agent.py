@@ -81,31 +81,45 @@ class StreamingToolCallHandler:
                     if hasattr(tc_delta.function, 'arguments') and tc_delta.function.arguments:
                         tool_call['args_buffer'] += tc_delta.function.arguments
                 
-                # Check if this tool call is complete (no more arguments coming)
-                # This is indicated when we get a delta without arguments or with empty arguments
-                if (hasattr(tc_delta, 'function') and tc_delta.function and 
-                    hasattr(tc_delta.function, 'arguments') and 
-                    tc_delta.function.arguments == '' and 
-                    tool_call['args_buffer'] and 
-                    not tool_call['completed']):
-                    
-                    # Mark as completed and try to parse
-                    tool_call['completed'] = True
-                    try:
-                        parsed_args = json.loads(tool_call['args_buffer']) if tool_call['args_buffer'].strip() else {}
-                        completed.append({
-                            'id': call_id,
-                            'name': tool_call['name'],
-                            'arguments': parsed_args
-                        })
-                    except json.JSONDecodeError:
-                        print(f"Failed to parse tool call arguments: {tool_call['args_buffer']}")
-                        # Provide empty args as fallback
-                        completed.append({
-                            'id': call_id,
-                            'name': tool_call['name'],
-                            'arguments': {}
-                        })
+                # CRITICAL FIX: Better completion detection
+                # Check if we have a complete JSON object or empty arguments
+                if tool_call['name'] and not tool_call['completed']:
+                    # Try to parse to see if it's complete JSON
+                    if tool_call['args_buffer'].strip():
+                        try:
+                            parsed_args = json.loads(tool_call['args_buffer'])
+                            # Successfully parsed - mark as complete
+                            tool_call['completed'] = True
+                            
+                            # Validate apply_updates_and_reply has required fields
+                            if tool_call['name'] == 'apply_updates_and_reply':
+                                if not isinstance(parsed_args, dict) or not parsed_args.get('updates'):
+                                    print(f"Invalid apply_updates_and_reply arguments: {parsed_args}")
+                                    parsed_args = {'error': 'apply_updates_and_reply requires non-empty updates array'}
+                            
+                            completed.append({
+                                'id': call_id,
+                                'name': tool_call['name'],
+                                'arguments': parsed_args
+                            })
+                        except json.JSONDecodeError:
+                            # Not complete yet, continue accumulating
+                            pass
+                    elif hasattr(tc_delta.function, 'arguments') and tc_delta.function.arguments == '':
+                        # Empty arguments case - mark complete with error for critical tools
+                        tool_call['completed'] = True
+                        if tool_call['name'] == 'apply_updates_and_reply':
+                            completed.append({
+                                'id': call_id,
+                                'name': tool_call['name'],
+                                'arguments': {'error': 'apply_updates_and_reply requires updates and reply parameters'}
+                            })
+                        else:
+                            completed.append({
+                                'id': call_id,
+                                'name': tool_call['name'],
+                                'arguments': {}
+                            })
         
         return completed
     
@@ -1061,7 +1075,19 @@ class BaseAgent:
                             if args is None or args == "" or (isinstance(args, dict) and len(args) == 0):
                                 print(f"[{agent_id}] ⚠️ Empty args detected for {name}")
                                 
-                                # Add a system message to force retry with proper arguments
+                                # Track consecutive empty calls to break infinite loops
+                                error_key = f"{name}_empty_args"
+                                error_count[error_key] = error_count.get(error_key, 0) + 1
+                                
+                                if error_count[error_key] > 2:
+                                    print(f"[{agent_id}] 🛑 Breaking loop - {error_key} repeated {error_count[error_key]} times")
+                                    yield ChatStep(
+                                        role="assistant",
+                                        content=f"I'm having trouble with the {name} operation. Please provide specific instructions for what you'd like me to update in the spreadsheet."
+                                    )
+                                    return
+                                
+                                # Add a system message to force proper retry
                                 if name == "apply_updates_and_reply":
                                     retry_message = f"""The tool call to {name} failed because empty arguments were provided. 
                                     

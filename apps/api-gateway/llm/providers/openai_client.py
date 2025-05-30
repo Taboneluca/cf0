@@ -177,10 +177,6 @@ class OpenAIClient(LLMClient):
         Internal implementation for streaming chat.
         This must be properly implemented as an async generator.
         """
-        # CRITICAL: We must yield at least once before any await statements
-        # Otherwise, the function becomes a coroutine, not an async generator
-        yield AIResponse(content="", tool_calls=[])
-        
         try:
             def _wrap_tools(tools):
                 if not tools:
@@ -213,7 +209,6 @@ class OpenAIClient(LLMClient):
             
             while True:
                 try:
-                    # Now we can safely await since we've already yielded once
                     response_stream = await self.client.chat.completions.create(
                         model=self.model,
                         messages=openai_messages,
@@ -225,6 +220,9 @@ class OpenAIClient(LLMClient):
                     
                     current_content = ""
                     current_tool_calls = {}  # id -> tool call
+                    
+                    # Flag to ensure we yield at least once
+                    has_yielded = False
                     
                     # Now iterate on the response stream
                     async for chunk in response_stream:
@@ -255,17 +253,18 @@ class OpenAIClient(LLMClient):
                                     if hasattr(tc_delta.function, "arguments") and tc_delta.function.arguments:
                                         current_tool_calls[tc_id]["arguments"] += tc_delta.function.arguments
                         
-                        # Convert current state to AIResponse
+                        # Convert current state to AIResponse and yield if we have content or complete tool calls
                         tool_calls = []
                         for tc_data in current_tool_calls.values():
-                            # Only add if we have a name
-                            if tc_data["name"]:
+                            # Only add if we have a name and arguments look complete
+                            if tc_data["name"] and tc_data["arguments"]:
                                 # Try to parse arguments as JSON
                                 args = tc_data["arguments"]
                                 try:
                                     args = json.loads(args)
                                 except:
-                                    pass  # Keep as string if not valid JSON
+                                    # Keep as string if not valid JSON yet
+                                    pass
                                     
                                 tool_calls.append(ToolCall(
                                     name=tc_data["name"],
@@ -273,10 +272,18 @@ class OpenAIClient(LLMClient):
                                     id=tc_data["id"]
                                 ))
                         
-                        yield AIResponse(
-                            content=current_content,
-                            tool_calls=tool_calls
-                        )
+                        # Only yield if we have meaningful content or completed tool calls
+                        if current_content or tool_calls:
+                            has_yielded = True
+                            yield AIResponse(
+                                content=current_content,
+                                tool_calls=tool_calls
+                            )
+                    
+                    # Ensure we yield at least once even if no content
+                    if not has_yielded:
+                        yield AIResponse(content="", tool_calls=[])
+                        
                     break  # Success, exit retry loop
                 except RateLimitError as e:
                     retry_count += 1
@@ -287,7 +294,6 @@ class OpenAIClient(LLMClient):
                     print(f"Rate limit exceeded, retrying in {wait_time}s (attempt {retry_count}/{max_retries})...")
                     await asyncio.sleep(wait_time)
         except Exception as e:
-            # We already yielded at least once
             print(f"Error in OpenAI stream processing: {str(e)}")
             yield AIResponse(content=f"Error: {str(e)}", tool_calls=[])
 
@@ -298,18 +304,8 @@ class OpenAIClient(LLMClient):
         
         IMPORTANT: This must be properly implemented as an async generator.
         """
-        # Yield immediately to make this a proper async generator
-        yield AIResponse(content="", tool_calls=[])
-        
-        # Now delegate to the actual implementation
-        generator = self._stream_chat_impl(messages, tools, **params)
-        # Skip the first chunk since we've already yielded an empty one
-        first = True
-        
-        async for chunk in generator:
-            if first:
-                first = False
-                continue
+        # Delegate directly to the implementation
+        async for chunk in self._stream_chat_impl(messages, tools, **params):
             yield chunk
             
     @property

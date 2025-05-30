@@ -811,7 +811,7 @@ async def process_message_streaming(
         
         # Create a streaming wrapper for tool functions
         def create_streaming_wrapper(tool_fn, name):
-            """Create a wrapper that logs the call"""
+            """Create a wrapper that logs the call and handles edge cases"""
             def wrapper(*args, **kwargs):
                 print(f"[{request_id}] 🔧 Streaming tool call: {name}")
                 
@@ -825,127 +825,54 @@ async def process_message_streaming(
                 print(f"[{request_id}] 📝 Kwargs content: {repr(kwargs)}")
                 print(f"[{request_id}] 📝 Kwargs length: {len(kwargs) if kwargs else 0}")
                 
-                # Add detailed logging for debugging
-                print(f"[{request_id}] 📊 Tool args: {json.dumps(args, default=str)[:200] if args else 'None'}...")
-                print(f"[{request_id}] 📊 Tool kwargs: {json.dumps(kwargs, default=str)[:200] if kwargs else 'None'}...")
-                
-                # Tools that need special handling
-                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
-                sheet_tools = ["create_new_sheet"]
-                table_tools = ["add_column", "add_row", "delete_column", "delete_row", "sort_range", "find_replace"]
-                cell_tools = ["set_cell", "get_cell", "get_range"]
-                
-                # Ensure that kwargs is always a dictionary
-                if len(args) == 1 and isinstance(args[0], str) and not kwargs:
-                    # Handle the case where a single string argument is passed
-                    # This happens with some tools when called with just a string
-                    print(f"[{request_id}] 🔄 Handling single string argument: '{args[0]}'")
+                # CRITICAL FIX: Handle empty apply_updates_and_reply calls
+                if name == "apply_updates_and_reply":
+                    # Check for completely empty arguments
+                    if (len(args) == 0 and len(kwargs) == 0) or \
+                       (len(args) == 1 and isinstance(args[0], str) and args[0] == ''):
+                        error_msg = "apply_updates_and_reply requires both 'updates' and 'reply' parameters. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 42}], reply='Updated cell A1')"
+                        print(f"[{request_id}] ❌ {error_msg}")
+                        return {"error": error_msg}
                     
-                    if name == "set_cell":
-                        # For set_cell, we need cell and value parameters
-                        # Check if the string is in "A1=value" format
-                        if "=" in args[0]:
-                            cell_ref, value = args[0].split("=", 1)
-                            return tool_fn(cell=cell_ref.strip(), value=value.strip())
-                        else:
-                            # If there's no equals sign, it might just be a cell reference
-                            # We'll set an empty string as the value
-                            return tool_fn(cell=args[0], value="")
-                    elif name == "get_cell":
-                        return tool_fn(cell_ref=args[0])
-                    elif name == "get_range":
-                        return tool_fn(range_ref=args[0])
-                    elif name == "create_new_sheet":
-                        # Handle create_new_sheet with a string argument as the name parameter
-                        return tool_fn(name=args[0])
-                    elif name == "add_column" or name == "add_row":
-                        # For add_column and add_row, use the header parameter for the string
-                        return tool_fn(header=args[0])
-                    elif name == "set_cells":
-                        # Special handling for set_cells with string argument
-                        # Try to parse as JSON if it looks like a JSON string
-                        if args[0].strip().startswith('{') or args[0].strip().startswith('['):
-                            try:
-                                data = json.loads(args[0])
-                                if isinstance(data, dict):
-                                    # Handle dict format (cells_dict)
-                                    return tool_fn(cells_dict=data)
-                                elif isinstance(data, list):
-                                    # Handle list format (updates)
-                                    return tool_fn(updates=data)
-                                else:
-                                    return {"error": f"Invalid JSON format for set_cells: {args[0]}"}
-                            except json.JSONDecodeError:
-                                return {"error": f"Could not parse JSON for set_cells: {args[0]}"}
-                        # If it's not JSON, try to interpret as a simple "A1=value" format
-                        elif "=" in args[0]:
-                            cell_ref, value = args[0].split("=", 1)
-                            update = [{"cell": cell_ref.strip(), "value": value.strip()}]
-                            return tool_fn(updates=update)
-                        else:
-                            return {"error": f"Invalid format for set_cells. Expected JSON or A1=value format, got: {args[0]}"}
-                    elif name in financial_model_tools:
-                        # Prevent financial model tools from being called with incorrect arguments
-                        # or when not specifically requested
-                        print(f"[{request_id}] ⚠️ Preventing inappropriate call to {name} with string argument")
-                        return {"error": f"The {name} tool requires specific parameters, not a string."}
-                    elif name in table_tools:
-                        # Handle other table manipulation tools safely
-                        print(f"[{request_id}] ⚠️ The {name} tool requires specific parameters, not a string.")
-                        return {"error": f"The {name} tool requires specific parameters. Please provide complete arguments."}
-                    else:
-                        # For other functions, pass as first argument if possible, otherwise try as a keyword arg
+                    # Validate that we have proper arguments structure
+                    if len(args) == 1 and isinstance(args[0], str) and args[0].strip():
                         try:
-                            # First, try to infer the parameter name based on function signature
-                            import inspect
-                            sig = inspect.signature(tool_fn)
-                            params = list(sig.parameters.keys())
-                            
-                            # If we have parameters, use the first one as the keyword
-                            if params:
-                                # Create a kwargs dict with the first parameter name
-                                param_kwargs = {params[0]: args[0]}
-                                return tool_fn(**param_kwargs)
-                            else:
-                                # Just try passing it through
-                                return tool_fn(args[0])
-                        except TypeError as e:
-                            print(f"[{request_id}] ⚠️ Error calling {name}: {str(e)}")
-                            return {"error": f"Invalid parameters for {name}: {str(e)}"}
-                elif len(args) == 0 and len(kwargs) == 0:
-                    # Handle completely empty tool calls
+                            data = json.loads(args[0])
+                            if isinstance(data, dict):
+                                updates = data.get('updates', [])
+                                reply = data.get('reply', '')
+                                if not updates:
+                                    return {"error": "apply_updates_and_reply requires non-empty 'updates' array"}
+                                return tool_fn(updates=updates, reply=reply)
+                        except json.JSONDecodeError:
+                            return {"error": f"Could not parse arguments for {name}. Expected JSON with 'updates' and 'reply' fields."}
+                    
+                    # Check for empty updates in kwargs
+                    if 'updates' in kwargs and not kwargs['updates']:
+                        return {"error": "apply_updates_and_reply requires non-empty 'updates' array"}
+
+                # Handle completely empty tool calls
+                if len(args) == 0 and len(kwargs) == 0:
                     print(f"[{request_id}] ⚠️ Empty tool call detected for {name}")
-                    if name == "set_cell":
-                        return {"error": "set_cell requires cell and value parameters. Example: set_cell(cell='A1', value='Hello')"}
-                    elif name == "set_cells":
-                        return {"error": "set_cells requires updates parameter. Example: set_cells(updates=[{'cell': 'A1', 'value': 'Hello'}])"}
-                    elif name == "apply_updates_and_reply":
-                        return {"error": "apply_updates_and_reply requires updates parameter. Example: apply_updates_and_reply(updates=[{'cell': 'A1', 'value': 'Hello'}], reply='Updated cell A1')"}
-                    else:
-                        return {"error": f"The {name} tool requires parameters. Please provide the necessary arguments."}
-                elif name == "set_cell" and len(args) == 2:
-                    # Handle case where set_cell is called with (cell, value) positional args
-                    cell_ref = args[0]
-                    if not cell_ref or not cell_ref.strip():
-                        return {"error": "Invalid empty cell reference for set_cell"}
-                    return tool_fn(cell=cell_ref, value=args[1])
-                else:
-                    # Normal case - keyword arguments
-                    try:
-                        print(f"[{request_id}] 🧰 Executing {name}")
-                        
-                        # Add detailed logging for debugging tool calls
-                        print(f"[{request_id}] 🔧 Tool: {name}, Args: {json.dumps(args, default=str)[:200]}...")
-                        
-                        fn_start = time.time()
-                        result = tool_fn(*args, **kwargs)
-                        fn_end = time.time()
-                        fn_duration = fn_end - fn_start
-                        print(f"[{request_id}] 🚀 {name} completed in {fn_duration:.2f}s")
-                        return result
-                    except TypeError as e:
-                        print(f"[{request_id}] ⚠️ Error calling {name} with {args} and {kwargs}: {str(e)}")
-                        return {"error": f"Invalid parameters for {name}: {str(e)}"}
+                    return {"error": f"The {name} tool requires parameters. Please provide the necessary arguments."}
+                
+                # Handle single empty string argument
+                if len(args) == 1 and isinstance(args[0], str) and not args[0].strip():
+                    print(f"[{request_id}] ⚠️ Empty string argument for {name}")
+                    return {"error": f"The {name} tool received empty arguments. Please provide specific parameters."}
+                
+                # Normal execution
+                try:
+                    print(f"[{request_id}] 🧰 Executing {name}")
+                    fn_start = time.time()
+                    result = tool_fn(*args, **kwargs)
+                    fn_end = time.time()
+                    fn_duration = fn_end - fn_start
+                    print(f"[{request_id}] 🚀 {name} completed in {fn_duration:.2f}s")
+                    return result
+                except TypeError as e:
+                    print(f"[{request_id}] ⚠️ Error calling {name} with {args} and {kwargs}: {str(e)}")
+                    return {"error": f"Invalid parameters for {name}: {str(e)}"}
             return wrapper
             
         # Prepare all the tool functions with streaming wrappers
