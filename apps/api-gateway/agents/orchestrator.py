@@ -247,56 +247,69 @@ class Orchestrator:
         agent = self.get_agent(mode)
         agent = self._prepare_context_aware_agent(agent, mode, message, history)
         
-        # Apply legacy financial model tool filtering for llama-70b model
-        if hasattr(self.llm, 'model') and (
-            'llama-3-70b' in self.llm.model or 
-            'llama3-70b' in self.llm.model or
-            'llama-3.3-70b' in self.llm.model):
-            
-            financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
-            message_lower = message.lower()
-            
-            # Only provide financial model tools if explicitly mentioned
-            should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
-            
-            if not should_include_model_tools:
-                # Filter out financial model tools from agent's tools
-                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+        # For ask mode, limit to 1 iteration to prevent loops
+        if mode == "ask":
+            # Override the MAX_TOOL_ITERATIONS environment variable for ask mode
+            original_max_iterations = os.environ.get("MAX_TOOL_ITERATIONS")
+            os.environ["MAX_TOOL_ITERATIONS"] = "1"
+            print(f"[{request_id}] 🔧 Limited ask mode to 1 iteration to prevent loops")
+        
+        try:
+            # Apply legacy financial model tool filtering for llama-70b model
+            if hasattr(self.llm, 'model') and (
+                'llama-3-70b' in self.llm.model or 
+                'llama3-70b' in self.llm.model or
+                'llama-3.3-70b' in self.llm.model):
                 
-                # Create a new tools list without the financial model tools
-                filtered_tools = []
-                for tool in agent.tools:
-                    if tool["name"] not in financial_model_tools:
-                        filtered_tools.append(tool)
+                financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
+                message_lower = message.lower()
                 
-                # Create a new agent with filtered tools
-                agent = agent.__class__(
-                    llm=agent.llm,
-                    fallback_prompt=agent.system_prompt,
-                    tools=filtered_tools
-                )
-                print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
-        
-        # Run the agent
-        result = await agent.run(message, history)
-        
-        # For analyst mode, validate the output
-        if mode == "analyst" and "updates" in result and result["updates"]:
-            # Validate updates through rule checking
-            from chat.validators import validate_updates
+                # Only provide financial model tools if explicitly mentioned
+                should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
+                
+                if not should_include_model_tools:
+                    # Filter out financial model tools from agent's tools
+                    financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
+                    
+                    # Create a new tools list without the financial model tools
+                    filtered_tools = []
+                    for tool in agent.tools:
+                        if tool["name"] not in financial_model_tools:
+                            filtered_tools.append(tool)
+                    
+                    # Create a new agent with filtered tools
+                    agent = agent.__class__(
+                        llm=agent.llm,
+                        fallback_prompt=agent.system_prompt,
+                        tools=filtered_tools
+                    )
+                    print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
             
-            try:
-                print(f"[{request_id}] 🔍 Validating {len(result['updates'])} updates")
-                validate_updates(result["updates"])
-                print(f"[{request_id}] ✅ Updates validation passed")
-            except ValueError as e:
-                print(f"[{request_id}] ❌ Updates validation failed: {str(e)}")
-                # Replace the result with an error message
-                result["reply"] = f"I couldn't complete your request: {str(e)}"
-                result["updates"] = []  # Clear the updates that failed validation
+            # Run the agent
+            result = await agent.run(message, history)
+            
+            # For analyst mode, validate the output
+            if mode == "analyst" and "updates" in result and result["updates"]:
+                # Validate updates through rule checking
+                from chat.validators import validate_updates
+                
+                try:
+                    print(f"[{request_id}] 🔍 Validating {len(result['updates'])} updates")
+                    validate_updates(result["updates"])
+                    print(f"[{request_id}] ✅ Updates validation passed")
+                except ValueError as e:
+                    print(f"[{request_id}] ❌ Updates validation failed: {str(e)}")
+                    # Replace the result with an error message
+                    result["reply"] = f"I couldn't complete your request: {str(e)}"
+                    result["updates"] = []  # Clear the updates that failed validation
+            
+            print(f"[{request_id}] ✅ Orchestrator completed in {time.time() - start_time:.2f}s")
+            return result
         
-        print(f"[{request_id}] ✅ Orchestrator completed in {time.time() - start_time:.2f}s")
-        return result
+        finally:
+            # Restore the original MAX_TOOL_ITERATIONS environment variable
+            if mode == "ask":
+                os.environ["MAX_TOOL_ITERATIONS"] = original_max_iterations
     
     async def stream_run(self, 
                        mode: str, 
@@ -342,129 +355,143 @@ class Orchestrator:
                 print(f"[{request_id}]   {i+1}. {tool['name']}")
             print(f"[{request_id}] 📝 System prompt length: {len(agent.system_prompt)} chars")
         
-        # Apply legacy financial model tool filtering for llama-70b model
-        if hasattr(self.llm, 'model') and (
-            'llama-3-70b' in self.llm.model or 
-            'llama3-70b' in self.llm.model or
-            'llama-3.3-70b' in self.llm.model):
-            
-            financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
-            message_lower = message.lower()
-            
-            # Only provide financial model tools if explicitly mentioned
-            should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
-            
+        # For ask mode, limit to 1 iteration to prevent loops
+        if mode == "ask":
+            # Override the MAX_TOOL_ITERATIONS environment variable for ask mode
+            original_max_iterations = os.environ.get("MAX_TOOL_ITERATIONS")
+            os.environ["MAX_TOOL_ITERATIONS"] = "1"
             if debug_orchestrator:
-                print(f"[{request_id}] 🔍 Llama-70b detected, checking for financial keywords")
-                print(f"[{request_id}] 🔍 Should include model tools: {should_include_model_tools}")
-            
-            if not should_include_model_tools:
-                # Filter out financial model tools from agent's tools
-                financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
-                
-                # Create a new tools list without the financial model tools
-                filtered_tools = []
-                for tool in agent.tools:
-                    if tool["name"] not in financial_model_tools:
-                        filtered_tools.append(tool)
-                
-                # Create a new agent with filtered tools
-                agent = agent.__class__(
-                    llm=agent.llm,
-                    fallback_prompt=agent.system_prompt,
-                    tools=filtered_tools
-                )
-                if debug_orchestrator:
-                    print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
-                    print(f"[{request_id}] 🔧 Tools after filtering: {len(agent.tools)}")
-        
-        # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
-        if debug_orchestrator:
-            print(f"[{request_id}] 🚀 Calling agent.stream_run...")
-        agent_stream = agent.stream_run(message, history)
-        if debug_orchestrator:
-            print(f"[{request_id}] ✅ Agent.stream_run returned: {type(agent_stream)}")
-        
-        # Verify we got an actual async generator
-        if not inspect.isasyncgen(agent_stream):
-            if inspect.isawaitable(agent_stream):
-                if debug_orchestrator:
-                    print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
-                agent_stream = await agent_stream
-                if debug_orchestrator:
-                    print(f"[{request_id}] 🔄 After awaiting: {type(agent_stream)}")
-                if not inspect.isasyncgen(agent_stream):
-                    print(f"[{request_id}] ❌ Agent still did not return an async generator after awaiting")
-                    raise TypeError("Agent.stream_run did not return an async generator")
-            else:
-                print(f"[{request_id}] ❌ Agent did not return an async generator or coroutine")
-                raise TypeError("Agent.stream_run did not return an async generator")
-            
-        # Now wrap it with the guard
-        if debug_orchestrator:
-            print(f"[{request_id}] 🛡️ Wrapping stream with guard")
-        guarded_stream = wrap_stream_with_guard(agent_stream)
-        if debug_orchestrator:
-            print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
-        
-        step_count = 0
-        tool_steps = 0
-        content_steps = 0
-        error_steps = 0
+                print(f"[{request_id}] 🔧 Limited ask mode to 1 iteration to prevent loops")
         
         try:
-            async for step in guarded_stream:
-                step_count += 1
+            # Apply legacy financial model tool filtering for llama-70b model
+            if hasattr(self.llm, 'model') and (
+                'llama-3-70b' in self.llm.model or 
+                'llama3-70b' in self.llm.model or
+                'llama-3.3-70b' in self.llm.model):
+                
+                financial_keywords = ['financial model', 'statement model', 'fsm', 'financial statement model', 'dcf', '3-statement']
+                message_lower = message.lower()
+                
+                # Only provide financial model tools if explicitly mentioned
+                should_include_model_tools = any(keyword in message_lower for keyword in financial_keywords)
                 
                 if debug_orchestrator:
-                    step_preview = str(step)[:100] + ('...' if len(str(step)) > 100 else '')
-                    print(f"[{request_id}] 📦 Stream step #{step_count}: {type(step)} - {step_preview}")
+                    print(f"[{request_id}] 🔍 Llama-70b detected, checking for financial keywords")
+                    print(f"[{request_id}] 🔍 Should include model tools: {should_include_model_tools}")
                 
-                # Track step types for debugging
-                if hasattr(step, 'role'):
-                    if step.role == 'tool':
-                        tool_steps += 1
-                        if debug_orchestrator:
-                            tool_name = getattr(step.toolCall, 'name', 'unknown') if hasattr(step, 'toolCall') else 'unknown'
-                            print(f"[{request_id}] 🔧 Tool step #{tool_steps}: {tool_name}")
-                            if hasattr(step, 'toolResult'):
-                                result_preview = str(step.toolResult)[:100] + ('...' if len(str(step.toolResult)) > 100 else '')
-                                print(f"[{request_id}] 📤 Tool result: {result_preview}")
-                    elif step.role == 'assistant':
-                        content_steps += 1
-                        if hasattr(step, 'content') and step.content:
-                            if debug_orchestrator:
-                                content_preview = step.content[:50] + ('...' if len(step.content) > 50 else '')
-                                print(f"[{request_id}] 💬 Content step #{content_steps}: '{content_preview}'")
-                elif isinstance(step, str):
-                    content_steps += 1
-                    if debug_orchestrator:
-                        content_preview = step[:50] + ('...' if len(step) > 50 else '')
-                        print(f"[{request_id}] 💬 String content #{content_steps}: '{content_preview}'")
-                
-                # Convert string to ChatStep if needed for consistency
-                if isinstance(step, str):
-                    yield ChatStep(role="assistant", content=step)
-                else:
-                    yield step
+                if not should_include_model_tools:
+                    # Filter out financial model tools from agent's tools
+                    financial_model_tools = ["insert_fsm_model", "insert_dcf_model", "insert_fsm_template", "insert_dcf_template"]
                     
-        except Exception as e:
-            error_steps += 1
-            print(f"[{request_id}] ❌ Error in orchestrator stream: {e}")
-            import traceback
-            traceback.print_exc()
-            # Yield error as content
-            yield ChatStep(role="assistant", content=f"Error in processing: {str(e)}")
+                    # Create a new tools list without the financial model tools
+                    filtered_tools = []
+                    for tool in agent.tools:
+                        if tool["name"] not in financial_model_tools:
+                            filtered_tools.append(tool)
+                    
+                    # Create a new agent with filtered tools
+                    agent = agent.__class__(
+                        llm=agent.llm,
+                        fallback_prompt=agent.system_prompt,
+                        tools=filtered_tools
+                    )
+                    if debug_orchestrator:
+                        print(f"[{request_id}] 🔧 Filtered financial model tools for llama-70b model as they weren't explicitly requested")
+                        print(f"[{request_id}] 🔧 Tools after filtering: {len(agent.tools)}")
+            
+            # Stream from the agent - use stream_run instead of run_iter for token-by-token streaming
+            if debug_orchestrator:
+                print(f"[{request_id}] 🚀 Calling agent.stream_run...")
+            agent_stream = agent.stream_run(message, history)
+            if debug_orchestrator:
+                print(f"[{request_id}] ✅ Agent.stream_run returned: {type(agent_stream)}")
+            
+            # Verify we got an actual async generator
+            if not inspect.isasyncgen(agent_stream):
+                if inspect.isawaitable(agent_stream):
+                    if debug_orchestrator:
+                        print(f"[{request_id}] ⚠️ Agent returned a coroutine instead of an async generator - awaiting once")
+                    agent_stream = await agent_stream
+                    if debug_orchestrator:
+                        print(f"[{request_id}] 🔄 After awaiting: {type(agent_stream)}")
+                        if not inspect.isasyncgen(agent_stream):
+                            print(f"[{request_id}] ❌ Agent still did not return an async generator after awaiting")
+                            raise TypeError("Agent.stream_run did not return an async generator")
+                else:
+                    print(f"[{request_id}] ❌ Agent did not return an async generator or coroutine")
+                    raise TypeError("Agent.stream_run did not return an async generator")
+            
+            # Now wrap it with the guard
+            if debug_orchestrator:
+                print(f"[{request_id}] 🛡️ Wrapping stream with guard")
+            guarded_stream = wrap_stream_with_guard(agent_stream)
+            if debug_orchestrator:
+                print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
+            
+            step_count = 0
+            tool_steps = 0
+            content_steps = 0
+            error_steps = 0
+            
+            try:
+                async for step in guarded_stream:
+                    step_count += 1
+                    
+                    if debug_orchestrator:
+                        step_preview = str(step)[:100] + ('...' if len(str(step)) > 100 else '')
+                        print(f"[{request_id}] 📦 Stream step #{step_count}: {type(step)} - {step_preview}")
+                    
+                    # Track step types for debugging
+                    if hasattr(step, 'role'):
+                        if step.role == 'tool':
+                            tool_steps += 1
+                            if debug_orchestrator:
+                                tool_name = getattr(step.toolCall, 'name', 'unknown') if hasattr(step, 'toolCall') else 'unknown'
+                                print(f"[{request_id}] 🔧 Tool step #{tool_steps}: {tool_name}")
+                                if hasattr(step, 'toolResult'):
+                                    result_preview = str(step.toolResult)[:100] + ('...' if len(str(step.toolResult)) > 100 else '')
+                                    print(f"[{request_id}] 📤 Tool result: {result_preview}")
+                        elif step.role == 'assistant':
+                            content_steps += 1
+                            if hasattr(step, 'content') and step.content:
+                                if debug_orchestrator:
+                                    content_preview = step.content[:50] + ('...' if len(step.content) > 50 else '')
+                                    print(f"[{request_id}] 💬 Content step #{content_steps}: '{content_preview}'")
+                    elif isinstance(step, str):
+                        content_steps += 1
+                        if debug_orchestrator:
+                            content_preview = step[:50] + ('...' if len(step) > 50 else '')
+                            print(f"[{request_id}] 💬 String content #{content_steps}: '{content_preview}'")
+                    
+                    # Convert string to ChatStep if needed for consistency
+                    if isinstance(step, str):
+                        yield ChatStep(role="assistant", content=step)
+                    else:
+                        yield step
+                    
+            except Exception as e:
+                error_steps += 1
+                print(f"[{request_id}] ❌ Error in orchestrator stream: {e}")
+                import traceback
+                traceback.print_exc()
+                # Yield error as content
+                yield ChatStep(role="assistant", content=f"Error in processing: {str(e)}")
+            
+            elapsed = time.time() - start_time
+            if debug_orchestrator:
+                print(f"[{request_id}] ✅ Orchestrator stream completed in {elapsed:.2f}s")
+                print(f"[{request_id}] 📊 Stream statistics:")
+                print(f"[{request_id}]   Total steps: {step_count}")
+                print(f"[{request_id}]   Tool steps: {tool_steps}")
+                print(f"[{request_id}]   Content steps: {content_steps}")
+                print(f"[{request_id}]   Error steps: {error_steps}")
         
-        elapsed = time.time() - start_time
-        if debug_orchestrator:
-            print(f"[{request_id}] ✅ Orchestrator stream completed in {elapsed:.2f}s")
-            print(f"[{request_id}] 📊 Stream statistics:")
-            print(f"[{request_id}]   Total steps: {step_count}")
-            print(f"[{request_id}]   Tool steps: {tool_steps}")
-            print(f"[{request_id}]   Content steps: {content_steps}")
-            print(f"[{request_id}]   Error steps: {error_steps}")
-
+        finally:
+            # Restore the original MAX_TOOL_ITERATIONS environment variable
+            if mode == "ask":
+                os.environ["MAX_TOOL_ITERATIONS"] = original_max_iterations
+    
     def _prepare_context_aware_agent(self, agent: BaseAgent, mode: str, message: str, history: List[Dict[str, Any]] = None) -> BaseAgent:
         """
         Prepare an agent with context-aware instructions based on conversation history.

@@ -27,6 +27,7 @@ type StreamEvent =
   | { type: 'pending', updates: any[] }
   | { type: 'complete', sheet: any }
   | { type: 'error', error: string }
+  | { type: 'ping' }
   | { type: 'tool_start', payload: { id: string, name: string } }
   | { type: 'tool_complete', payload: { id: string, result: any, updates?: any[] } }
   | { type: 'tool_error', payload: { id: string, error: any, name: string } };
@@ -438,6 +439,11 @@ export function useChatStream(
                 }
                 return newMessages;
               });
+            }
+            else if (event.type === 'ping') {
+              // Ignore ping events - they're just keep-alive signals
+              if (DEBUG_SSE) debugLog('PING_RECEIVED', 'Keep-alive ping received and ignored');
+              // Do nothing, just continue to next event
             }
             else if (event.type === 'chunk') {
               // CRITICAL FIX: Don't accumulate here - just append the new text

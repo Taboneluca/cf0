@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "app/api/chat/stream/route.ts": { 
+      "maxDuration": 300 
+    }
+  }
+} 

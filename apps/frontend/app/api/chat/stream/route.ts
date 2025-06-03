@@ -3,7 +3,7 @@ import { createSupabaseServerComponentClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 
 export const runtime = 'nodejs'; // Node Serverless Function (300 s)
-export const maxDuration = 60;  // Vercel hobby plan limit
+export const maxDuration = 300;  // Should be picked up via vercel.json
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Stream the response back to the client
+    // Stream the response back to the client with keep-alive pings
     const stream = new ReadableStream({
       start(controller) {
         const reader = backendResponse.body?.getReader()
@@ -56,12 +56,18 @@ export async function POST(request: NextRequest) {
           return
         }
 
+        // Keep-alive ping every 20 seconds to prevent Vercel idle timeout
+        const ping = setInterval(() => {
+          controller.enqueue(
+            new TextEncoder().encode('event: ping\ndata: {}\n\n')
+          )
+        }, 20_000)
+
         const pump = async () => {
           try {
             while (true) {
               const { done, value } = await reader.read()
               if (done) {
-                controller.close()
                 break
               }
               controller.enqueue(value)
@@ -69,6 +75,9 @@ export async function POST(request: NextRequest) {
           } catch (error) {
             console.error('Stream error:', error)
             controller.error(error)
+          } finally {
+            clearInterval(ping)
+            controller.close()
           }
         }
 
