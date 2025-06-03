@@ -1292,7 +1292,7 @@ class BaseAgent:
                                     continue
                             
                             # Validate non-empty arguments for critical tools
-                                if name == "apply_updates_and_reply":
+                            if name == "apply_updates_and_reply":
                                 if not args or not isinstance(args, dict):
                                     args = {}
                                 
@@ -1319,12 +1319,12 @@ class BaseAgent:
                                         print(f"[{agent_id}] 🔄 Retry scheduled for empty updates")
                                         continue
                                 else:
-                                        yield ChatStep(
-                                            role="assistant",
-                                            content="I'll use individual cell updates instead of batch updates."
-                                        )
-                                        print(f"[{agent_id}] 🔄 Switching to individual updates approach")
-                                        continue
+                                    yield ChatStep(
+                                        role="assistant",
+                                        content="I'll use individual cell updates instead of batch updates."
+                                    )
+                                    print(f"[{agent_id}] 🔄 Switching to individual updates approach")
+                                    continue
                                 
                                 # Validate each update in the array
                                 valid_updates = []
@@ -1344,8 +1344,8 @@ class BaseAgent:
                                     error_msg = "No valid updates found"
                                     if retry_manager.should_retry(name, error_msg):
                                         retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                messages.append({
-                                    "role": "system",
+                                        messages.append({
+                                            "role": "system",
                                             "content": retry_prompt
                                         })
                                         print(f"[{agent_id}] 🔄 Retry scheduled for invalid updates")
@@ -1375,7 +1375,7 @@ class BaseAgent:
                                         })
                                         continue
                                     else:
-                                continue
+                                        continue
                             
                             # Execute the tool with validated arguments
                             try:
@@ -1458,10 +1458,30 @@ class BaseAgent:
                                 in_tool_calling_phase = False
                                 print(f"[{agent_id}] 💬 Transitioning to final answer")
                             
-                            # CRITICAL FIX: Don't accumulate, just yield the new content delta
-                            # The frontend will handle accumulation for display
-                                yield ChatStep(role="assistant", content=new_content)
-                                
+                            # Calculate the delta by comparing with previous content
+                            if hasattr(self, '_last_content_length'):
+                                if len(new_content) > self._last_content_length:
+                                    # Extract only the new part
+                                    content_delta = new_content[self._last_content_length:]
+                                    self._last_content_length = len(new_content)
+                                else:
+                                    # No new content, skip
+                                    content_delta = ""
+                            else:
+                                # First chunk, use all content
+                                content_delta = new_content
+                                self._last_content_length = len(new_content)
+                            
+                            if debug_streaming and content_delta:
+                                print(f"[{agent_id}] 💬 Content delta #{content_chunks} (AIResponse): '{content_delta}'")
+                            
+                            if in_tool_calling_phase:
+                                in_tool_calling_phase = False
+                                print(f"[{agent_id}] 💬 Transitioning to final answer")
+                            
+                            # Only yield if we have new content
+                            if content_delta:
+                                yield ChatStep(role="assistant", content=content_delta)
                     # Handle AIResponse format (for providers that return our standard format)
                     elif hasattr(chunk, 'content') or hasattr(chunk, 'tool_calls'):
                         # Handle tool calls for AIResponse format (e.g., Anthropic)
@@ -1540,7 +1560,7 @@ class BaseAgent:
                                 else:
                                     # No new content, skip
                                     content_delta = ""
-                                        else:
+                            else:
                                 # First chunk, use all content
                                 content_delta = new_content
                                 self._last_content_length = len(new_content)
