@@ -1456,7 +1456,7 @@ class BaseAgent:
                         # Handle regular content (OpenAI format) - Process content deltas
                         if hasattr(delta, "content") and delta.content:
                             content_chunks += 1
-                            new_content = delta.content  # This is the NEW content only (delta)
+                            new_content = delta.content  # This is already the NEW content only (delta)
                             
                             if debug_streaming:
                                 print(f"[{agent_id}] 💬 Content delta #{content_chunks}: '{new_content}'")
@@ -1466,30 +1466,8 @@ class BaseAgent:
                                 in_tool_calling_phase = False
                                 print(f"[{agent_id}] 💬 Transitioning to final answer")
                             
-                            # Calculate the delta by comparing with previous content
-                            if hasattr(self, '_last_content_length'):
-                                if len(new_content) > self._last_content_length:
-                                    # Extract only the new part
-                                    content_delta = new_content[self._last_content_length:]
-                                    self._last_content_length = len(new_content)
-                                else:
-                                    # No new content, skip
-                                    content_delta = ""
-                            else:
-                                # First chunk, use all content
-                                content_delta = new_content
-                                self._last_content_length = len(new_content)
-                            
-                            if debug_streaming and content_delta:
-                                print(f"[{agent_id}] 💬 Content delta #{content_chunks} (AIResponse): '{content_delta}'")
-                            
-                            if in_tool_calling_phase:
-                                in_tool_calling_phase = False
-                                print(f"[{agent_id}] 💬 Transitioning to final answer")
-                            
-                            # Only yield if we have new content
-                            if content_delta:
-                                yield ChatStep(role="assistant", content=content_delta)
+                            # For OpenAI/Groq: delta.content is already the new bit, no calculation needed
+                            yield ChatStep(role="assistant", content=new_content)
                     # Handle AIResponse format (for providers that return our standard format)
                     elif hasattr(chunk, 'content') or hasattr(chunk, 'tool_calls'):
                         # Handle tool calls for AIResponse format (e.g., Anthropic)

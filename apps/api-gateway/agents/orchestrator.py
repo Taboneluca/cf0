@@ -309,7 +309,10 @@ class Orchestrator:
         finally:
             # Restore the original MAX_TOOL_ITERATIONS environment variable
             if mode == "ask":
-                os.environ["MAX_TOOL_ITERATIONS"] = original_max_iterations
+                if original_max_iterations is None:
+                    os.environ.pop("MAX_TOOL_ITERATIONS", None)  # clean delete
+                else:
+                    os.environ["MAX_TOOL_ITERATIONS"] = original_max_iterations
     
     async def stream_run(self, 
                        mode: str, 
@@ -490,7 +493,10 @@ class Orchestrator:
         finally:
             # Restore the original MAX_TOOL_ITERATIONS environment variable
             if mode == "ask":
-                os.environ["MAX_TOOL_ITERATIONS"] = original_max_iterations
+                if original_max_iterations is None:
+                    os.environ.pop("MAX_TOOL_ITERATIONS", None)  # clean delete
+                else:
+                    os.environ["MAX_TOOL_ITERATIONS"] = original_max_iterations
     
     def _prepare_context_aware_agent(self, agent: BaseAgent, mode: str, message: str, history: List[Dict[str, Any]] = None) -> BaseAgent:
         """
