@@ -1081,12 +1081,16 @@ async def process_message_streaming(
                             # If it's an update type tool, add it to collected updates
                             if isinstance(tool_result, dict):
                                 if "updates" in tool_result:
-                                    collected_updates.extend(tool_result["updates"])
+                                    # Send each cell update as its own event instead of batching
+                                    for update in tool_result["updates"]:
+                                        collected_updates.append(update)
+                                        yield {"type": "update", "payload": update}
                                 elif "cell" in tool_result:  # Single cell operation
                                     collected_updates.append(tool_result)
-                                
-                                # Stream the update info to client for live updates
-                                yield {"type": "update", "payload": tool_result}
+                                    yield {"type": "update", "payload": tool_result}
+                                else:
+                                    # For other tool results without specific cell updates, send as is
+                                    yield {"type": "update", "payload": tool_result}
             
             # Save conversation history (optimistic, we have a complete response)
             if content_buffer:

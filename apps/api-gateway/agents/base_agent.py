@@ -1066,6 +1066,9 @@ class BaseAgent:
         print(f"[{agent_id}] 🛠️ Available tools: {[tool['name'] for tool in self.tools]}")
         print(f"[{agent_id}] 📝 Message preview: {user_message[:150]}{'...' if len(user_message) > 150 else ''}")
         
+        # Reset content length counter to ensure fresh streaming for each request
+        self._last_content_length = 0
+        
         # Initialize retry manager
         retry_manager = ToolCallRetryManager()
         
@@ -1289,7 +1292,7 @@ class BaseAgent:
                                     continue
                             
                             # Validate non-empty arguments for critical tools
-                            if name == "apply_updates_and_reply":
+                                if name == "apply_updates_and_reply":
                                 if not args or not isinstance(args, dict):
                                     args = {}
                                 
@@ -1315,7 +1318,7 @@ class BaseAgent:
                                         })
                                         print(f"[{agent_id}] 🔄 Retry scheduled for empty updates")
                                         continue
-                                    else:
+                                else:
                                         yield ChatStep(
                                             role="assistant",
                                             content="I'll use individual cell updates instead of batch updates."
@@ -1341,8 +1344,8 @@ class BaseAgent:
                                     error_msg = "No valid updates found"
                                     if retry_manager.should_retry(name, error_msg):
                                         retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                        messages.append({
-                                            "role": "system", 
+                                messages.append({
+                                    "role": "system",
                                             "content": retry_prompt
                                         })
                                         print(f"[{agent_id}] 🔄 Retry scheduled for invalid updates")
@@ -1372,7 +1375,7 @@ class BaseAgent:
                                         })
                                         continue
                                     else:
-                                        continue
+                                continue
                             
                             # Execute the tool with validated arguments
                             try:
@@ -1427,7 +1430,7 @@ class BaseAgent:
                                 if error_count[error_msg] > 3:
                                     print(f"[{agent_id}] 🛑 Too many repeated errors, breaking")
                                     break
-                                
+                        
                                 # Check if we should retry this error
                                 if retry_manager.should_retry(name, error_msg):
                                     retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
@@ -1457,10 +1460,69 @@ class BaseAgent:
                             
                             # CRITICAL FIX: Don't accumulate, just yield the new content delta
                             # The frontend will handle accumulation for display
-                            yield ChatStep(role="assistant", content=new_content)
-                    
+                                yield ChatStep(role="assistant", content=new_content)
+                                
                     # Handle AIResponse format (for providers that return our standard format)
                     elif hasattr(chunk, 'content') or hasattr(chunk, 'tool_calls'):
+                        # Handle tool calls for AIResponse format (e.g., Anthropic)
+                        if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
+                            for tool_call in chunk.tool_calls:
+                                if hasattr(tool_call, 'name') and hasattr(tool_call, 'args'):
+                                    name = tool_call.name
+                                    args = tool_call.args
+                                    tool_call_id = getattr(tool_call, 'id', f"airesponse-{int(time.time_ns())}")
+                                    
+                                    print(f"[{agent_id}] 🔧 Executing AIResponse tool call: {name} with args: {args}")
+                                    
+                                    # Execute the tool with similar validation as OpenAI format
+                                    try:
+                                        tool_fn = tool_functions.get(name)
+                                        if tool_fn:
+                                            if name in mutating_tools:
+                                                mutating_calls += 1
+                                                print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
+                                            
+                                            execution_start = time.time()
+                                            
+                                            if isinstance(args, dict):
+                                                result = tool_fn(**args)
+                                            elif isinstance(args, list):
+                                                result = tool_fn(*args)
+                                            else:
+                                                result = tool_fn(args)
+                                            
+                                            execution_time = time.time() - execution_start
+                                            
+                                            if debug_tools:
+                                                print(f"[{agent_id}] ✅ AIResponse tool {name} executed in {execution_time:.3f}s")
+                                                print(f"[{agent_id}] 📤 AIResponse tool result: {result}")
+                                            
+                                            # Add tool call and result to messages
+                                            messages.append({
+                                                "role": "assistant",
+                                                "tool_calls": [{
+                                                    "id": tool_call_id,
+                                                    "type": "function",
+                                                    "function": {"name": name, "arguments": json.dumps(args)}
+                                                }]
+                                            })
+                                            messages.append({
+                                                "role": "tool",
+                                                "tool_call_id": tool_call_id,
+                                                "content": json.dumps(result) if result is not None else "null"
+                                            })
+                                            
+                                            yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
+                                            
+                                        else:
+                                            print(f"[{agent_id}] ❌ Unknown AIResponse tool: {name}")
+                                    except Exception as e:
+                                        print(f"[{agent_id}] ❌ AIResponse tool execution error: {e}")
+                                        yield ChatStep(
+                                            role="assistant",
+                                            content=f"I encountered an error with {name}: {str(e)}. Let me try a different approach."
+                                        )
+                        
                         # This is for providers that return AIResponse directly
                         if hasattr(chunk, 'content') and chunk.content:
                             content_chunks += 1
@@ -1478,7 +1540,7 @@ class BaseAgent:
                                 else:
                                     # No new content, skip
                                     content_delta = ""
-                            else:
+                                        else:
                                 # First chunk, use all content
                                 content_delta = new_content
                                 self._last_content_length = len(new_content)
