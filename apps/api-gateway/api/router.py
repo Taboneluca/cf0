@@ -1034,6 +1034,7 @@ async def process_message_streaming(
             # Notify client that the assistant has started processing
             print(f"[{request_id}] 📡 Sending start event to client")
             yield { 'type': 'start' }
+            await asyncio.sleep(0)  # forces uvicorn to flush
             
             # List to collect updates that may happen during streaming
             collected_updates = []

@@ -2,6 +2,9 @@ import { NextRequest } from 'next/server'
 import { createSupabaseServerComponentClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 
+export const runtime = 'nodejs'; // Node Serverless Function (300 s)
+export const maxDuration = 300;  // keep Vercel happy
+
 export async function POST(request: NextRequest) {
   try {
     // Get request body

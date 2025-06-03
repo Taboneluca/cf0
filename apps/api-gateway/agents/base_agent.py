@@ -46,12 +46,13 @@ class StreamingToolCallHandler:
     """Handles proper accumulation of streaming tool calls from OpenAI API"""
     
     def __init__(self):
-        self.tool_calls = {}  # id -> {name, args_buffer}
+        self.tool_calls = {}  # id -> {name, args_buffer, last_ping_kib}
         self.completed_calls = []
         self.debug = os.getenv("DEBUG_STREAMING_TOOLS", "0") == "1"
+        self.keep_alive_chunks = []  # Store keep-alive chunks to yield
     
     def process_delta(self, delta) -> List[Dict[str, Any]]:
-        """Enhanced delta processing with better error handling"""
+        """Enhanced delta processing with better error handling and keep-alive chunks"""
         completed_calls = []
         
         if self.debug:
@@ -84,10 +85,25 @@ class StreamingToolCallHandler:
                         self.tool_calls[tool_id] = {
                             'name': tool_call_delta.function.name,
                             'arguments': '',
-                            'id': tool_id
+                            'id': tool_id,
+                            'last_ping_kib': 0  # Track keep-alive pings
                         }
                     
+                    # Add to buffer
                     self.tool_calls[tool_id]['arguments'] += args_chunk
+                    
+                    # NEW: Keep-alive logic - send empty chunk every 1KB to keep socket alive
+                    current_buffer = self.tool_calls[tool_id]['arguments']
+                    current_kib = len(current_buffer) // 1024
+                    last_ping_kib = self.tool_calls[tool_id]['last_ping_kib']
+                    
+                    if current_kib > last_ping_kib:
+                        # Send keep-alive chunk
+                        self.tool_calls[tool_id]['last_ping_kib'] = current_kib
+                        # Store keep-alive chunk to be yielded by caller
+                        self.keep_alive_chunks.append({"role": "assistant", "content": ""})
+                        if self.debug:
+                            print(f"[StreamingToolCallHandler] Keep-alive ping at {current_kib}KB for tool {tool_id}")
                     
                     # Check if arguments are complete
                     try:
@@ -112,26 +128,11 @@ class StreamingToolCallHandler:
         
         return completed_calls
     
-    def force_complete_all(self) -> List[Dict[str, Any]]:
-        """Force complete all pending tool calls"""
-        completed = []
-        for call_id, tool_call in self.tool_calls.items():
-            if not tool_call['completed'] and tool_call['name']:
-                try:
-                    parsed_args = json.loads(tool_call['args_buffer']) if tool_call['args_buffer'].strip() else {}
-                    completed.append({
-                        'id': call_id,
-                        'name': tool_call['name'],
-                        'arguments': parsed_args
-                    })
-                except json.JSONDecodeError:
-                    completed.append({
-                        'id': call_id,
-                        'name': tool_call['name'],
-                        'arguments': {"error": "Failed to parse arguments"}
-                    })
-                tool_call['completed'] = True
-        return completed
+    def get_keep_alive_chunks(self) -> List[Dict[str, Any]]:
+        """Get and clear any pending keep-alive chunks"""
+        chunks = self.keep_alive_chunks.copy()
+        self.keep_alive_chunks.clear()
+        return chunks
 
 def get_max_tokens(model: str) -> int:
     """Get the max token limit for a given model, with fallback"""
@@ -1204,6 +1205,13 @@ class BaseAgent:
                         
                         # Process tool calls using the new handler
                         completed_calls = tool_handler.process_delta(delta)
+                        
+                        # NEW: Yield any keep-alive chunks to prevent timeout during long tool calls
+                        keep_alive_chunks = tool_handler.get_keep_alive_chunks()
+                        for keep_alive_chunk in keep_alive_chunks:
+                            if debug_streaming:
+                                print(f"[{agent_id}] 💓 Sending keep-alive chunk during tool call accumulation")
+                            yield ChatStep(role="assistant", content="")
                         
                         if completed_calls:
                             tool_call_chunks += 1
