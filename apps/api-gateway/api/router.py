@@ -491,10 +491,11 @@ async def process_message_streaming(
     Yields:
         Dict with partial response text chunks
     """
-    start_time = time.time()
-    request_id = f"pm-stream-{int(start_time*1000)}"
-    print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}, model={model}")
-    print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
+            start_time = time.time()
+        request_id = f"pm-stream-{int(start_time*1000)}"
+        debug_orchestrator = os.getenv("DEBUG_STREAMING", "0") == "1"
+        print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}, model={model}")
+        print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
     
     try:
         # Get history, sheet, and workbook - same as process_message
@@ -1043,30 +1044,95 @@ async def process_message_streaming(
             content_buffer = ""
             chunk_count = 0
             
-            # Stream the orchestrator's response
+            # Stream the orchestrator's response with timeout and circuit breaker
             print(f"[{request_id}] 🚀 Calling orchestrator.stream_run...")
+            empty_chunk_count = 0
+            last_content_time = time.time()
+            max_empty_chunks = 10
+            content_timeout = 30.0  # 30 seconds without content = timeout
+            
             async for chunk in orchestrator.stream_run(mode, message, history):
                 chunk_count += 1
                 print(f"[{request_id}] 📦 Received chunk #{chunk_count}: {type(chunk)} - {str(chunk)[:100]}{'...' if len(str(chunk)) > 100 else ''}")
+                
+                # Check for timeout without content
+                current_time = time.time()
+                if current_time - last_content_time > content_timeout:
+                    print(f"[{request_id}] ⏰ Content timeout after {content_timeout}s - breaking stream")
+                    yield {"type": "chunk", "text": f"\n\n[Stream timeout - no content received for {content_timeout}s]"}
+                    break
                 # Convert string chunks to ChatStep for compatibility
                 if isinstance(chunk, str):
                     # Convert string chunks to ChatStep for compatibility
                     content_buffer += chunk
+                    last_content_time = current_time  # Reset timeout timer
                     yield {"type": "chunk", "text": chunk}
                 else:
                     # 1️⃣  ChatStep with role=assistant
                     if hasattr(chunk, "role") and chunk.role == "assistant" and getattr(chunk, "content", None):
                         content_buffer += chunk.content
+                        last_content_time = current_time  # Reset timeout timer
                         yield {"type": "chunk", "text": chunk.content}
                     # 2️⃣  Generic LLM SDK objects (e.g. llm.chat_types.AIResponse)
-                    elif getattr(chunk, "content", None):
-                        content_buffer += chunk.content
-                        yield {"type": "chunk", "text": chunk.content}
-                    # 3️⃣  Fallback – convert to str so *something* is streamed
-                    elif str(chunk).strip():
-                        chunk_text = str(chunk).strip()
-                        content_buffer += chunk_text
-                        yield {"type": "chunk", "text": chunk_text}
+                    elif hasattr(chunk, "content"):
+                        chunk_content = getattr(chunk, "content", None)
+                        if chunk_content and chunk_content.strip():
+                            content_buffer += chunk_content
+                            last_content_time = current_time  # Reset timeout timer
+                            empty_chunk_count = 0  # Reset empty chunk counter on successful content
+                            yield {"type": "chunk", "text": chunk_content}
+                            if debug_orchestrator:
+                                print(f"[{request_id}] 📤 AIResponse content: '{chunk_content[:50]}{'...' if len(chunk_content) > 50 else ''}'")
+                        else:
+                            # Log empty AIResponse objects for debugging and track them
+                            empty_chunk_count += 1
+                            if debug_orchestrator:
+                                print(f"[{request_id}] ⚠️  Empty AIResponse #{empty_chunk_count}: content='{chunk_content}', type={type(chunk)}")
+                            
+                            # Circuit breaker for too many empty chunks
+                            if empty_chunk_count >= max_empty_chunks:
+                                print(f"[{request_id}] 🔥 Too many empty chunks ({empty_chunk_count}) - breaking stream to prevent infinite loop")
+                                yield {"type": "chunk", "text": f"\n\n[Stream stopped - too many empty responses from LLM]"}
+                                break
+                    # 3️⃣  String conversion fallback with better filtering
+                    elif hasattr(chunk, "__dict__"):
+                        # Try to extract any text content from object attributes
+                        attrs_to_check = ["text", "message", "delta", "choices"]
+                        extracted_text = None
+                        for attr in attrs_to_check:
+                            if hasattr(chunk, attr):
+                                attr_val = getattr(chunk, attr)
+                                if isinstance(attr_val, str) and attr_val.strip():
+                                    extracted_text = attr_val.strip()
+                                    break
+                                elif isinstance(attr_val, list) and attr_val:
+                                    # Check if it's a choices array
+                                    first_choice = attr_val[0]
+                                    if hasattr(first_choice, "delta") and hasattr(first_choice.delta, "content"):
+                                        delta_content = getattr(first_choice.delta, "content", None)
+                                        if delta_content and delta_content.strip():
+                                            extracted_text = delta_content.strip()
+                                            break
+                        
+                        if extracted_text:
+                            content_buffer += extracted_text
+                            last_content_time = current_time  # Reset timeout timer
+                            empty_chunk_count = 0  # Reset empty chunk counter
+                            yield {"type": "chunk", "text": extracted_text}
+                            if debug_orchestrator:
+                                print(f"[{request_id}] 🔄 Extracted from {type(chunk)}: '{extracted_text[:30]}...'")
+                        else:
+                            # Last resort: convert to string but filter out class names
+                            chunk_str = str(chunk).strip()
+                            if chunk_str and not chunk_str.startswith("<") and not "class" in chunk_str:
+                                content_buffer += chunk_str
+                                last_content_time = current_time  # Reset timeout timer  
+                                empty_chunk_count = 0  # Reset empty chunk counter
+                                yield {"type": "chunk", "text": chunk_str}
+                                if debug_orchestrator:
+                                    print(f"[{request_id}] 🆘 String fallback: '{chunk_str[:30]}...'")
+                            elif debug_orchestrator:
+                                print(f"[{request_id}] 🚫 Filtered out unusable chunk: {type(chunk)} - {chunk_str[:50]}...")
                     elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
                         # For tool results, we stream an indicator and trigger UI update
                         tool_result = chunk.toolResult

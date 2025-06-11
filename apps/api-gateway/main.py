@@ -338,6 +338,9 @@ async def stream_chat(req: ChatRequest):
             name: sheet.to_dict() for name, sheet in wb.all_sheets().items()
         }
         
+        # Enable DEBUG_STREAMING for detailed logging during stream processing
+        os.environ["DEBUG_STREAMING"] = "1"
+        
         # Track error patterns to prevent infinite loops
         error_count = {}
         consecutive_errors = 0
