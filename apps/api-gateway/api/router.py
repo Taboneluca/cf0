@@ -1031,10 +1031,8 @@ async def process_message_streaming(
             )
             print(f"[{request_id}] ✅ Orchestrator created successfully")
 
-            # Notify client that the assistant has started processing
-            print(f"[{request_id}] 📡 Sending start event to client")
-            yield { 'type': 'start' }
-            await asyncio.sleep(0)  # forces uvicorn to flush
+            # The outer /chat/stream endpoint already sends the 'start' event.
+            # Do NOT send it twice – this prevents duplicate start events on the client.
             
             # List to collect updates that may happen during streaming
             collected_updates = []
@@ -1056,11 +1054,19 @@ async def process_message_streaming(
                     content_buffer += chunk
                     yield {"type": "chunk", "text": chunk}
                 else:
-                    # Handle ChatStep objects
-                    if hasattr(chunk, "role") and chunk.role == "assistant" and hasattr(chunk, "content") and chunk.content:
-                        # Format the text chunk and stream it
+                    # 1️⃣  ChatStep with role=assistant
+                    if hasattr(chunk, "role") and chunk.role == "assistant" and getattr(chunk, "content", None):
                         content_buffer += chunk.content
                         yield {"type": "chunk", "text": chunk.content}
+                    # 2️⃣  Generic LLM SDK objects (e.g. llm.chat_types.AIResponse)
+                    elif getattr(chunk, "content", None):
+                        content_buffer += chunk.content
+                        yield {"type": "chunk", "text": chunk.content}
+                    # 3️⃣  Fallback – convert to str so *something* is streamed
+                    elif str(chunk).strip():
+                        chunk_text = str(chunk).strip()
+                        content_buffer += chunk_text
+                        yield {"type": "chunk", "text": chunk_text}
                     elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
                         # For tool results, we stream an indicator and trigger UI update
                         tool_result = chunk.toolResult
