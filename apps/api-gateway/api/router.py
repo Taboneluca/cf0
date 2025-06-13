@@ -494,12 +494,12 @@ async def process_message_streaming(
     Yields:
         Dict with partial response text chunks
     """
-            start_time = time.time()
-        request_id = f"pm-stream-{int(start_time*1000)}"
-        debug_orchestrator = os.getenv("DEBUG_STREAMING", "0") == "1"
-        print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}, model={model}")
-        print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
-    
+    start_time = time.time()
+    request_id = f"pm-stream-{int(start_time*1000)}"
+    debug_orchestrator = os.getenv("DEBUG_STREAMING", "0") == "1"
+    print(f"[{request_id}] 🔄 process_message_streaming: mode={mode}, wid={wid}, sid={sid}, model={model}")
+    print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
+
     try:
         # Get history, sheet, and workbook - same as process_message
         history_key = wid
