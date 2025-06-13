@@ -7,6 +7,9 @@ from typing import Dict, Any, Optional, AsyncGenerator
 from functools import partial
 from dotenv import load_dotenv
 
+# Import debugging utilities
+from .streaming_debug import StreamingDebugger, debug_llm_response
+
 # Import the factory function instead of the provider registry
 from llm.factory import get_client, get_default_client
 from agents.ask_agent import build as build_ask_agent
@@ -1032,6 +1035,10 @@ async def process_message_streaming(
             )
             print(f"[{request_id}] ✅ Orchestrator created successfully")
 
+            # Initialize comprehensive streaming debugger
+            debugger = StreamingDebugger(request_id, mode, model or "unknown")
+            print(f"[{request_id}] 🐛 Starting comprehensive streaming debug for {mode} mode with {model or 'default'} model")
+
             # The outer /chat/stream endpoint already sends the 'start' event.
             # Do NOT send it twice – this prevents duplicate start events on the client.
             
@@ -1053,12 +1060,35 @@ async def process_message_streaming(
             
             async for chunk in orchestrator.stream_run(mode, message, history):
                 chunk_count += 1
-                print(f"[{request_id}] 📦 Received chunk #{chunk_count}: {type(chunk)} - {str(chunk)[:100]}{'...' if len(str(chunk)) > 100 else ''}")
+                
+                # COMPREHENSIVE CHUNK ANALYSIS
+                try:
+                    chunk_info = debugger.analyze_chunk(chunk)
+                    debugger.log_chunk(chunk, chunk_info)
+                    
+                    # Enhanced logging for debugging
+                    if debug_orchestrator:
+                        print(f"[{request_id}] 🔍 CHUNK ANALYSIS #{chunk_count}:")
+                        print(f"[{request_id}]   Type: {chunk_info['type']}")
+                        print(f"[{request_id}]   Attributes: {chunk_info['attributes']}")
+                        print(f"[{request_id}]   Extraction: {chunk_info['extraction_method']}")
+                        print(f"[{request_id}]   Content Length: {chunk_info['content_length']}")
+                        print(f"[{request_id}]   Is Empty: {chunk_info['is_empty']}")
+                        print(f"[{request_id}]   Raw: {chunk_info['raw_repr'][:100]}...")
+                    
+                    print(f"[{request_id}] 📦 Received chunk #{chunk_count}: {chunk_info['type']} | "
+                          f"Empty: {chunk_info['is_empty']} | Method: {chunk_info['extraction_method']} | "
+                          f"Content: {chunk_info['content_length']} bytes")
+                
+                except Exception as e:
+                    debugger.log_error(e, f"Chunk analysis failed for chunk #{chunk_count}")
+                    print(f"[{request_id}] ❌ Chunk analysis failed: {e}")
                 
                 # Check for timeout without content
                 current_time = time.time()
                 if current_time - last_content_time > content_timeout:
                     print(f"[{request_id}] ⏰ Content timeout after {content_timeout}s - breaking stream")
+                    debugger.log_error(TimeoutError(f"Content timeout after {content_timeout}s"), "Stream timeout")
                     yield {"type": "chunk", "text": f"\n\n[Stream timeout - no content received for {content_timeout}s]"}
                     break
                 # Convert string chunks to ChatStep for compatibility
@@ -1073,67 +1103,44 @@ async def process_message_streaming(
                         content_buffer += chunk.content
                         last_content_time = current_time  # Reset timeout timer
                         yield {"type": "chunk", "text": chunk.content}
-                    # 2️⃣  Generic LLM SDK objects (e.g. llm.chat_types.AIResponse)
-                    elif hasattr(chunk, "content"):
-                        chunk_content = getattr(chunk, "content", None)
-                        if chunk_content and chunk_content.strip():
-                            content_buffer += chunk_content
-                            last_content_time = current_time  # Reset timeout timer
-                            empty_chunk_count = 0  # Reset empty chunk counter on successful content
-                            yield {"type": "chunk", "text": chunk_content}
-                            if debug_orchestrator:
-                                print(f"[{request_id}] 📤 AIResponse content: '{chunk_content[:50]}{'...' if len(chunk_content) > 50 else ''}'")
+                    # 2️⃣  Use the debugger's advanced extraction logic
+                    else:
+                        # Use the debugger's analyzed content if available
+                        if 'chunk_info' in locals() and chunk_info and not chunk_info['is_empty']:
+                            extracted_content = chunk_info['content']
+                            if extracted_content:
+                                content_buffer += str(extracted_content)
+                                last_content_time = current_time  # Reset timeout timer
+                                empty_chunk_count = 0  # Reset empty chunk counter on successful content
+                                yield {"type": "chunk", "text": str(extracted_content)}
+                                if debug_orchestrator:
+                                    print(f"[{request_id}] 📤 Extracted via {chunk_info['extraction_method']}: '{str(extracted_content)[:50]}{'...' if len(str(extracted_content)) > 50 else ''}'")
+                            else:
+                                # Log empty chunks for debugging and track them
+                                empty_chunk_count += 1
+                                if debug_orchestrator:
+                                    print(f"[{request_id}] ⚠️  Empty chunk #{empty_chunk_count}: type={type(chunk)}")
+                                
+                                # Circuit breaker for too many empty chunks
+                                if empty_chunk_count >= max_empty_chunks:
+                                    print(f"[{request_id}] 🔥 Too many empty chunks ({empty_chunk_count}) - breaking stream to prevent infinite loop")
+                                    debugger.log_error(Exception(f"Too many empty chunks: {empty_chunk_count}"), "Circuit breaker triggered")
+                                    yield {"type": "chunk", "text": f"\n\n[Stream stopped - too many empty responses from LLM]"}
+                                    break
                         else:
-                            # Log empty AIResponse objects for debugging and track them
+                            # Fallback for chunks that couldn't be analyzed
                             empty_chunk_count += 1
                             if debug_orchestrator:
-                                print(f"[{request_id}] ⚠️  Empty AIResponse #{empty_chunk_count}: content='{chunk_content}', type={type(chunk)}")
+                                print(f"[{request_id}] ⚠️  Unanalyzable chunk #{empty_chunk_count}: type={type(chunk)}")
                             
                             # Circuit breaker for too many empty chunks
                             if empty_chunk_count >= max_empty_chunks:
-                                print(f"[{request_id}] 🔥 Too many empty chunks ({empty_chunk_count}) - breaking stream to prevent infinite loop")
-                                yield {"type": "chunk", "text": f"\n\n[Stream stopped - too many empty responses from LLM]"}
+                                print(f"[{request_id}] 🔥 Too many unanalyzable chunks ({empty_chunk_count}) - breaking stream")
+                                debugger.log_error(Exception(f"Too many unanalyzable chunks: {empty_chunk_count}"), "Circuit breaker triggered")
+                                yield {"type": "chunk", "text": f"\n\n[Stream stopped - too many unprocessable responses]"}
                                 break
-                    # 3️⃣  String conversion fallback with better filtering
-                    elif hasattr(chunk, "__dict__"):
-                        # Try to extract any text content from object attributes
-                        attrs_to_check = ["text", "message", "delta", "choices"]
-                        extracted_text = None
-                        for attr in attrs_to_check:
-                            if hasattr(chunk, attr):
-                                attr_val = getattr(chunk, attr)
-                                if isinstance(attr_val, str) and attr_val.strip():
-                                    extracted_text = attr_val.strip()
-                                    break
-                                elif isinstance(attr_val, list) and attr_val:
-                                    # Check if it's a choices array
-                                    first_choice = attr_val[0]
-                                    if hasattr(first_choice, "delta") and hasattr(first_choice.delta, "content"):
-                                        delta_content = getattr(first_choice.delta, "content", None)
-                                        if delta_content and delta_content.strip():
-                                            extracted_text = delta_content.strip()
-                                            break
-                        
-                        if extracted_text:
-                            content_buffer += extracted_text
-                            last_content_time = current_time  # Reset timeout timer
-                            empty_chunk_count = 0  # Reset empty chunk counter
-                            yield {"type": "chunk", "text": extracted_text}
-                            if debug_orchestrator:
-                                print(f"[{request_id}] 🔄 Extracted from {type(chunk)}: '{extracted_text[:30]}...'")
-                        else:
-                            # Last resort: convert to string but filter out class names
-                            chunk_str = str(chunk).strip()
-                            if chunk_str and not chunk_str.startswith("<") and not "class" in chunk_str:
-                                content_buffer += chunk_str
-                                last_content_time = current_time  # Reset timeout timer  
-                                empty_chunk_count = 0  # Reset empty chunk counter
-                                yield {"type": "chunk", "text": chunk_str}
-                                if debug_orchestrator:
-                                    print(f"[{request_id}] 🆘 String fallback: '{chunk_str[:30]}...'")
-                            elif debug_orchestrator:
-                                print(f"[{request_id}] 🚫 Filtered out unusable chunk: {type(chunk)} - {chunk_str[:50]}...")
-                    elif hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
+                    # 3️⃣  Handle tool results
+                    if hasattr(chunk, "role") and chunk.role == "tool" and hasattr(chunk, "toolResult"):
                         # For tool results, we stream an indicator and trigger UI update
                         tool_result = chunk.toolResult
                         
@@ -1165,10 +1172,27 @@ async def process_message_streaming(
                                     # For other tool results without specific cell updates, send as is
                                     yield {"type": "update", "payload": tool_result}
             
+            # Generate comprehensive debugging summary
+            debug_summary = debugger.get_summary()
+            print(f"[{request_id}] 📊 STREAMING DEBUG SUMMARY:")
+            print(f"[{request_id}]   Duration: {debug_summary['duration_seconds']}s")
+            print(f"[{request_id}]   Chunks: {debug_summary['chunks_received']} (Empty: {debug_summary['empty_chunks']}, Content: {debug_summary['content_chunks']})")
+            print(f"[{request_id}]   Empty Ratio: {debug_summary['empty_ratio']}")
+            print(f"[{request_id}]   Bytes: {debug_summary['bytes_received']}")
+            print(f"[{request_id}]   Chunk Types: {debug_summary['chunk_types']}")
+            print(f"[{request_id}]   Extraction Methods: {debug_summary['extraction_methods']}")
+            print(f"[{request_id}]   Errors: {len(debug_summary['errors'])}")
+            
+            # Save debug summary to file if configured
+            debugger.save_summary_to_file()
+            
             # Save conversation history (optimistic, we have a complete response)
             if content_buffer:
                 add_to_history(history_key, "user", message)
                 add_to_history(history_key, "assistant", content_buffer)
+                print(f"[{request_id}] 💾 Saved {len(content_buffer)} chars to conversation history")
+            else:
+                print(f"[{request_id}] ⚠️ No content to save to history - possible streaming issue!")
             
             # End with the final sheet state
             sheet_output = sheet.to_dict()
