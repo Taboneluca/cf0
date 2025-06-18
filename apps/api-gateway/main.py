@@ -426,12 +426,24 @@ async def stream_chat(req: ChatRequest):
                         print(f"[{request_id}] 💬 {provider} text chunk[{len(chunk['text'])}]: '{text_preview}...'")
                     elif event_type == 'error':
                         print(f"[{request_id}] ❌ {provider} error: {chunk.get('error', 'Unknown error')}")
+                    elif event_type == 'complete':
+                        print(f"[{request_id}] 📦 {provider} complete event")
+                        # Make sure we process the complete event and then break
+                        # The frontend needs this to know the stream is finished
+                        break
                     elif event_type in ['update', 'tool_start', 'tool_complete']:
                         print(f"[{request_id}] 🔧 {provider} {event_type}: {str(chunk)[:100]}...")
                     else:
                         print(f"[{request_id}] 📦 {provider} {event_type} event")
                 
                 print(f"[{request_id}] ✅ SSE stream completed for {provider}")
+                
+                # Always send a complete event to ensure frontend knows stream is done
+                # (only if we haven't already sent one)
+                complete_event = {"type": "complete", "sheet": None}
+                sse_payload = f"event: complete\ndata: {json.dumps(complete_event)}\n\n"
+                yield sse_payload
+                print(f"[{request_id}] 📦 {provider} complete event (final)")
             
             return StreamingResponse(
                 event_generator(),

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useWorkbook } from '@/context/workbook-context';
 import { Message } from '@/types/spreadsheet';
 import { backendSheetToUI } from '@/utils/transform';
@@ -66,8 +67,9 @@ export function useChatStream(
   const debugChunkCount = useRef(0);
   const debugLastChunkTime = useRef(Date.now());
   
-  // Track processed chunks to prevent duplicates
+  // Track processed chunks to prevent duplicates - improved with better IDs
   const processedChunks = useRef(new Set<string>());
+  const chunkSequence = useRef(0);
   
   // Add streaming status tracking
   const streamingStats = useRef({
@@ -249,6 +251,8 @@ export function useChatStream(
     // Reset debugging counters and streaming content
     debugChunkCount.current = 0;
     debugLastChunkTime.current = Date.now();
+    chunkSequence.current = 0; // Reset sequence
+    processedChunks.current.clear(); // Clear processed chunks for new request
     
     debugLog('STREAM_START', 'Starting new streaming request', { 
       message: message.slice(0, 100) + (message.length > 100 ? '...' : ''), 
@@ -410,12 +414,13 @@ export function useChatStream(
             
             debugLog('EVENT_PARSED', `Processing ${eventType} event`, event);
             
-            // Generate unique chunk ID
-            const chunkId = `${event.type}-${event.type === 'chunk' ? event.text?.slice(0, 20) : 'no-text'}-${Date.now()}`;
+            // Generate unique chunk ID with sequence number for better duplicate detection
+            chunkSequence.current++;
+            const chunkId = `${event.type}-${chunkSequence.current}-${event.type === 'chunk' ? event.text?.slice(0, 10) : 'no-text'}`;
             
             if (processedChunks.current.has(chunkId)) {
               debugLog('DUPLICATE_CHUNK', 'Duplicate chunk detected and skipped', { chunkId });
-              return;
+              continue;
             }
             
             processedChunks.current.add(chunkId);
@@ -428,16 +433,18 @@ export function useChatStream(
               debugLog('STREAM_STARTED', 'Stream officially started');
               
               // Just mark that streaming has started
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  newMessages[index] = {
-                    ...newMessages[index],
-                    status: 'streaming'
-                  };
-                }
-                return newMessages;
+              flushSync(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const index = newMessages.findIndex(m => m.id === id);
+                  if (index >= 0) {
+                    newMessages[index] = {
+                      ...newMessages[index],
+                      status: 'streaming'
+                    };
+                  }
+                  return newMessages;
+                });
               });
             }
             else if (event.type === 'ping') {
@@ -446,7 +453,7 @@ export function useChatStream(
               // Do nothing, just continue to next event
             }
             else if (event.type === 'chunk') {
-              // CRITICAL FIX: Don't accumulate here - just append the new text
+              // CRITICAL FIX: Use flushSync for immediate rendering
               const newText = event.text;
               
               debugLog('CONTENT_CHUNK', 'Received text chunk', {
@@ -454,23 +461,25 @@ export function useChatStream(
                 chunkLength: event.text.length
               });
               
-              // Update the message by appending the new content
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  // Get existing content and append new text
-                  const existingContent = newMessages[index].content || '';
-                  const updatedContent = existingContent + newText;
-                  
-                  newMessages[index] = {
-                    ...newMessages[index],
-                    content: updatedContent,
-                    status: 'streaming' as const,
-                    timestamp: Date.now()
-                  };
-                }
-                return newMessages;
+              // Use flushSync to force immediate rendering
+              flushSync(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const index = newMessages.findIndex(m => m.id === id);
+                  if (index >= 0) {
+                    // Get existing content and append new text
+                    const existingContent = newMessages[index].content || '';
+                    const updatedContent = existingContent + newText;
+                    
+                    newMessages[index] = {
+                      ...newMessages[index],
+                      content: updatedContent,
+                      status: 'streaming' as const,
+                      timestamp: Date.now()
+                    };
+                  }
+                  return newMessages;
+                });
               });
               
               // Force immediate scroll after content update
@@ -555,17 +564,19 @@ export function useChatStream(
                 sheet: !!event.sheet
               });
               
-              // Stream is complete
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  newMessages[index] = {
-                    ...newMessages[index],
-                    status: 'complete'
-                  };
-                }
-                return newMessages;
+              // Stream is complete - use flushSync for immediate completion
+              flushSync(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const index = newMessages.findIndex(m => m.id === id);
+                  if (index >= 0) {
+                    newMessages[index] = {
+                      ...newMessages[index],
+                      status: 'complete'
+                    };
+                  }
+                  return newMessages;
+                });
               });
               
               // If we have a sheet update, apply it
@@ -580,6 +591,8 @@ export function useChatStream(
               }
               
               setIsStreaming(false);
+              // Break out of the loop since stream is complete
+              break;
             }
             else if (event.type === 'error') {
               // Clear fallback timer
@@ -588,19 +601,23 @@ export function useChatStream(
               debugLog('STREAM_ERROR', 'Stream error received', { error: event.error });
               
               // Handle error
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  newMessages[index] = {
-                    ...newMessages[index],
-                    content: `Error: ${event.error}`,
-                    status: 'complete' // Change to 'complete' to make it display properly
-                  };
-                }
-                return newMessages;
+              flushSync(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const index = newMessages.findIndex(m => m.id === id);
+                  if (index >= 0) {
+                    newMessages[index] = {
+                      ...newMessages[index],
+                      content: `Error: ${event.error}`,
+                      status: 'complete' // Change to 'complete' to make it display properly
+                    };
+                  }
+                  return newMessages;
+                });
               });
               setIsStreaming(false);
+              // Break out of the loop since stream has errored
+              break;
             }
             else if (event.type === 'tool_start') {
               debugLog('TOOL_START', 'Tool execution started', event.payload);
@@ -688,7 +705,10 @@ export function useChatStream(
       }
       setIsStreaming(false);
     } finally {
+      // Ensure streaming state is reset and timer is cleared
+      clearTimeout(fallbackTimer);
       abortControllerRef.current = null;
+      setIsStreaming(false);
     }
   }, [wb, loading, dispatch, mode, cancelStream, setMessages, handleToolError]);
 

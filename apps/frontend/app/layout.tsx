@@ -33,6 +33,14 @@ export default function RootLayout({
 }: {
   children: React.ReactNode
 }) {
+  // Add debug environment variables for development
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  (window as any).DEBUG_STREAMING = true;
+  (window as any).DEBUG_SSE = true;
+  process.env.NEXT_PUBLIC_DEBUG_STREAMING = '1';
+  process.env.NEXT_PUBLIC_DEBUG_SSE = '1';
+}
+
   return (
     <html lang="en" className={inter.variable}>
       <body className="font-inter">
