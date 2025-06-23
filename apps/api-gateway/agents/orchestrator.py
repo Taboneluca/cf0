@@ -61,7 +61,7 @@ class ContextAnalyzer:
                 continue
                 
             content = message.get('content', '')
-            if len(content) < 100:  # Skip short messages
+            if len(content) < 50:  # Lowered from 100 to be more responsive
                 continue
                 
             # Count pattern matches to determine relevance
@@ -73,13 +73,25 @@ class ContextAnalyzer:
                 r'(?i)(=\w+\(|formula)',  # Excel formulas
                 r'(?i)(income statement|balance sheet|cash flow)',  # Financial statements
                 r'(?i)(header|column|row)',  # Spreadsheet structure
+                # Enhanced financial patterns
+                r'(?i)(financial model|model|projections?|forecast)',
+                r'(?i)(jetpack|business|company|cash flow|profitability)'
             ]
             bonus_score = sum(2 for pattern in bonus_patterns if re.search(pattern, content))
             
             total_score = pattern_matches + bonus_score
             
+            # Lower threshold for financial content - score >= 2 instead of 3, length > 100 instead of 200
+            min_score = 2
+            min_length = 100
+            
+            # Even lower threshold for messages that explicitly mention financial models
+            if re.search(r'(?i)(financial model|income statement|balance sheet|cash flow)', content):
+                min_score = 1
+                min_length = 50
+            
             # If message has good patterns and substantial content, consider it
-            if total_score >= 3 and len(content) > 200:
+            if total_score >= min_score and len(content) > min_length:
                 if total_score > best_score:
                     best_context = content
                     best_score = total_score
@@ -101,7 +113,11 @@ class ContextAnalyzer:
                 r'(?i)\b(do|execute|perform|carry out)\s+(the\s+)?(above|that|this|it)\b',
                 r'(?i)\b(based on|using|following)\s+(the\s+)?(above|previous|that|what)\b',
                 r'(?i)\b(build|create|implement|make|generate|set up).*in.*sheet\b',
-                r'(?i)\b(build|create|implement|make|generate|set up).*in.*current.*sheet\b'
+                r'(?i)\b(build|create|implement|make|generate|set up).*in.*current.*sheet\b',
+                # Enhanced patterns for short commands
+                r'(?i)^(ok\s+)?(build|create|implement|make|generate|set up)\s+(it|that|this)\s+(for\s+me)?',
+                r'(?i)^(please\s+)?(build|create|implement|make|generate|set up)\s+(it|that|this)',
+                r'(?i)^(now\s+)?(build|create|implement|make|generate|set up)\s+(it|that|this)'
             ],
             'contextual_reference': [
                 r'(?i)\b(as\s+)?(described|mentioned|discussed|outlined|specified)\s+(above|previously|earlier|before)\b',
@@ -112,7 +128,8 @@ class ContextAnalyzer:
             'imperative_with_context': [
                 r'(?i)^(now\s+)?(build|create|implement|make|generate|set up)\b',
                 r'(?i)^(please\s+)?(build|create|implement|make|generate|set up)\b',
-                r'(?i)^(go ahead and\s+)?(build|create|implement|make|generate|set up)\b'
+                r'(?i)^(go ahead and\s+)?(build|create|implement|make|generate|set up)\b',
+                r'(?i)^(ok\s+)?(build|create|implement|make|generate|set up)\b'
             ]
         }
         
@@ -509,11 +526,7 @@ class Orchestrator:
         # Add sheet context
         agent.add_system_message(self.sheet_context)
         
-        if mode == "ask":
-            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly.")
-            return agent
-        
-        # For analyst mode, perform sophisticated context analysis
+        # Perform sophisticated context analysis for both ask and analyst modes
         intent_analysis = self.context_analyzer.analyze_user_intent(message, history)
         
         if intent_analysis['has_context_reference']:
@@ -575,6 +588,10 @@ CRITICAL: When making tool calls:
 - Use set_cell for individual updates when uncertain
 """)
                 print(f"🔗 Context reference detected but no clear implementation context found")
+        
+        # Add mode-specific instructions
+        if mode == "ask":
+            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly. If they ask you to build something, use the available tools to implement it.")
         else:
             # Standard analyst mode instructions
             agent.add_system_message("""

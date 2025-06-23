@@ -89,8 +89,11 @@ const Message: React.FC<MessageProps> = ({ message }) => {
   const sectionPattern = /##\s+([^\n]+)(?:\n([\s\S]+?)(?=##|$))?/g;
   const matches = [...message.content.matchAll(sectionPattern)];
   
-  // If no sections found or message is being streamed, render as blue text without bubble
-  if (matches.length === 0 || message.status === 'thinking' || message.status === 'streaming') {
+  // STREAMING FIX: Check if message was ever streamed (has timestamp) or is currently streaming/thinking
+  const wasStreamed = message.timestamp || message.status === 'thinking' || message.status === 'streaming';
+  
+  // If no sections found, message is being streamed, or message was previously streamed, render as blue text without bubble
+  if (matches.length === 0 || wasStreamed) {
     const parts = message.content.split(/(@[\w!:.]+)/g);
     return (
       <div className="flex justify-start mb-2">
