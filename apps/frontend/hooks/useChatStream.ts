@@ -4,22 +4,9 @@ import { useWorkbook } from '@/context/workbook-context';
 import { Message } from '@/types/spreadsheet';
 import { backendSheetToUI } from '@/utils/transform';
 
-// Utility function to yield to the DOM - improved for better streaming performance
-const yieldToDom = (): Promise<void> => {
-  return new Promise(resolve => {
-    // Use double requestAnimationFrame for better performance and smoother rendering
-    if (typeof requestAnimationFrame !== 'undefined') {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    } else {
-      // Fallback for environments without requestAnimationFrame
-      setTimeout(resolve, 0);
-    }
-  });
-};
+// =========================================
+// 2025 OPTIMIZED STREAMING IMPLEMENTATION
+// =========================================
 
 type StreamEvent = 
   | { type: 'start' }
@@ -49,7 +36,7 @@ const debugLog = (category: string, message: string, data?: any) => {
   if (!DEBUG_STREAMING) return;
   
   const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
-  console.log(`[${timestamp}] 🔍 [${category}] ${message}`, data ? data : '');
+  console.log(`[${timestamp}] 🚀 [${category}] ${message}`, data ? data : '');
 };
 
 export function useChatStream(
@@ -59,7 +46,7 @@ export function useChatStream(
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingUpdates, setPendingUpdates] = useState<any[]>([]);
   const currentMessageIdRef = useRef<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const [wb, dispatch, loading] = useWorkbook();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   
@@ -79,94 +66,34 @@ export function useChatStream(
     averageChunkDelay: 0
   });
   
-  // Add a function to scroll to bottom of messages
+  // Performance tracking
+  const streamStats = useRef({
+    startTime: 0,
+    firstChunkTime: 0,
+    chunkCount: 0
+  });
+  
+  // Auto-scroll to bottom
   const scrollToBottom = useCallback(() => {
-    if (typeof document !== 'undefined') {
-      // Find all message containers and scroll the last one into view
-      const messageContainers = document.querySelectorAll('.message-streaming');
-      if (messageContainers.length > 0) {
-        const lastMessage = messageContainers[messageContainers.length - 1];
-        lastMessage?.scrollIntoView({ behavior: 'smooth' });
-      }
-      
-      // Also try scrolling the messages container if available
+    requestAnimationFrame(() => {
       const messagesContainer = document.querySelector('.overflow-y-auto');
       if (messagesContainer) {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
       }
-    }
+    });
   }, []);
 
+  // Cancel any active stream
   const cancelStream = useCallback(() => {
-    if (abortControllerRef.current) {
-      if (DEBUG_STREAMING) console.log('[Stream DEBUG] Cancelling stream');
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+    if (eventSourceRef.current) {
+      debugLog('STREAM_CANCEL', 'Closing EventSource connection');
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
       setIsStreaming(false);
     }
   }, []);
 
-  const applyPendingUpdates = useCallback(() => {
-    if (pendingUpdates.length > 0 && wb) {
-      if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Applying ${pendingUpdates.length} pending updates`);
-      
-      // Make a local copy of the active sheet
-      const sheetId = wb.active;
-      const sheet = { ...wb.data[sheetId] };
-
-      pendingUpdates.forEach(update => {
-        if (!update || !update.cell) return;
-
-        const value = update.new_value ?? update.value ?? update.new;
-        if (value === undefined) return;
-
-        // Convert "B4" -> row 3, col 1 (zero-based)
-        const match = String(update.cell).match(/^([A-Za-z]+)(\d+)$/);
-        if (!match) return;
-        const [, colLetters, rowStr] = match;
-
-        const row = parseInt(rowStr, 10) - 1;
-        const col = colLetters
-          .toUpperCase()
-          .split('')
-          .reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
-
-        // Ensure the sheet has necessary structures
-        if (!sheet.rows) sheet.rows = [];
-        if (!sheet.columns) sheet.columns = [];
-        if (!sheet.cells) sheet.cells = {};
-        
-        // Expand rows/columns arrays if needed
-        while (sheet.rows.length <= row) {
-          sheet.rows.push(sheet.rows.length + 1);
-        }
-        
-        while (sheet.columns.length <= col) {
-          const colNum = sheet.columns.length;
-          // Convert column index to letter (0=A, 1=B, etc.)
-          const colLetter = String.fromCharCode(65 + colNum);
-          sheet.columns.push(colLetter);
-        }
-
-        sheet.cells[`${row},${col}`] = value;
-      });
-
-      // Push the new sheet back into context
-      dispatch({
-        type: "UPDATE_SHEET",
-        payload: { id: sheetId, data: sheet }
-      });
-
-      setPendingUpdates([]);
-    }
-  }, [pendingUpdates, wb, dispatch]);
-
-  const rejectPendingUpdates = useCallback(() => {
-    if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Rejecting ${pendingUpdates.length} pending updates`);
-    setPendingUpdates([]);
-  }, [pendingUpdates]);
-
-  // Helper function to apply tool updates to the sheet
+  // Apply tool updates to workbook
   const applyUpdatesToSheet = useCallback((updates: any[]) => {
     if (!wb || !updates || updates.length === 0) return;
     
@@ -179,7 +106,6 @@ export function useChatStream(
       const value = update.new_value ?? update.value ?? update.new;
       if (value === undefined) return;
       
-      // Convert "B4" -> row 3, col 1 (zero-based)
       const match = String(update.cell).match(/^([A-Za-z]+)(\d+)$/);
       if (!match) return;
       const [, colLetters, rowStr] = match;
@@ -190,12 +116,10 @@ export function useChatStream(
         .split('')
         .reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
       
-      // Ensure the sheet has necessary structures
       if (!sheet.rows) sheet.rows = [];
       if (!sheet.columns) sheet.columns = [];
       if (!sheet.cells) sheet.cells = {};
       
-      // Expand rows/columns arrays if needed
       while (sheet.rows.length <= row) {
         sheet.rows.push(sheet.rows.length + 1);
       }
@@ -209,52 +133,46 @@ export function useChatStream(
       sheet.cells[`${row},${col}`] = { value };
     });
     
-    // Update the workbook context
     dispatch({
       type: "UPDATE_SHEET",
       payload: { id: sheetId, data: sheet }
     });
     
-    if (DEBUG_STREAMING) console.log(`[Stream DEBUG] Applied ${updates.length} updates to sheet`);
+    debugLog('SHEET_UPDATE', `Applied ${updates.length} updates to sheet`);
   }, [wb, dispatch]);
 
-  // Helper function to handle tool errors gracefully
-  const handleToolError = useCallback((toolName: string, error: any) => {
-    if (DEBUG_STREAMING) {
-      console.warn(`[Stream DEBUG] Tool ${toolName} failed:`, error);
+  // Apply pending updates
+  const applyPendingUpdates = useCallback(() => {
+    if (pendingUpdates.length > 0) {
+      applyUpdatesToSheet(pendingUpdates);
+      setPendingUpdates([]);
     }
-    
-    // Show user-friendly error message
-    let errorMessage = `Tool ${toolName} encountered an issue`;
-    
-    if (typeof error === 'object' && error.error) {
-      errorMessage = error.error;
-      
-      // If there's an example, show it to help the user
-      if (error.example) {
-        console.log(`[Stream DEBUG] Example for ${toolName}:`, error.example);
-      }
-    } else if (typeof error === 'string') {
-      errorMessage = error;
-    }
-    
-    // Don't break the stream, just log the error
-    console.warn(`Tool error: ${errorMessage}`);
-  }, []);
+  }, [pendingUpdates, applyUpdatesToSheet]);
 
+  // Reject pending updates
+  const rejectPendingUpdates = useCallback(() => {
+    debugLog('UPDATES_REJECTED', `Rejecting ${pendingUpdates.length} pending updates`);
+    setPendingUpdates([]);
+  }, [pendingUpdates]);
+
+  // Main streaming function - 2025 optimized
   const sendMessage = useCallback(async (message: string, contexts: string[] = [], model?: string) => {
     if (!wb || !wb.wid || !wb.active || loading) {
       debugLog('VALIDATION', 'Cannot send message - workbook not ready', { wb, loading });
       return;
     }
     
-    // Reset debugging counters and streaming content
-    debugChunkCount.current = 0;
-    debugLastChunkTime.current = Date.now();
-    chunkSequence.current = 0; // Reset sequence
-    processedChunks.current.clear(); // Clear processed chunks for new request
+    // Cancel any existing stream
+    cancelStream();
     
-    debugLog('STREAM_START', 'Starting new streaming request', { 
+    // Initialize performance tracking
+    streamStats.current = {
+      startTime: Date.now(),
+      firstChunkTime: 0,
+      chunkCount: 0
+    };
+    
+    debugLog('STREAM_START', 'Starting optimized EventSource streaming', { 
       message: message.slice(0, 100) + (message.length > 100 ? '...' : ''), 
       mode, 
       wid: wb.wid, 
@@ -262,14 +180,6 @@ export function useChatStream(
       model 
     });
     
-    // Cancel any existing stream
-    cancelStream();
-    
-    // Create a new abort controller
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-    
-    // Show that we're waiting for a response
     const id = `msg-${Date.now()}`;
     currentMessageIdRef.current = id;
     
@@ -289,150 +199,70 @@ export function useChatStream(
       status: 'thinking'
     }]);
     
-    // Fallback: If no start event is received within 2 seconds, switch to streaming anyway
-    const fallbackTimer = setTimeout(() => {
-      if (currentMessageIdRef.current === id) {
-        debugLog('FALLBACK', 'Switching to streaming status after 2s delay');
-        setMessages(prev => {
-          const newMessages = [...prev];
-          const index = newMessages.findIndex(m => m.id === id);
-          if (index >= 0 && newMessages[index].status === 'thinking') {
-            newMessages[index] = {
-              ...newMessages[index],
-              status: 'streaming'
-            };
-          }
-          return newMessages;
-        });
-      }
-    }, 2000);
-    
     setIsStreaming(true);
     
     try {
-      const url = '/api/chat/stream';
+             // Build the SSE URL with query parameters for instant connection
+       const streamUrl = '/api/chat/stream';
+       
+       // Create EventSource with POST data as URL parameters (2025 optimization)
+       const params = new URLSearchParams({
+         mode,
+         message,
+         wid: wb.wid,
+         sid: wb.active,
+         contexts: JSON.stringify(contexts),
+         model: model || ''
+       });
+       
+       // Use the optimized Next.js API route with GET for EventSource compatibility
+       const eventSource = new EventSource(`${streamUrl}?${params.toString()}`);
+      eventSourceRef.current = eventSource;
       
-      debugLog('HTTP_REQUEST', 'Sending HTTP request', { url, mode, wid: wb.wid, sid: wb.active, model });
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          mode,
-          message,
-          wid: wb.wid,
-          sid: wb.active,
-          contexts,
-          model
-        }),
-        signal: abortController.signal
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      debugLog('HTTP_RESPONSE', 'Stream connection established', { 
-        status: response.status,
-        headers: Object.fromEntries(response.headers.entries())
-      });
-      
-      // Stream handle
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("Failed to get stream reader");
-      
-      // We need to decode the stream chunks
-      const decoder = new TextDecoder();
-      let buffer = '';
-      
-      // For streaming performance analysis
-      let totalCharsReceived = 0;
-      let totalEvents = 0;
-      let eventsByType: Record<string, number> = {};
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        // Decode the chunk and add to buffer
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-        totalCharsReceived += chunk.length;
-        
-        if (DEBUG_SSE) {
-          const now = Date.now();
-          const timeSinceLastChunk = now - debugLastChunkTime.current;
-          debugChunkCount.current++;
-          debugLog('SSE_CHUNK', `Raw chunk #${debugChunkCount.current}`, {
-            length: chunk.length,
-            timeSince: `${timeSinceLastChunk}ms`,
-            preview: chunk.slice(0, 100) + (chunk.length > 100 ? '...' : '')
-          });
-          debugLastChunkTime.current = now;
-        }
-        
-        // Process all complete events in the buffer
-        let eventStart = buffer.indexOf('event: ');
-        let eventCount = 0; // Count events in this chunk
-        
-        while (eventStart >= 0) {
-          eventCount++;
-          const dataIndex = buffer.indexOf('data: ', eventStart);
-          if (dataIndex < 0) break;
-          
-          const eventEnd = buffer.indexOf('\n', eventStart);
-          if (eventEnd < 0) break;
-          
-          const dataEnd = buffer.indexOf('\n\n', dataIndex);
-          if (dataEnd < 0) break;
-          
-          // Extract the event type and data
-          const eventType = buffer.substring(eventStart + 7, eventEnd).trim();
-          const eventData = buffer.substring(dataIndex + 6, dataEnd).trim();
-          
-          totalEvents++;
-          eventsByType[eventType] = (eventsByType[eventType] || 0) + 1;
-          
-          if (DEBUG_SSE) {
-            const timeSinceLast = formatTimeSince(debugLastChunkTime.current);
-            debugLog('SSE_EVENT', `Event #${totalEvents}: ${eventType}`, {
-              dataLength: eventData.length,
-              timeSince: timeSinceLast,
-              preview: eventData.slice(0, 200) + (eventData.length > 200 ? '...' : '')
+      // Fallback timer - if no data in 3 seconds, show error
+      const timeoutTimer = setTimeout(() => {
+        if (currentMessageIdRef.current === id) {
+          debugLog('TIMEOUT', 'Stream timeout - no data received in 3 seconds');
+          flushSync(() => {
+            setMessages(prev => {
+              const newMessages = [...prev];
+              const index = newMessages.findIndex(m => m.id === id);
+              if (index >= 0) {
+                               newMessages[index] = {
+                 ...newMessages[index],
+                 content: 'Request timed out. Please try again.',
+                 status: 'complete' as const
+               };
+              }
+              return newMessages;
             });
-            debugLastChunkTime.current = Date.now();
+          });
+          cancelStream();
+        }
+      }, 3000);
+      
+      // Handle stream events
+      eventSource.onopen = () => {
+        debugLog('SSE_CONNECTED', 'EventSource connection established');
+        clearTimeout(timeoutTimer);
+      };
+      
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as StreamEvent;
+          debugLog('SSE_EVENT', `Received event: ${data.type}`, data);
+          
+          streamStats.current.chunkCount++;
+          if (streamStats.current.firstChunkTime === 0) {
+            streamStats.current.firstChunkTime = Date.now();
+            const ttft = streamStats.current.firstChunkTime - streamStats.current.startTime;
+            debugLog('PERFORMANCE', `Time to first token: ${ttft}ms`);
           }
           
-          try {
-            // Parse the event data as JSON
-            const event: StreamEvent = {
-              ...JSON.parse(eventData),
-              type: eventType as any
-            };
-            
-            debugLog('EVENT_PARSED', `Processing ${eventType} event`, event);
-            
-            // Generate unique chunk ID with sequence number for better duplicate detection
-            chunkSequence.current++;
-            const chunkId = `${event.type}-${chunkSequence.current}-${event.type === 'chunk' ? event.text?.slice(0, 10) : 'no-text'}`;
-            
-            if (processedChunks.current.has(chunkId)) {
-              debugLog('DUPLICATE_CHUNK', 'Duplicate chunk detected and skipped', { chunkId });
-              continue;
-            }
-            
-            processedChunks.current.add(chunkId);
-            
-            // Process the event based on type
-            if (event.type === 'start') {
-              // Clear fallback timer since we got the real start event
-              clearTimeout(fallbackTimer);
-              
+          // Handle different event types
+          switch (data.type) {
+            case 'start':
               debugLog('STREAM_STARTED', 'Stream officially started');
-              
-              // Just mark that streaming has started
               flushSync(() => {
                 setMessages(prev => {
                   const newMessages = [...prev];
@@ -446,125 +276,55 @@ export function useChatStream(
                   return newMessages;
                 });
               });
-            }
-            else if (event.type === 'ping') {
-              // Ignore ping events - they're just keep-alive signals
-              if (DEBUG_SSE) debugLog('PING_RECEIVED', 'Keep-alive ping received and ignored');
-              // Do nothing, just continue to next event
-            }
-            else if (event.type === 'chunk') {
-              // CRITICAL FIX: Use flushSync for immediate rendering
-              const newText = event.text;
+              break;
               
-              debugLog('CONTENT_CHUNK', 'Received text chunk', {
-                newText: event.text,
-                chunkLength: event.text.length
+            case 'chunk':
+              const newText = data.text;
+              debugLog('CONTENT_CHUNK', `Chunk #${streamStats.current.chunkCount}`, { 
+                text: newText, 
+                length: newText.length 
               });
               
-              // Use flushSync to force immediate rendering
+              // CRITICAL: Use flushSync for instant rendering
               flushSync(() => {
                 setMessages(prev => {
                   const newMessages = [...prev];
                   const index = newMessages.findIndex(m => m.id === id);
                   if (index >= 0) {
-                    // Get existing content and append new text
-                    const existingContent = newMessages[index].content || '';
-                    const updatedContent = existingContent + newText;
-                    
                     newMessages[index] = {
                       ...newMessages[index],
-                      content: updatedContent,
+                      content: (newMessages[index].content || '') + newText,
                       status: 'streaming' as const,
-                      timestamp: Date.now()
+                      timestamp: Date.now() // Mark as streamed
                     };
                   }
                   return newMessages;
                 });
               });
               
-              // Force immediate scroll after content update
-              requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                  scrollToBottom();
-                });
-              });
-            }
-            else if (event.type === 'update') {
-              debugLog('TOOL_UPDATE', 'Received tool update', event.payload);
+              // Auto-scroll after content update
+              scrollToBottom();
+              break;
               
-              // Add to pending updates and immediately apply the update
-              setPendingUpdates(prev => {
-                const newUpdates = [...prev, event.payload];
-                
-                // Auto-apply immediately - don't wait for user confirmation
-                if (wb && event.payload) {
-                  const sheetId = wb.active;
-                  const sheet = { ...wb.data[sheetId] };
-                  
-                  const update = event.payload;
-                  if (!update || !update.cell) return newUpdates;
-
-                  const value = update.new_value ?? update.value ?? update.new;
-                  if (value === undefined) return newUpdates;
-
-                  // Parse cell reference
-                  const match = String(update.cell).match(/^([A-Za-z]+)(\d+)$/);
-                  if (!match) return newUpdates;
-                  
-                  const [, colLetters, rowStr] = match;
-                  const row = parseInt(rowStr, 10) - 1;
-                  const col = colLetters
-                    .toUpperCase()
-                    .split('')
-                    .reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
-
-                  // Ensure needed structures
-                  if (!sheet.rows) sheet.rows = [];
-                  if (!sheet.columns) sheet.columns = [];
-                  if (!sheet.cells) sheet.cells = {};
-                  
-                  // Expand as needed
-                  while (sheet.rows.length <= row) {
-                    sheet.rows.push(sheet.rows.length + 1);
-                  }
-                  
-                  while (sheet.columns.length <= col) {
-                    const colNum = sheet.columns.length;
-                    const colLetter = String.fromCharCode(65 + colNum);
-                    sheet.columns.push(colLetter);
-                  }
-
-                  // Update the cell
-                  sheet.cells[`${row},${col}`] = {value};
-                  
-                  // Apply the change immediately
-                  dispatch({
-                    type: "UPDATE_SHEET",
-                    payload: { id: sheetId, data: sheet }
-                  });
-                  
-                  debugLog('SHEET_UPDATE', 'Auto-applied streaming update', {
-                    cell: update.cell,
-                    value,
-                    sheetId
-                  });
-                }
-                
-                return newUpdates;
-              });
-            }
-            else if (event.type === 'complete') {
-              // Clear fallback timer
-              clearTimeout(fallbackTimer);
+            case 'update':
+              debugLog('TOOL_UPDATE', 'Received tool update', data.payload);
+              if (data.payload) {
+                applyUpdatesToSheet([data.payload]);
+              }
+              break;
               
-              debugLog('STREAM_COMPLETE', 'Stream completed', {
-                totalChars: totalCharsReceived,
-                totalEvents,
-                eventsByType,
-                sheet: !!event.sheet
-              });
+            case 'pending':
+              debugLog('PENDING_UPDATES', 'Received pending updates', data.updates);
+              if (data.updates && data.updates.length > 0) {
+                setPendingUpdates(data.updates);
+              }
+              break;
               
-              // Stream is complete - use flushSync for immediate completion
+            case 'complete':
+              debugLog('STREAM_COMPLETE', 'Stream completed successfully');
+              const totalTime = Date.now() - streamStats.current.startTime;
+              debugLog('PERFORMANCE', `Total stream time: ${totalTime}ms, chunks: ${streamStats.current.chunkCount}`);
+              
               flushSync(() => {
                 setMessages(prev => {
                   const newMessages = [...prev];
@@ -572,154 +332,128 @@ export function useChatStream(
                   if (index >= 0) {
                     newMessages[index] = {
                       ...newMessages[index],
-                      status: 'complete'
+                      status: 'complete' as const
                     };
                   }
                   return newMessages;
                 });
               });
               
-              // If we have a sheet update, apply it
-              if (event.sheet) {
-                const sheetUI = backendSheetToUI(event.sheet);
-                // Use the dispatch to update sheet data
+              if (data.sheet) {
+                // Apply final sheet updates
                 dispatch({
-                  type: 'UPDATE_SHEET',
-                  payload: { id: wb.active, data: sheetUI }
+                  type: "UPDATE_SHEET",
+                  payload: { id: wb.active, data: data.sheet }
                 });
-                debugLog('FINAL_SHEET_UPDATE', 'Applied final sheet state');
               }
               
               setIsStreaming(false);
-              // Break out of the loop since stream is complete
+              eventSource.close();
               break;
-            }
-            else if (event.type === 'error') {
-              // Clear fallback timer
-              clearTimeout(fallbackTimer);
               
-              debugLog('STREAM_ERROR', 'Stream error received', { error: event.error });
+            case 'tool_start':
+              debugLog('TOOL_START', `Tool started: ${data.payload.name}`, data.payload);
+              break;
               
-              // Handle error
+            case 'tool_complete':
+              debugLog('TOOL_COMPLETE', `Tool completed: ${data.payload.id}`, data.payload);
+              if (data.payload.updates && data.payload.updates.length > 0) {
+                applyUpdatesToSheet(data.payload.updates);
+              }
+              break;
+              
+            case 'tool_error':
+              debugLog('TOOL_ERROR', `Tool error: ${data.payload.name}`, data.payload);
+              break;
+              
+            case 'error':
+              debugLog('STREAM_ERROR', 'Stream error received', data.error);
               flushSync(() => {
                 setMessages(prev => {
                   const newMessages = [...prev];
                   const index = newMessages.findIndex(m => m.id === id);
                   if (index >= 0) {
-                    newMessages[index] = {
-                      ...newMessages[index],
-                      content: `Error: ${event.error}`,
-                      status: 'complete' // Change to 'complete' to make it display properly
-                    };
+                                   newMessages[index] = {
+                 ...newMessages[index],
+                 content: newMessages[index].content + `\n\nError: ${data.error}`,
+                 status: 'complete' as const
+               };
                   }
                   return newMessages;
                 });
               });
-              setIsStreaming(false);
-              // Break out of the loop since stream has errored
               break;
-            }
-            else if (event.type === 'tool_start') {
-              debugLog('TOOL_START', 'Tool execution started', event.payload);
               
-              // Simple logging only - no complex tracking needed
-            }
-            else if (event.type === 'tool_complete') {
-              debugLog('TOOL_COMPLETE', 'Tool execution completed', event.payload);
+            case 'ping':
+              // Ignore ping events silently
+              break;
               
-              // Handle tool complete results
-              const updates = event.payload.updates || [];
-              if (updates.length > 0) {
-                setPendingUpdates(prev => [...prev, ...updates]);
-                debugLog('TOOL_UPDATES', 'Added tool updates to pending', { count: updates.length });
-              }
-            }
-            else if (event.type === 'tool_error') {
-              debugLog('TOOL_ERROR', 'Tool execution failed', event.payload);
-              
-              // Handle tool error gracefully
-              const error = event.payload.error;
-              const toolName = event.payload.name;
-              
-              if (toolName && error) {
-                handleToolError(toolName, error);
-              }
-            }
-          } catch (e) {
-            console.error('Error parsing SSE event', e);
-            debugLog('PARSE_ERROR', 'Failed to parse SSE event', { error: e, eventData });
+            default:
+              debugLog('UNKNOWN_EVENT', 'Unknown event type', data);
           }
-          
-          // Remove the processed event from the buffer
-          buffer = buffer.substring(dataEnd + 2);
-          
-          // Look for next event
-          eventStart = buffer.indexOf('event: ');
+        } catch (error) {
+          debugLog('PARSE_ERROR', 'Failed to parse SSE event', { error, data: event.data });
         }
-      }
+      };
       
-      debugLog('STREAM_FINAL', 'Stream processing completed', {
-        totalChars: totalCharsReceived,
-        totalEvents,
-        eventsByType
+      eventSource.onerror = (error) => {
+        debugLog('SSE_ERROR', 'EventSource error', error);
+        clearTimeout(timeoutTimer);
+        
+        flushSync(() => {
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const index = newMessages.findIndex(m => m.id === id);
+                         if (index >= 0 && newMessages[index].status === 'thinking') {
+               newMessages[index] = {
+                 ...newMessages[index],
+                 content: 'Connection error. Please try again.',
+                 status: 'complete' as const
+               };
+             }
+            return newMessages;
+          });
+        });
+        
+        setIsStreaming(false);
+        eventSource.close();
+      };
+      
+    } catch (error) {
+      debugLog('SEND_ERROR', 'Error starting stream', error);
+      
+      flushSync(() => {
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const index = newMessages.findIndex(m => m.id === id);
+          if (index >= 0) {
+                       newMessages[index] = {
+             ...newMessages[index],
+             content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+             status: 'complete' as const
+           };
+          }
+          return newMessages;
+        });
       });
       
-    } catch (e) {
-      // Clear fallback timer in case of any error
-      clearTimeout(fallbackTimer);
-      
-      if ((e as Error).name === 'AbortError') {
-        debugLog('STREAM_ABORTED', 'Stream aborted by user');
-        
-        // The request was aborted, handle gracefully
-        setMessages(prev => {
-          const newMessages = [...prev];
-          const index = newMessages.findIndex(m => m.id === id);
-          if (index >= 0) {
-            // Get the current content from the message or use empty string
-            const currentContent = newMessages[index].content || '';
-            newMessages[index] = {
-              ...newMessages[index],
-              content: currentContent + "\n\n[Stopped by user]",
-              status: 'complete'
-            };
-          }
-          return newMessages;
-        });
-      } else {
-        console.error('Error in streaming', e);
-        debugLog('STREAM_ERROR', 'Error in streaming process', { error: e });
-        
-        setMessages(prev => {
-          const newMessages = [...prev];
-          const index = newMessages.findIndex(m => m.id === id);
-          if (index >= 0) {
-            newMessages[index] = {
-              ...newMessages[index],
-              content: `Error: ${(e as Error).message}`,
-              status: 'complete' // Change to 'complete' to make it display properly
-            };
-          }
-          return newMessages;
-        });
-      }
-      setIsStreaming(false);
-    } finally {
-      // Ensure streaming state is reset and timer is cleared
-      clearTimeout(fallbackTimer);
-      abortControllerRef.current = null;
       setIsStreaming(false);
     }
-  }, [wb, loading, dispatch, mode, cancelStream, setMessages, handleToolError]);
+  }, [wb, dispatch, mode, loading, cancelStream, applyUpdatesToSheet, scrollToBottom]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cancelStream();
+    };
+  }, [cancelStream]);
 
   return {
     sendMessage,
-    cancelStream,
     isStreaming,
     pendingUpdates,
     applyPendingUpdates,
     rejectPendingUpdates,
-    applyUpdatesToSheet,
-    handleToolError
+    cancelStream
   };
 } 

@@ -25,78 +25,85 @@ class ContextAnalyzer:
     def extract_implementation_context(history: List[Dict[str, Any]]) -> Optional[str]:
         """
         Extract actionable implementation details from conversation history.
-        Looks for detailed specifications, requirements, or plans that can be executed.
+        Enhanced for better financial content detection.
         """
         if not history:
             return None
             
         # Enhanced patterns for financial and spreadsheet models
         context_patterns = [
-            # Financial models and calculations
-            r'(?i)(wacc|weighted average cost|discount rate|valuation|financial model)',
-            r'(?i)(income statement|balance sheet|cash flow|p&l|profit)',
-            r'(?i)(model|template|table|structure|format)',
-            # Spreadsheet-specific patterns
-            r'(?i)(cell|row|column|header|formula|calculation)',
-            r'(?i)(A1|B1|C1|D1|A2|B2|C2|D2)',  # Cell references
-            r'(?i)(=SUM|=AVERAGE|=MAX|=MIN|=[A-Z]+[0-9]+)',  # Excel formulas
-            # Data specifications
-            r'(?i)(rows?|columns?|cells?|data|fields?|headers?)',
-            r'(?i)(calculate|compute|build|create|generate|set up)',
-            # Detailed descriptions with steps
-            r'(?i)(steps?|process|methodology|approach|structure)',
-            r'(?i)(inputs?|outputs?|formula|calculation|equation)',
-            # Financial statement specific
-            r'(?i)(revenue|sales|expenses|costs|profit|loss|assets|liabilities|equity)',
-            r'(?i)(gross profit|operating income|net income|total)'
+            # Financial models and calculations - more comprehensive
+            r'(?i)(wacc|weighted average cost|discount rate|valuation|financial model|income statement)',
+            r'(?i)(balance sheet|cash flow|profit.{0,5}loss|p.{0,2}l|financial statement)',
+            r'(?i)(dcf|discounted cash flow|fsm|financial statement model|three statement)',
+            r'(?i)(revenue|sales|cogs|cost of goods sold|gross profit|operating expense)',
+            r'(?i)(ebitda|ebit|net income|free cash flow|terminal value|growth rate)',
+            r'(?i)(assumptions|drivers|forecast|projection|budget|plan)',
+            
+            # Spreadsheet and model structure
+            r'(?i)(model|template|table|structure|format|layout|framework)',
+            r'(?i)(column|row|cell|formula|calculation|equation|function)',
+            r'(?i)(sheet|tab|worksheet|workbook|spreadsheet)',
+            
+            # Business context
+            r'(?i)(company|business|industry|market|competitor|customer)',
+            r'(?i)(strategy|plan|analysis|performance|metrics|kpi)',
+            
+            # Action-oriented language
+            r'(?i)(build|create|develop|design|implement|construct|generate)',
+            r'(?i)(analyze|calculate|estimate|project|forecast|model)',
+            r'(?i)(show|display|provide|give|include|add|insert)',
         ]
         
-        # Look for the most recent substantial message with implementation details
-        best_context = None
-        best_score = 0
+        relevant_messages = []
         
-        # Check last 15 messages instead of 10 to capture more context
-        for message in reversed(history[-15:]):
-            if message.get('role') == 'user':
-                continue
+        # Look at more recent messages (increased from 10 to 15)
+        recent_history = history[-15:] if len(history) > 15 else history
+        
+        for msg in recent_history:
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
                 
-            content = message.get('content', '')
-            if len(content) < 50:  # Lowered from 100 to be more responsive
-                continue
+                # Enhanced scoring system
+                pattern_matches = 0
+                content_score = 0
                 
-            # Count pattern matches to determine relevance
-            pattern_matches = sum(1 for pattern in context_patterns if re.search(pattern, content))
-            
-            # Give extra weight to messages with cell references, formulas, or financial terms
-            bonus_patterns = [
-                r'(?i)(cell [A-Z][0-9]+|[A-Z][0-9]+:)',  # Cell references
-                r'(?i)(=\w+\(|formula)',  # Excel formulas
-                r'(?i)(income statement|balance sheet|cash flow)',  # Financial statements
-                r'(?i)(header|column|row)',  # Spreadsheet structure
-                # Enhanced financial patterns
-                r'(?i)(financial model|model|projections?|forecast)',
-                r'(?i)(jetpack|business|company|cash flow|profitability)'
-            ]
-            bonus_score = sum(2 for pattern in bonus_patterns if re.search(pattern, content))
-            
-            total_score = pattern_matches + bonus_score
-            
-            # Lower threshold for financial content - score >= 2 instead of 3, length > 100 instead of 200
-            min_score = 2
-            min_length = 100
-            
-            # Even lower threshold for messages that explicitly mention financial models
-            if re.search(r'(?i)(financial model|income statement|balance sheet|cash flow)', content):
-                min_score = 1
-                min_length = 50
-            
-            # If message has good patterns and substantial content, consider it
-            if total_score >= min_score and len(content) > min_length:
-                if total_score > best_score:
-                    best_context = content
-                    best_score = total_score
+                for pattern in context_patterns:
+                    matches = re.findall(pattern, content)
+                    if matches:
+                        pattern_matches += len(matches)
+                        # Weight financial terms higher
+                        if any(term in pattern.lower() for term in ['financial', 'dcf', 'income', 'cash flow', 'wacc']):
+                            content_score += len(matches) * 2
+                        else:
+                            content_score += len(matches)
+                
+                # Lower requirements: was >= 3 and > 200, now >= 2 and > 100
+                if pattern_matches >= 2 and len(content) > 100:
+                    # Calculate quality score
+                    quality_score = pattern_matches + (len(content) / 100) + content_score
                     
-        return best_context
+                    relevant_messages.append({
+                        'content': content,
+                        'pattern_matches': pattern_matches,
+                        'content_score': content_score,
+                        'quality_score': quality_score,
+                        'length': len(content)
+                    })
+        
+        if not relevant_messages:
+            return None
+        
+        # Sort by quality score and take the best match
+        relevant_messages.sort(key=lambda x: x['quality_score'], reverse=True)
+        best_match = relevant_messages[0]
+        
+        # Return the most relevant context with truncation for performance
+        context_content = best_match['content']
+        if len(context_content) > 1500:  # Increased from 1000
+            context_content = context_content[:1500] + "..."
+        
+        return context_content
     
     @staticmethod
     def analyze_user_intent(message: str, history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -106,66 +113,80 @@ class ContextAnalyzer:
         """
         message_lower = message.lower().strip()
         
-        # Enhanced reference detection patterns
+        # Enhanced reference detection patterns for 2025
         reference_patterns = {
             'direct_reference': [
-                r'(?i)\b(build|create|implement|make|generate|set up)\s+(the\s+)?(above|that|this|it)\b',
-                r'(?i)\b(do|execute|perform|carry out)\s+(the\s+)?(above|that|this|it)\b',
-                r'(?i)\b(based on|using|following)\s+(the\s+)?(above|previous|that|what)\b',
-                r'(?i)\b(build|create|implement|make|generate|set up).*in.*sheet\b',
-                r'(?i)\b(build|create|implement|make|generate|set up).*in.*current.*sheet\b',
-                # Enhanced patterns for short commands
-                r'(?i)^(ok\s+)?(build|create|implement|make|generate|set up)\s+(it|that|this)\s+(for\s+me)?',
-                r'(?i)^(please\s+)?(build|create|implement|make|generate|set up)\s+(it|that|this)',
-                r'(?i)^(now\s+)?(build|create|implement|make|generate|set up)\s+(it|that|this)'
+                r'(?i)\b(build|create|implement|make|generate|set up|construct|design)\s+(the\s+)?(above|that|this|it|one)\b',
+                r'(?i)\b(do|execute|perform|carry out|run|apply)\s+(the\s+)?(above|that|this|it)\b',
+                r'(?i)\b(ok|yes|please|go ahead|proceed)\s+(build|create|implement|make|do)\s+(it|that|this)\b',
+                r'(?i)^(ok|yes|please|go ahead|proceed)\s+(build|create|implement|make)\s+(it|that|this|the model|an?\s+model)\b',
+                r'(?i)\b(build|create)\s+(an?\s+)?(income statement|financial model|dcf|fsm|model)\b',
             ],
-            'contextual_reference': [
-                r'(?i)\b(as\s+)?(described|mentioned|discussed|outlined|specified)\s+(above|previously|earlier|before)\b',
-                r'(?i)\b(the\s+)?(plan|model|structure|format|template)\s+(we|you|I)\s+(discussed|mentioned|described)\b',
-                r'(?i)\b(what\s+)?(we|you|I)\s+(talked about|discussed|went over|covered)\b',
-                r'(?i)\b(income statement|balance sheet|cash flow|financial model)\s+.*(described|mentioned|outlined)\b'
+            'financial_requests': [
+                r'(?i)\b(income statement|profit.{0,5}loss|p.{0,2}l|financial model|financial statement)\b',
+                r'(?i)\b(dcf|discounted cash flow|valuation|financial model)\b',
+                r'(?i)\b(fsm|financial statement model|three statement model)\b',
+                r'(?i)\b(balance sheet|cash flow statement|statement of cash flows)\b',
+                r'(?i)\b(wacc|cost of capital|discount rate|terminal value)\b',
+                r'(?i)\b(revenue|cogs|expenses|ebitda|net income|free cash flow)\b',
             ],
-            'imperative_with_context': [
-                r'(?i)^(now\s+)?(build|create|implement|make|generate|set up)\b',
-                r'(?i)^(please\s+)?(build|create|implement|make|generate|set up)\b',
-                r'(?i)^(go ahead and\s+)?(build|create|implement|make|generate|set up)\b',
-                r'(?i)^(ok\s+)?(build|create|implement|make|generate|set up)\b'
+            'implementation_requests': [
+                r'(?i)\b(build|create|generate|make|implement|set up|construct|design)\b',
+                r'(?i)\b(add|insert|put|place|include)\s+(a|an|the)?\s*(table|model|template|structure)\b',
+                r'(?i)^(ok|yes|please|sure|alright)\s*,?\s*(build|create|make|do|implement)\b',
+                r'(?i)\b(show me|give me|provide|display)\s+(an?\s+)?(example|template|model)\b',
+            ],
+            'short_confirmations': [
+                r'(?i)^(ok|yes|please|sure|alright|go ahead|proceed|do it)\s*\.?$',
+                r'(?i)^(build it|make it|create it|do it|implement it)\s*\.?$',
+                r'(?i)^(ok build it|yes build it|please build it)\s*(for me)?\s*\.?$',
+                r'(?i)^(build|create|make)\s+(it|that|this|the model)\s*(for me)?\s*\.?$',
             ]
         }
         
-        # Check for reference patterns
-        has_reference = False
-        reference_type = None
-        
-        for ref_type, patterns in reference_patterns.items():
+        # Calculate pattern scores with enhanced detection
+        pattern_scores = {}
+        for category, patterns in reference_patterns.items():
+            score = 0
             for pattern in patterns:
-                if re.search(pattern, message):
-                    has_reference = True
-                    reference_type = ref_type
-                    break
-            if has_reference:
-                break
+                matches = re.findall(pattern, message)
+                if matches:
+                    # Give higher scores for financial and implementation requests
+                    if category in ['financial_requests', 'implementation_requests']:
+                        score += len(matches) * 3  # Higher weight for financial terms
+                    elif category == 'short_confirmations':
+                        score += len(matches) * 4  # Highest weight for confirmation phrases
+                    else:
+                        score += len(matches) * 2
+            pattern_scores[category] = score
         
-        # Analyze action intent
-        action_keywords = {
-            'build': ['build', 'create', 'make', 'construct', 'develop', 'set up', 'establish'],
-            'implement': ['implement', 'execute', 'perform', 'carry out', 'do', 'run'],
-            'modify': ['modify', 'change', 'update', 'edit', 'adjust', 'alter'],
-            'analyze': ['analyze', 'review', 'examine', 'check', 'look at', 'inspect']
-        }
+        total_score = sum(pattern_scores.values())
         
-        detected_action = None
-        for action, keywords in action_keywords.items():
-            if any(keyword in message_lower for keyword in keywords):
-                detected_action = action
-                break
+        # Lower threshold for better responsiveness (was 3, now 2)
+        has_context_reference = (
+            total_score >= 2 or 
+            pattern_scores.get('short_confirmations', 0) >= 2 or
+            pattern_scores.get('financial_requests', 0) >= 1 or
+            (len(message_lower.split()) <= 6 and pattern_scores.get('implementation_requests', 0) >= 1)
+        )
+        
+        # Enhanced action type detection
+        action_type = 'unknown'
+        if pattern_scores.get('financial_requests', 0) >= 1:
+            action_type = 'financial_modeling'
+        elif pattern_scores.get('implementation_requests', 0) >= 2:
+            action_type = 'implementation'
+        elif pattern_scores.get('short_confirmations', 0) >= 2:
+            action_type = 'confirmation'
+        elif pattern_scores.get('direct_reference', 0) >= 2:
+            action_type = 'reference'
         
         return {
-            'has_context_reference': has_reference,
-            'reference_type': reference_type,
-            'action_intent': detected_action,
-            'message_length': len(message),
-            'is_short_command': len(message.split()) <= 5 and has_reference
+            'has_context_reference': has_context_reference,
+            'action_type': action_type,
+            'pattern_scores': pattern_scores,
+            'total_score': total_score,
+            'message_length': len(message.split())
         }
 
 
@@ -518,7 +539,7 @@ class Orchestrator:
     def _prepare_context_aware_agent(self, agent: BaseAgent, mode: str, message: str, history: List[Dict[str, Any]] = None) -> BaseAgent:
         """
         Prepare an agent with context-aware instructions based on conversation history.
-        This is the core intelligence that mirrors Cursor/Windsurf behavior.
+        Enhanced to work in both ask and analyst modes for better follow-up handling.
         """
         # Reset system prompt to prevent accumulation
         agent.reset_system_prompt()
@@ -526,83 +547,67 @@ class Orchestrator:
         # Add sheet context
         agent.add_system_message(self.sheet_context)
         
-        # Perform sophisticated context analysis for both ask and analyst modes
+        # Perform sophisticated context analysis for BOTH ask and analyst modes (enhanced 2025)
         intent_analysis = self.context_analyzer.analyze_user_intent(message, history)
         
         if intent_analysis['has_context_reference']:
-            # Extract implementation context from history
-            implementation_context = self.context_analyzer.extract_implementation_context(history or [])
+            # Extract context from conversation history
+            context = self.context_analyzer.extract_implementation_context(history)
             
-            if implementation_context:
-                # Add sophisticated context-aware instructions
+            if context:
+                # Enhanced context-aware prompting
                 context_instruction = f"""
-CONTEXT-AWARE EXECUTION MODE ACTIVATED:
+CONTEXT-AWARE MODE ACTIVATED 🎯
 
-The user is referencing previous conversation content with intent to {intent_analysis['action_intent'] or 'execute'}.
+The user is making a follow-up request that refers to previous conversation context.
 
-PREVIOUS CONTEXT TO IMPLEMENT:
-{implementation_context}
+PREVIOUS CONTEXT:
+{context}
 
-CRITICAL EXECUTION RULES:
-1. DO NOT call apply_updates_and_reply with empty arguments
-2. ALWAYS provide specific cell references (e.g., "A1", "B2") and values
-3. When building a financial model from the context above:
-   - Extract ALL specific cells, labels, and formulas mentioned
-   - Start with headers in row 1 (A1, B1, C1, etc.)
-   - Build the model cell by cell using set_cell
-   - Use apply_updates_and_reply ONLY when you have multiple specific updates ready
-4. Example of CORRECT usage:
-   apply_updates_and_reply(updates=[
-       {{"cell": "A1", "value": "Revenue"}},
-       {{"cell": "B1", "value": "2024"}},
-       {{"cell": "B2", "value": 1500}}
-   ], reply="Built revenue model")
-5. NEVER call apply_updates_and_reply with empty updates array or without arguments
+CURRENT REQUEST: "{message}"
 
-EXECUTION INSTRUCTIONS:
-1. Analyze the above context to understand EXACTLY what needs to be built/implemented
-2. Extract all specific details: labels, formulas, data sources, structure, formatting
-3. If it's a financial model/table, identify all required components (inputs, calculations, outputs)
-4. Look for any cell references (A1, B2, etc.) and formulas (=SUM, =AVERAGE, etc.) mentioned
-5. Implement using proper tool calls with exact cell references and values
-6. If formulas are mentioned, use allow_formula=True parameter
-7. Build the complete structure step by step, starting with headers/labels
-8. Do NOT ask for clarification - proceed with implementation based on the context
-9. If multiple options exist, choose the most comprehensive and industry-standard approach
+ANALYSIS:
+- Action Type: {intent_analysis['action_type']}
+- Pattern Scores: {intent_analysis['pattern_scores']}
+- Message is {'short' if intent_analysis['message_length'] <= 6 else 'detailed'} ({intent_analysis['message_length']} words)
 
-IMMEDIATE ACTION: Build the model described in the context using specific tool calls.
+INSTRUCTIONS:
+1. **INTERPRET** the current request in the context of the previous conversation
+2. **IMPLEMENT** what was discussed or requested in the previous context
+3. **BE PROACTIVE** - if they said "build it" or similar, actually build the financial model/analysis
+4. **USE TOOLS** - Apply concrete changes to the spreadsheet based on the context
+5. **BE SPECIFIC** - Don't just explain, actually create the requested model/analysis
+
+For financial modeling requests:
+- Build actual income statements, DCF models, or FSM templates
+- Use real formulas and structure
+- Apply proper formatting and labels
+- Include relevant assumptions and drivers
+
+Remember: The user expects ACTION, not just explanation. IMPLEMENT what was discussed.
 """
                 agent.add_system_message(context_instruction)
                 
-                print(f"🧠 Context-aware mode activated - implementing from previous context ({len(implementation_context)} chars)")
-            else:
-                # Fallback for references without clear implementation context
-                agent.add_system_message("""
-CONTEXT REFERENCE DETECTED: The user is referring to something from previous conversation.
-Look at the conversation history to understand what they want you to implement or build.
-Extract the most detailed specification or plan from recent messages and execute it.
+                # For analyst mode, add extra financial modeling context
+                if mode == 'analyst':
+                    analyst_context = """
+ENHANCED ANALYST MODE - FINANCIAL MODELING SPECIALIST
 
-CRITICAL: When making tool calls:
-- NEVER call apply_updates_and_reply with empty arguments
-- Always provide specific cell references and values
-- Use set_cell for individual updates when uncertain
-""")
-                print(f"🔗 Context reference detected but no clear implementation context found")
-        
-        # Add mode-specific instructions
-        if mode == "ask":
-            agent.add_system_message("You can both analyze spreadsheet data and provide financial knowledge. When the user asks about data in the current spreadsheet, use your read-only tools first to examine the data. When they ask about financial concepts, modeling techniques, or general knowledge, provide comprehensive explanations directly. If they ask you to build something, use the available tools to implement it.")
-        else:
-            # Standard analyst mode instructions
-            agent.add_system_message("""
-IMPORTANT INSTRUCTION ABOUT FINANCIAL MODELS:
-- DO NOT use the insert_fsm_model, insert_dcf_model, insert_fsm_template, or insert_dcf_template tools UNLESS the user EXPLICITLY asks for:
-  * a financial statement model (FSM)
-  * a discounted cash flow model (DCF)
-  * a 3-statement model
-  * a financial projection model with multiple statements
-- For simple financial tables (single income statement, single balance sheet, etc.), create them directly using set_cell, without using specialized model tools.
-- When the user asks for a basic table, NEVER attempt to build a full financial model with multiple statements.
-""")
+You are a senior financial analyst with expertise in:
+- Building comprehensive financial models (DCF, LBO, Comps)
+- Creating detailed financial statements (Income Statement, Balance Sheet, Cash Flow)
+- Developing assumption-driven models with proper drivers
+- Implementing industry best practices for financial modeling
+
+When building models:
+1. Start with clear assumptions and drivers
+2. Build logical flow from revenues to cash flows
+3. Include proper formulas and cell references
+4. Add formatting and structure for clarity
+5. Provide meaningful insights and analysis
+
+PRIORITY: When asked to build a model, actually create it in the spreadsheet immediately.
+"""
+                    agent.add_system_message(analyst_context)
         
         return agent 
