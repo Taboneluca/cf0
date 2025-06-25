@@ -8,32 +8,10 @@ import asyncio
 from dotenv import load_dotenv
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
-from core.sheets import (
-    Spreadsheet, 
-    set_cell, 
-    create_new_sheet,
-    summarize_sheet,
-    DEFAULT_ROWS,
-    DEFAULT_COLS
-)
-from workbook_store import get_sheet, get_workbook, workbooks, initialize as initialize_workbook_store
-from api.router import process_message, process_message_streaming
-from api.schemas import ChatRequest, ChatResponse
-from core.llm import PROVIDERS  # Import the provider registry
-from core.llm.catalog import get_models, get_model_info  # Import the new model catalog functions
-from api.memory import clear_history, get_history
-from core.agents.base_agent import ChatStep
-from core.agents.ask_agent import build as build_ask_agent  
-from core.agents.analyst_agent import build as build_analyst_agent
-from api.admin_prompts import router as prompts_admin_router
-import json
-from fastapi.responses import StreamingResponse
-from core.sheets.adapter import get_implementation_info
-from core.sheets.adapter import SpreadsheetAdapter
-import time
-import traceback
-from functools import partial
-from core.sheets.operations import (
+
+# Direct imports instead of core.* to fix deployment issues
+from spreadsheet_engine.model import Spreadsheet
+from spreadsheet_engine.operations import (
     get_cell, get_range, summarize_sheet, calculate,
     set_cell, add_row, add_column, delete_row, delete_column,
     sort_range, find_replace, create_new_sheet,
@@ -41,7 +19,28 @@ from core.sheets.operations import (
     apply_scalar_to_row, apply_scalar_to_column, set_cells,
     list_sheets, get_sheet_summary
 )
-from core.sheets.summary import sheet_summary
+from spreadsheet_engine.summary import sheet_summary
+
+# Default values for sheet creation
+DEFAULT_ROWS = 100
+DEFAULT_COLS = 26
+
+from workbook_store import get_sheet, get_workbook, workbooks, initialize as initialize_workbook_store
+from api.router import process_message, process_message_streaming
+from api.schemas import ChatRequest, ChatResponse
+from llm.factory import get_client, get_default_client  # Direct import instead of core.llm
+from llm.catalog import get_models, get_model_info  # Direct import
+from llm import PROVIDERS  # Import the provider registry
+from api.memory import clear_history, get_history
+from agents.base_agent import ChatStep  # Direct import instead of core.agents
+from agents.ask_agent import build as build_ask_agent  # Direct import
+from agents.analyst_agent import build as build_analyst_agent  # Direct import
+from api.admin_prompts import router as prompts_admin_router
+import json
+from fastapi.responses import StreamingResponse
+import time
+import traceback
+from functools import partial
 
 # LangServe imports for enhanced streaming
 from langserve import add_routes
@@ -552,7 +551,7 @@ async def delete_workbook(wid: str):
 async def debug_config():
     """Get information about the current configuration."""
     return {
-        "spreadsheet_engine": get_implementation_info(),
+        "spreadsheet_engine": "Direct imports - deployment ready",
         "environment": {
             "USE_DATAFRAME_MODEL": os.getenv("USE_DATAFRAME_MODEL", "0"),
             "USE_FORMULA_ENGINE": os.getenv("USE_FORMULA_ENGINE", "0"),
@@ -623,12 +622,10 @@ async def chat_step(ws: WebSocket):
             workbook_metadata["contexts"] = req.contexts
 
         # build llm_client based on model parameter
-        provider_key, model_id = (req.model or "openai:gpt-4o-mini").split(":", 1)
-        LLMCls = PROVIDERS[provider_key]
-        
-        # Resolve API key
-        api_key = os.environ.get(f"{provider_key.upper()}_API_KEY")
-        llm_client = LLMCls(api_key=api_key, model=model_id)
+        if req.model:
+            llm_client = get_client(req.model)
+        else:
+            llm_client = get_default_client()
 
         # Get tool functions with sheet access
         tool_functions = {}
