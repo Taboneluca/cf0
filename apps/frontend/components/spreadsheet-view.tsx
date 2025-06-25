@@ -662,7 +662,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
           <thead>
             <tr>
               <th className="w-6 h-6 bg-gray-50 border-b border-r border-gray-200 sticky top-0 left-0 z-20"></th>
-              {data.columns.map((col) => (
+              {(data.columns || []).map((col) => (
                 <th
                   key={col}
                   className="min-w-[80px] w-[1%] h-6 bg-gray-50 border-b border-r border-gray-200 text-xs font-medium text-gray-600 sticky top-0 z-10"
@@ -673,12 +673,12 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
             </tr>
           </thead>
           <tbody>
-            {data.rows.map((row) => (
+            {(data.rows || []).map((row) => (
               <tr key={row}>
                 <td className="w-6 h-6 bg-gray-50 border-r border-b border-gray-200 text-xs font-medium text-gray-600 text-center sticky left-0 z-10">
                   {row}
                 </td>
-                {data.columns.map((col) => {
+                {(data.columns || []).map((col) => {
                   const cellId = `${col}${row}`
                   const isSelected = selected === cellId
                   const isInSelectedRange = isInRange(cellId)
@@ -686,7 +686,7 @@ export default function SpreadsheetView({ data, onCellUpdate, readOnly = false }
                   const displayValue = getCellDisplayValue(cellId)
                   
                   // Get the cell data and style
-                  const cellData = data.cells[cellId] || { value: "" }
+                  const cellData = data.cells?.[cellId] || { value: "" }
                   const cellStyle = cellData.style || {}
                   
                   // Generate style string based on cell formatting

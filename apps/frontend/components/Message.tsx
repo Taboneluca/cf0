@@ -92,7 +92,8 @@ const Message: React.FC<MessageProps> = ({ message }) => {
   // STREAMING FIX: Check if message was ever streamed (has timestamp) or is currently streaming/thinking
   const wasStreamed = message.timestamp || message.status === 'thinking' || message.status === 'streaming';
   
-  // If no sections found, message is being streamed, or message was previously streamed, render as blue text without bubble
+  // CRITICAL FIX: If message was streamed, ALWAYS render as blue text to prevent visual flash
+  // This maintains consistent formatting throughout the streaming lifecycle
   if (matches.length === 0 || wasStreamed) {
     const parts = message.content.split(/(@[\w!:.]+)/g);
     return (

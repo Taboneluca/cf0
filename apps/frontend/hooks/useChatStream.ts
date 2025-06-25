@@ -258,6 +258,38 @@ export function useChatStream(
     
     setIsStreaming(true);
     
+    // Intelligent batching for smooth rendering
+    let accumulatedText = '';
+    let lastUpdateTime = 0;
+    const MIN_UPDATE_INTERVAL = 50; // Update UI every 50ms max for smooth streaming
+    let pendingUpdate = false;
+    
+    const flushAccumulatedText = () => {
+      if (accumulatedText && !pendingUpdate) {
+        pendingUpdate = true;
+        flushSync(() => {
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const index = newMessages.findIndex(m => m.id === id);
+            if (index >= 0) {
+              const currentContent = newMessages[index].content || '';
+              newMessages[index] = {
+                ...newMessages[index],
+                content: currentContent + accumulatedText,
+                status: 'streaming' as const,
+                timestamp: Date.now() // Mark as streamed
+              };
+            }
+            return newMessages;
+          });
+        });
+        accumulatedText = '';
+        lastUpdateTime = Date.now();
+        pendingUpdate = false;
+        scrollToBottom();
+      }
+    };
+    
     try {
       // Use Next.js API route with proper authentication
       const response = await fetch('/api/chat/stream', {
@@ -346,24 +378,14 @@ export function useChatStream(
               length: newText.length 
             });
             
-            // Use flushSync for instant rendering
-            flushSync(() => {
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  newMessages[index] = {
-                    ...newMessages[index],
-                    content: (newMessages[index].content || '') + newText,
-                    status: 'streaming' as const,
-                    timestamp: Date.now() // Mark as streamed
-                  };
-                }
-                return newMessages;
-              });
-            });
+            // Intelligent batching: accumulate text and update UI at reasonable intervals
+            accumulatedText += newText;
+            const now = Date.now();
             
-            scrollToBottom();
+            // Update immediately if enough time has passed or if it's a significant chunk
+            if (now - lastUpdateTime >= MIN_UPDATE_INTERVAL || newText.includes('\n') || newText.length > 10) {
+              flushAccumulatedText();
+            }
             break;
             
           case 'update':
@@ -385,6 +407,9 @@ export function useChatStream(
             const totalTime = Date.now() - streamStats.current.startTime;
             debugLog('PERFORMANCE', `Total stream time: ${totalTime}ms, chunks: ${streamStats.current.chunkCount}`);
             
+            // Flush any remaining accumulated text
+            flushAccumulatedText();
+            
             flushSync(() => {
               setMessages(prev => {
                 const newMessages = [...prev];
@@ -399,11 +424,14 @@ export function useChatStream(
               });
             });
             
-            if (event.sheet) {
+            // SAFETY CHECK: Only update sheet if data is valid
+            if (event.sheet && event.sheet.columns && event.sheet.rows) {
               dispatch({
                 type: "UPDATE_SHEET",
                 payload: { id: wb.active, data: event.sheet }
               });
+            } else if (event.sheet) {
+              debugLog('SHEET_UPDATE_SKIPPED', 'Skipping incomplete sheet data', event.sheet);
             }
             
             setIsStreaming(false);
@@ -426,6 +454,9 @@ export function useChatStream(
             
           case 'error':
             debugLog('STREAM_ERROR', 'Stream error received', event.error);
+            // Flush any remaining text before showing error
+            flushAccumulatedText();
+            
             flushSync(() => {
               setMessages(prev => {
                 const newMessages = [...prev];
@@ -451,6 +482,9 @@ export function useChatStream(
             debugLog('UNKNOWN_EVENT', 'Unknown event type', event);
         }
       }
+      
+      // Flush any remaining accumulated text
+      flushAccumulatedText();
       
       // If we reach here without a complete event, stream ended unexpectedly
       if (hasStarted) {
