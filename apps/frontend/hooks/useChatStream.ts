@@ -310,11 +310,13 @@ export function useChatStream(
     };
     
     try {
+      const apiBase = process.env.NEXT_PUBLIC_BACKEND_URL || '';
+      const streamUrl = `${apiBase}/${mode}/stream`;
       const requestBody = { mode, message, wid: wb.wid, sid: wb.active, contexts, model: model || '' };
       debugLog('REQUEST_START', 'Starting streaming request', requestBody);
       
       const requestStart = Date.now();
-      const response = await fetch('/api/chat/stream', {
+      const response = await fetch(streamUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -348,14 +350,10 @@ export function useChatStream(
         throw new Error('Response body is empty - cannot stream');
       }
       
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      
-      debugLog('STREAM_READER_READY', 'Starting to read stream chunks');
-      let buffer = '';
+      debugLog('STREAM_READER_READY', 'Starting to parse SSE stream');
       let hasStarted = false;
       
-      // Process the streaming response
+      // Process the streaming response using parseSSEStream (which handles the reader internally)
       for await (const event of parseSSEStream(response)) {
         streamStats.current.chunkCount++;
         
