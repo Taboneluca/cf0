@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Railway startup script for CF0 API Gateway
-# Handles PORT environment variable and module path correctly
+# Uses the existing working main.py instead of serve.py
 
 # Default to port 8000 if PORT is not set
 export PORT=${PORT:-8000}
@@ -15,10 +15,9 @@ echo "Environment: $RAILWAY_ENVIRONMENT_NAME"
 echo "Installing dependencies..."
 pip install -r requirements.txt
 
-# Since Railway root directory is /apps/api-gateway, 
-# we need to use the correct module path
-echo "Starting server with correct module path..."
-exec python -m uvicorn serve:app \
+# Use the existing working main.py (has working /chat/stream endpoint)
+echo "Starting server with existing main.py..."
+exec python -m uvicorn main:app \
     --host 0.0.0.0 \
     --port $PORT \
     --workers 1 \
