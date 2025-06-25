@@ -43,6 +43,9 @@ from core.sheets.operations import (
 )
 from core.sheets.summary import sheet_summary
 
+# LangServe imports for enhanced streaming
+from langserve import add_routes
+
 # Load environment variables
 load_dotenv()
 
@@ -880,6 +883,110 @@ async def reject_updates(wid: str, sid: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ================================================================================
+# LANGSERVE INTEGRATION - Enhanced streaming with LangServe
+# ================================================================================
+
+# LangServe request/response models  
+class LangServeRequest(BaseModel):
+    mode: str
+    message: str
+    wid: str = "default"
+    sid: str = "Sheet1"
+    contexts: List[str] = []
+    model: Optional[str] = None
+
+class LangServeResponse(BaseModel):
+    content: str
+    metadata: Dict[str, Any] = {}
+
+# LangServe streaming wrapper that uses the existing process_message_streaming
+async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[str, None]:
+    """
+    LangServe wrapper that leverages the existing robust streaming infrastructure
+    """
+    try:
+        # Get workbook and sheet
+        wb = get_workbook(request.wid)
+        if not wb:
+            yield f"Error: Workbook {request.wid} not found"
+            return
+            
+        sheet = wb.sheet(request.sid)
+        if not sheet:
+            yield f"Error: Sheet {request.sid} not found in workbook {request.wid}"
+            return
+        
+        # Create workbook metadata
+        all_sheets_data = {
+            name: s.to_dict() for name, s in wb.all_sheets().items()
+        }
+        
+        workbook_metadata = {
+            "sheets": wb.list_sheets(),
+            "active": request.sid,
+            "all_sheets_data": all_sheets_data,
+            "contexts": request.contexts
+        }
+        
+        # Use the existing process_message_streaming function
+        async for chunk in process_message_streaming(
+            request.mode,
+            request.message,
+            request.wid,
+            request.sid,
+            sheet,
+            workbook_metadata,
+            request.model
+        ):
+            # Extract text content from chunk
+            if isinstance(chunk, dict):
+                if "text" in chunk:
+                    yield chunk["text"]
+                elif "type" in chunk and chunk["type"] == "chunk" and "text" in chunk:
+                    yield chunk["text"]
+                # Skip other event types for LangServe (tool calls, etc.)
+            elif isinstance(chunk, str):
+                yield chunk
+                
+    except Exception as e:
+        yield f"Error: {str(e)}"
+
+# LangServe invoke wrapper
+async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeResponse:
+    """LangServe invoke wrapper for blocking responses"""
+    content_parts = []
+    async for chunk in langserve_stream_wrapper(request):
+        content_parts.append(chunk)
+    
+    return LangServeResponse(
+        content="".join(content_parts),
+        metadata={"mode": request.mode, "wid": request.wid, "sid": request.sid}
+    )
+
+# Add LangServe routes for enhanced streaming
+add_routes(
+    app,
+    langserve_stream_wrapper,
+    path="/ask",
+    input_type=LangServeRequest,
+)
+
+add_routes(
+    app,
+    langserve_stream_wrapper,
+    path="/analyst", 
+    input_type=LangServeRequest,
+)
+
+# Add a general LangServe route that handles both modes
+add_routes(
+    app,
+    langserve_stream_wrapper,
+    path="/langserve",
+    input_type=LangServeRequest,
+)
 
 if __name__ == "__main__":
     import uvicorn
