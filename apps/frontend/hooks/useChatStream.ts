@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import { useWorkbook } from '@/context/workbook-context';
 import { Message } from '@/types/spreadsheet';
-import { backendSheetToUI } from '@/utils/transform';
 
 // =========================================
-// 2025 OPTIMIZED STREAMING IMPLEMENTATION
+// 2025 LLM STREAMING IMPLEMENTATION
+// Using fetch + ReadableStream (not EventSource)
 // =========================================
 
 type StreamEvent = 
@@ -39,6 +39,59 @@ const debugLog = (category: string, message: string, data?: any) => {
   console.log(`[${timestamp}] 🚀 [${category}] ${message}`, data ? data : '');
 };
 
+// 2025 Streaming Parser for SSE events
+async function* parseSSEStream(response: Response): AsyncGenerator<StreamEvent, void, unknown> {
+  if (!response.body) {
+    throw new Error('Response body is null');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Process complete SSE events
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line
+      
+      let currentEvent: { event?: string; data?: string; id?: string } = {};
+      
+      for (const line of lines) {
+        if (line === '') {
+          // Empty line marks end of event
+          if (currentEvent.data !== undefined) {
+            try {
+              const eventData = JSON.parse(currentEvent.data);
+              yield {
+                ...eventData,
+                type: currentEvent.event || 'message'
+              } as StreamEvent;
+            } catch (e) {
+              debugLog('PARSE_ERROR', 'Failed to parse SSE event', { line, error: e });
+            }
+          }
+          currentEvent = {};
+        } else if (line.startsWith('event: ')) {
+          currentEvent.event = line.slice(7);
+        } else if (line.startsWith('data: ')) {
+          currentEvent.data = line.slice(6);
+        } else if (line.startsWith('id: ')) {
+          currentEvent.id = line.slice(4);
+        }
+        // Ignore other fields like 'retry:'
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export function useChatStream(
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
   mode: 'ask' | 'analyst'
@@ -46,7 +99,7 @@ export function useChatStream(
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingUpdates, setPendingUpdates] = useState<any[]>([]);
   const currentMessageIdRef = useRef<string | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [wb, dispatch, loading] = useWorkbook();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   
@@ -85,10 +138,10 @@ export function useChatStream(
 
   // Cancel any active stream
   const cancelStream = useCallback(() => {
-    if (eventSourceRef.current) {
-      debugLog('STREAM_CANCEL', 'Closing EventSource connection');
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    if (abortControllerRef.current) {
+      debugLog('STREAM_CANCEL', 'Aborting fetch request');
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
       setIsStreaming(false);
     }
   }, []);
@@ -155,7 +208,7 @@ export function useChatStream(
     setPendingUpdates([]);
   }, [pendingUpdates]);
 
-  // Main streaming function - 2025 optimized
+  // Main streaming function - 2025 LLM optimized
   const sendMessage = useCallback(async (message: string, contexts: string[] = [], model?: string) => {
     if (!wb || !wb.wid || !wb.active || loading) {
       debugLog('VALIDATION', 'Cannot send message - workbook not ready', { wb, loading });
@@ -172,7 +225,7 @@ export function useChatStream(
       chunkCount: 0
     };
     
-    debugLog('STREAM_START', 'Starting optimized EventSource streaming', { 
+    debugLog('STREAM_START', 'Starting fetch-based streaming for LLM', { 
       message: message.slice(0, 100) + (message.length > 100 ? '...' : ''), 
       mode, 
       wid: wb.wid, 
@@ -182,6 +235,10 @@ export function useChatStream(
     
     const id = `msg-${Date.now()}`;
     currentMessageIdRef.current = id;
+    
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     
     // Add user message
     setMessages(prev => [...prev, {
@@ -202,67 +259,72 @@ export function useChatStream(
     setIsStreaming(true);
     
     try {
-             // Build the SSE URL with query parameters for instant connection
-       const streamUrl = '/api/chat/stream';
-       
-       // Create EventSource with POST data as URL parameters (2025 optimization)
-       const params = new URLSearchParams({
-         mode,
-         message,
-         wid: wb.wid,
-         sid: wb.active,
-         contexts: JSON.stringify(contexts),
-         model: model || ''
-       });
-       
-       // Use the optimized Next.js API route with GET for EventSource compatibility
-       const eventSource = new EventSource(`${streamUrl}?${params.toString()}`);
-      eventSourceRef.current = eventSource;
+      // Use Next.js API route with proper authentication
+      const response = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+        },
+        body: JSON.stringify({
+          mode,
+          message,
+          wid: wb.wid,
+          sid: wb.active,
+          contexts,
+          model
+        }),
+        signal: abortController.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      debugLog('HTTP_RESPONSE', 'Fetch request successful', { 
+        status: response.status,
+        contentType: response.headers.get('content-type')
+      });
+
+      // Process the streaming response
+      let hasStarted = false;
       
-      // Fallback timer - if no data in 3 seconds, show error
-      const timeoutTimer = setTimeout(() => {
-        if (currentMessageIdRef.current === id) {
-          debugLog('TIMEOUT', 'Stream timeout - no data received in 3 seconds');
-          flushSync(() => {
-            setMessages(prev => {
-              const newMessages = [...prev];
-              const index = newMessages.findIndex(m => m.id === id);
-              if (index >= 0) {
-                               newMessages[index] = {
-                 ...newMessages[index],
-                 content: 'Request timed out. Please try again.',
-                 status: 'complete' as const
-               };
-              }
-              return newMessages;
-            });
-          });
-          cancelStream();
+      for await (const event of parseSSEStream(response)) {
+        streamStats.current.chunkCount++;
+        
+        if (streamStats.current.firstChunkTime === 0) {
+          streamStats.current.firstChunkTime = Date.now();
+          const ttft = streamStats.current.firstChunkTime - streamStats.current.startTime;
+          debugLog('PERFORMANCE', `Time to first token: ${ttft}ms`);
         }
-      }, 3000);
-      
-      // Handle stream events
-      eventSource.onopen = () => {
-        debugLog('SSE_CONNECTED', 'EventSource connection established');
-        clearTimeout(timeoutTimer);
-      };
-      
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as StreamEvent;
-          debugLog('SSE_EVENT', `Received event: ${data.type}`, data);
-          
-          streamStats.current.chunkCount++;
-          if (streamStats.current.firstChunkTime === 0) {
-            streamStats.current.firstChunkTime = Date.now();
-            const ttft = streamStats.current.firstChunkTime - streamStats.current.startTime;
-            debugLog('PERFORMANCE', `Time to first token: ${ttft}ms`);
-          }
-          
-          // Handle different event types
-          switch (data.type) {
-            case 'start':
-              debugLog('STREAM_STARTED', 'Stream officially started');
+        
+        debugLog('SSE_EVENT', `Event #${streamStats.current.chunkCount}: ${event.type}`, event);
+        
+        // Handle different event types
+        switch (event.type) {
+          case 'start':
+            debugLog('STREAM_STARTED', 'Stream officially started');
+            hasStarted = true;
+            flushSync(() => {
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    status: 'streaming'
+                  };
+                }
+                return newMessages;
+              });
+            });
+            break;
+            
+          case 'chunk':
+            if (!hasStarted) {
+              // Start streaming on first chunk if no start event
+              hasStarted = true;
               flushSync(() => {
                 setMessages(prev => {
                   const newMessages = [...prev];
@@ -276,168 +338,164 @@ export function useChatStream(
                   return newMessages;
                 });
               });
-              break;
-              
-            case 'chunk':
-              const newText = data.text;
-              debugLog('CONTENT_CHUNK', `Chunk #${streamStats.current.chunkCount}`, { 
-                text: newText, 
-                length: newText.length 
+            }
+            
+            const newText = event.text;
+            debugLog('CONTENT_CHUNK', `Chunk #${streamStats.current.chunkCount}`, { 
+              text: newText, 
+              length: newText.length 
+            });
+            
+            // Use flushSync for instant rendering
+            flushSync(() => {
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    content: (newMessages[index].content || '') + newText,
+                    status: 'streaming' as const,
+                    timestamp: Date.now() // Mark as streamed
+                  };
+                }
+                return newMessages;
               });
-              
-              // CRITICAL: Use flushSync for instant rendering
-              flushSync(() => {
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  const index = newMessages.findIndex(m => m.id === id);
-                  if (index >= 0) {
-                    newMessages[index] = {
-                      ...newMessages[index],
-                      content: (newMessages[index].content || '') + newText,
-                      status: 'streaming' as const,
-                      timestamp: Date.now() // Mark as streamed
-                    };
-                  }
-                  return newMessages;
-                });
+            });
+            
+            scrollToBottom();
+            break;
+            
+          case 'update':
+            debugLog('TOOL_UPDATE', 'Received tool update', event.payload);
+            if (event.payload) {
+              applyUpdatesToSheet([event.payload]);
+            }
+            break;
+            
+          case 'pending':
+            debugLog('PENDING_UPDATES', 'Received pending updates', event.updates);
+            if (event.updates && event.updates.length > 0) {
+              setPendingUpdates(event.updates);
+            }
+            break;
+            
+          case 'complete':
+            debugLog('STREAM_COMPLETE', 'Stream completed successfully');
+            const totalTime = Date.now() - streamStats.current.startTime;
+            debugLog('PERFORMANCE', `Total stream time: ${totalTime}ms, chunks: ${streamStats.current.chunkCount}`);
+            
+            flushSync(() => {
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    status: 'complete' as const
+                  };
+                }
+                return newMessages;
               });
-              
-              // Auto-scroll after content update
-              scrollToBottom();
-              break;
-              
-            case 'update':
-              debugLog('TOOL_UPDATE', 'Received tool update', data.payload);
-              if (data.payload) {
-                applyUpdatesToSheet([data.payload]);
-              }
-              break;
-              
-            case 'pending':
-              debugLog('PENDING_UPDATES', 'Received pending updates', data.updates);
-              if (data.updates && data.updates.length > 0) {
-                setPendingUpdates(data.updates);
-              }
-              break;
-              
-            case 'complete':
-              debugLog('STREAM_COMPLETE', 'Stream completed successfully');
-              const totalTime = Date.now() - streamStats.current.startTime;
-              debugLog('PERFORMANCE', `Total stream time: ${totalTime}ms, chunks: ${streamStats.current.chunkCount}`);
-              
-              flushSync(() => {
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  const index = newMessages.findIndex(m => m.id === id);
-                  if (index >= 0) {
-                    newMessages[index] = {
-                      ...newMessages[index],
-                      status: 'complete' as const
-                    };
-                  }
-                  return newMessages;
-                });
+            });
+            
+            if (event.sheet) {
+              dispatch({
+                type: "UPDATE_SHEET",
+                payload: { id: wb.active, data: event.sheet }
               });
-              
-              if (data.sheet) {
-                // Apply final sheet updates
-                dispatch({
-                  type: "UPDATE_SHEET",
-                  payload: { id: wb.active, data: data.sheet }
-                });
-              }
-              
-              setIsStreaming(false);
-              eventSource.close();
-              break;
-              
-            case 'tool_start':
-              debugLog('TOOL_START', `Tool started: ${data.payload.name}`, data.payload);
-              break;
-              
-            case 'tool_complete':
-              debugLog('TOOL_COMPLETE', `Tool completed: ${data.payload.id}`, data.payload);
-              if (data.payload.updates && data.payload.updates.length > 0) {
-                applyUpdatesToSheet(data.payload.updates);
-              }
-              break;
-              
-            case 'tool_error':
-              debugLog('TOOL_ERROR', `Tool error: ${data.payload.name}`, data.payload);
-              break;
-              
-            case 'error':
-              debugLog('STREAM_ERROR', 'Stream error received', data.error);
-              flushSync(() => {
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  const index = newMessages.findIndex(m => m.id === id);
-                  if (index >= 0) {
-                                   newMessages[index] = {
-                 ...newMessages[index],
-                 content: newMessages[index].content + `\n\nError: ${data.error}`,
-                 status: 'complete' as const
-               };
-                  }
-                  return newMessages;
-                });
+            }
+            
+            setIsStreaming(false);
+            return; // Exit the loop
+            
+          case 'tool_start':
+            debugLog('TOOL_START', `Tool started: ${event.payload.name}`, event.payload);
+            break;
+            
+          case 'tool_complete':
+            debugLog('TOOL_COMPLETE', `Tool completed: ${event.payload.id}`, event.payload);
+            if (event.payload.updates && event.payload.updates.length > 0) {
+              applyUpdatesToSheet(event.payload.updates);
+            }
+            break;
+            
+          case 'tool_error':
+            debugLog('TOOL_ERROR', `Tool error: ${event.payload.name}`, event.payload);
+            break;
+            
+          case 'error':
+            debugLog('STREAM_ERROR', 'Stream error received', event.error);
+            flushSync(() => {
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const index = newMessages.findIndex(m => m.id === id);
+                if (index >= 0) {
+                  newMessages[index] = {
+                    ...newMessages[index],
+                    content: newMessages[index].content + `\n\nError: ${event.error}`,
+                    status: 'complete' as const
+                  };
+                }
+                return newMessages;
               });
-              break;
-              
-            case 'ping':
-              // Ignore ping events silently
-              break;
-              
-            default:
-              debugLog('UNKNOWN_EVENT', 'Unknown event type', data);
-          }
-        } catch (error) {
-          debugLog('PARSE_ERROR', 'Failed to parse SSE event', { error, data: event.data });
+            });
+            setIsStreaming(false);
+            return; // Exit on error
+            
+          case 'ping':
+            // Ignore ping events silently
+            break;
+            
+          default:
+            debugLog('UNKNOWN_EVENT', 'Unknown event type', event);
         }
-      };
+      }
       
-      eventSource.onerror = (error) => {
-        debugLog('SSE_ERROR', 'EventSource error', error);
-        clearTimeout(timeoutTimer);
-        
+      // If we reach here without a complete event, stream ended unexpectedly
+      if (hasStarted) {
+        debugLog('STREAM_ENDED', 'Stream ended without complete event');
         flushSync(() => {
           setMessages(prev => {
             const newMessages = [...prev];
             const index = newMessages.findIndex(m => m.id === id);
-                         if (index >= 0 && newMessages[index].status === 'thinking') {
-               newMessages[index] = {
-                 ...newMessages[index],
-                 content: 'Connection error. Please try again.',
-                 status: 'complete' as const
-               };
-             }
+            if (index >= 0 && newMessages[index].status === 'streaming') {
+              newMessages[index] = {
+                ...newMessages[index],
+                status: 'complete' as const
+              };
+            }
             return newMessages;
           });
         });
-        
-        setIsStreaming(false);
-        eventSource.close();
-      };
+      }
       
-    } catch (error) {
-      debugLog('SEND_ERROR', 'Error starting stream', error);
+    } catch (error: any) {
+      debugLog('SEND_ERROR', 'Error in streaming request', error);
+      
+      if (error.name === 'AbortError') {
+        debugLog('STREAM_ABORTED', 'Stream was cancelled');
+        // Don't show error for user cancellation
+        return;
+      }
       
       flushSync(() => {
         setMessages(prev => {
           const newMessages = [...prev];
           const index = newMessages.findIndex(m => m.id === id);
           if (index >= 0) {
-                       newMessages[index] = {
-             ...newMessages[index],
-             content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-             status: 'complete' as const
-           };
+            newMessages[index] = {
+              ...newMessages[index],
+              content: `Error: ${error.message || 'Connection failed. Please try again.'}`,
+              status: 'complete' as const
+            };
           }
           return newMessages;
         });
       });
-      
+    } finally {
       setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   }, [wb, dispatch, mode, loading, cancelStream, applyUpdatesToSheet, scrollToBottom]);
 
