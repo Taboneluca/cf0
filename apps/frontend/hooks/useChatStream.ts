@@ -261,37 +261,27 @@ export function useChatStream(
     // Intelligent batching for smooth rendering
     let accumulatedText = '';
     let lastUpdateTime = 0;
-    const MIN_UPDATE_INTERVAL = 100; // Update UI every 100ms max for smooth streaming
+    const MIN_UPDATE_INTERVAL = 50; // Update UI every 50ms max for smooth streaming
     let pendingUpdate = false;
-    let batchTimer: NodeJS.Timeout | null = null;
     
     const flushAccumulatedText = () => {
       if (accumulatedText && !pendingUpdate) {
         pendingUpdate = true;
-        
-        // Clear any pending timer
-        if (batchTimer) {
-          clearTimeout(batchTimer);
-          batchTimer = null;
-        }
-        
-        debugLog('BATCH_FLUSH', `Flushing ${accumulatedText.length} chars after ${Date.now() - lastUpdateTime}ms`);
-        
         flushSync(() => {
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const index = newMessages.findIndex(m => m.id === id);
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const index = newMessages.findIndex(m => m.id === id);
             if (index >= 0) {
               const currentContent = newMessages[index].content || '';
-              newMessages[index] = {
-                ...newMessages[index],
+            newMessages[index] = {
+              ...newMessages[index],
                 content: currentContent + accumulatedText,
                 status: 'streaming' as const,
                 timestamp: Date.now() // Mark as streamed
-              };
-            }
-            return newMessages;
-          });
+            };
+          }
+          return newMessages;
+        });
         });
         accumulatedText = '';
         lastUpdateTime = Date.now();
@@ -300,60 +290,38 @@ export function useChatStream(
       }
     };
     
-    // Force flush on cleanup
-    const forceFlush = () => {
-      if (batchTimer) {
-        clearTimeout(batchTimer);
-        batchTimer = null;
-      }
-      flushAccumulatedText();
-    };
-    
     try {
-      const apiBase = process.env.NEXT_PUBLIC_BACKEND_URL || '';
-      const streamUrl = `${apiBase}/${mode}/stream`;
-      const requestBody = { mode, message, wid: wb.wid, sid: wb.active, contexts, model: model || '' };
-      debugLog('REQUEST_START', 'Starting streaming request', requestBody);
-      
-      const requestStart = Date.now();
-      const response = await fetch(streamUrl, {
+      // Use Next.js API route with proper authentication
+      const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
           'Cache-Control': 'no-cache',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          mode,
+          message,
+          wid: wb.wid,
+          sid: wb.active,
+          contexts,
+          model
+        }),
         signal: abortController.signal
       });
       
-      const networkTime = Date.now() - requestStart;
-      debugLog('RESPONSE_RECEIVED', `Response received after ${networkTime}ms`, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries()),
-        ok: response.ok
-      });
-      
       if (!response.ok) {
-        const errorText = await response.text();
-        debugLog('RESPONSE_ERROR', 'Non-OK response received', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText
-        });
-        throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      if (!response.body) {
-        debugLog('NO_RESPONSE_BODY', 'Response has no body for streaming');
-        throw new Error('Response body is empty - cannot stream');
-      }
-      
-      debugLog('STREAM_READER_READY', 'Starting to parse SSE stream');
+      debugLog('HTTP_RESPONSE', 'Fetch request successful', { 
+        status: response.status,
+        contentType: response.headers.get('content-type')
+      });
+
+      // Process the streaming response
       let hasStarted = false;
       
-      // Process the streaming response using parseSSEStream (which handles the reader internally)
       for await (const event of parseSSEStream(response)) {
         streamStats.current.chunkCount++;
         
@@ -368,21 +336,21 @@ export function useChatStream(
         // Handle different event types
         switch (event.type) {
           case 'start':
-            debugLog('STREAM_STARTED', 'Stream officially started');
+              debugLog('STREAM_STARTED', 'Stream officially started');
             hasStarted = true;
-            flushSync(() => {
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  newMessages[index] = {
-                    ...newMessages[index],
-                    status: 'streaming'
-                  };
-                }
-                return newMessages;
+              flushSync(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const index = newMessages.findIndex(m => m.id === id);
+                  if (index >= 0) {
+                    newMessages[index] = {
+                      ...newMessages[index],
+                      status: 'streaming'
+                    };
+                  }
+                  return newMessages;
+                });
               });
-            });
             break;
             
           case 'chunk':
@@ -410,26 +378,13 @@ export function useChatStream(
               length: newText.length 
             });
             
-            // TRUE TIME-BASED BATCHING: Always accumulate, flush on timer only
+            // Intelligent batching: accumulate text and update UI at reasonable intervals
             accumulatedText += newText;
             const now = Date.now();
             
-            // Only flush if enough time has passed OR if first chunk
-            if (lastUpdateTime === 0) {
-              // First chunk - update immediately to show streaming started
+            // Update immediately if enough time has passed or if it's a significant chunk
+            if (now - lastUpdateTime >= MIN_UPDATE_INTERVAL || newText.includes('\n') || newText.length > 10) {
               flushAccumulatedText();
-            } else if (now - lastUpdateTime >= MIN_UPDATE_INTERVAL) {
-              // Time-based batching - flush accumulated text
-              flushAccumulatedText();
-            } else {
-              // Schedule a flush if one isn't already scheduled
-              if (!batchTimer) {
-                const timeToWait = MIN_UPDATE_INTERVAL - (now - lastUpdateTime);
-                batchTimer = setTimeout(() => {
-                  batchTimer = null;
-                  flushAccumulatedText();
-                }, timeToWait);
-              }
             }
             break;
             
@@ -453,38 +408,38 @@ export function useChatStream(
             debugLog('PERFORMANCE', `Total stream time: ${totalTime}ms, chunks: ${streamStats.current.chunkCount}`);
             
             // Flush any remaining accumulated text
-            forceFlush();
+            flushAccumulatedText();
             
-            flushSync(() => {
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  newMessages[index] = {
-                    ...newMessages[index],
+              flushSync(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const index = newMessages.findIndex(m => m.id === id);
+                  if (index >= 0) {
+                    newMessages[index] = {
+                      ...newMessages[index],
                     status: 'complete' as const
-                  };
-                }
-                return newMessages;
+                    };
+                  }
+                  return newMessages;
+                });
               });
-            });
-            
+              
             // SAFETY CHECK: Only update sheet if data is valid
             if (event.sheet && event.sheet.columns && event.sheet.rows) {
-              dispatch({
+                dispatch({
                 type: "UPDATE_SHEET",
                 payload: { id: wb.active, data: event.sheet }
-              });
+                });
             } else if (event.sheet) {
               debugLog('SHEET_UPDATE_SKIPPED', 'Skipping incomplete sheet data', event.sheet);
-            }
-            
-            setIsStreaming(false);
+              }
+              
+              setIsStreaming(false);
             return; // Exit the loop
             
           case 'tool_start':
             debugLog('TOOL_START', `Tool started: ${event.payload.name}`, event.payload);
-            break;
+              break;
             
           case 'tool_complete':
             debugLog('TOOL_COMPLETE', `Tool completed: ${event.payload.id}`, event.payload);
@@ -500,28 +455,28 @@ export function useChatStream(
           case 'error':
             debugLog('STREAM_ERROR', 'Stream error received', event.error);
             // Flush any remaining text before showing error
-            forceFlush();
+            flushAccumulatedText();
             
-            flushSync(() => {
-              setMessages(prev => {
-                const newMessages = [...prev];
-                const index = newMessages.findIndex(m => m.id === id);
-                if (index >= 0) {
-                  newMessages[index] = {
-                    ...newMessages[index],
+              flushSync(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const index = newMessages.findIndex(m => m.id === id);
+                  if (index >= 0) {
+                    newMessages[index] = {
+                      ...newMessages[index],
                     content: newMessages[index].content + `\n\nError: ${event.error}`,
                     status: 'complete' as const
-                  };
-                }
-                return newMessages;
+                    };
+                  }
+                  return newMessages;
+                });
               });
-            });
-            setIsStreaming(false);
+              setIsStreaming(false);
             return; // Exit on error
             
           case 'ping':
             // Ignore ping events silently
-            break;
+              break;
             
           default:
             debugLog('UNKNOWN_EVENT', 'Unknown event type', event);
@@ -529,40 +484,23 @@ export function useChatStream(
       }
       
       // Flush any remaining accumulated text
-      forceFlush();
+      flushAccumulatedText();
       
       // If we reach here without a complete event, stream ended unexpectedly
       if (hasStarted) {
         debugLog('STREAM_ENDED', 'Stream ended without complete event');
         flushSync(() => {
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const index = newMessages.findIndex(m => m.id === id);
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const index = newMessages.findIndex(m => m.id === id);
             if (index >= 0 && newMessages[index].status === 'streaming') {
-              newMessages[index] = {
-                ...newMessages[index],
+            newMessages[index] = {
+              ...newMessages[index],
                 status: 'complete' as const
-              };
-            }
-            return newMessages;
-          });
+            };
+          }
+          return newMessages;
         });
-      } else {
-        // Stream never started - this is the analyst mode issue
-        debugLog('STREAM_NEVER_STARTED', 'Stream ended without ever starting - possible backend/auth issue');
-        flushSync(() => {
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const index = newMessages.findIndex(m => m.id === id);
-            if (index >= 0) {
-              newMessages[index] = {
-                ...newMessages[index],
-                content: 'Stream failed to start. Please check connection and try again.',
-                status: 'complete' as const
-              };
-            }
-            return newMessages;
-          });
         });
       }
       
@@ -575,16 +513,6 @@ export function useChatStream(
         return;
       }
       
-      // Enhanced error logging for debugging
-      debugLog('ERROR_DETAILS', 'Detailed error information', {
-        name: error.name,
-        message: error.message,
-        status: error.status || 'unknown',
-        response: error.response || 'none'
-      });
-      
-      forceFlush(); // Flush any pending text
-      
       flushSync(() => {
         setMessages(prev => {
           const newMessages = [...prev];
@@ -592,7 +520,7 @@ export function useChatStream(
           if (index >= 0) {
             newMessages[index] = {
               ...newMessages[index],
-              content: `Connection Error: ${error.message || 'Stream failed to connect. Please try again.'}`,
+              content: `Error: ${error.message || 'Connection failed. Please try again.'}`,
               status: 'complete' as const
             };
           }
@@ -600,7 +528,6 @@ export function useChatStream(
         });
       });
     } finally {
-      forceFlush(); // Always cleanup any pending batches
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
