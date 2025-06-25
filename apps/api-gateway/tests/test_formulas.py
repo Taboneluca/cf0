@@ -1,5 +1,5 @@
 import unittest
-from apps.api_gateway.spreadsheet_engine.model import Spreadsheet
+from spreadsheet_engine.model import Spreadsheet
 
 class TestFormulaEvaluation(unittest.TestCase):
     def setUp(self):
