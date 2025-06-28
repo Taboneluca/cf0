@@ -4,8 +4,8 @@ openai==1.78.0
 anthropic==0.51.0
 groq==0.24.0
 python-dotenv==1.1.0
-pandas==2.2.3
-numpy==2.2.5
+pandas==2.1.4
+numpy==1.26.4
 sentry-sdk[fastapi]
 tenacity==8.2.3
 supabase==2.13.0
