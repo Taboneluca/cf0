@@ -42,7 +42,7 @@ import time
 import traceback
 from functools import partial
 from langserve import add_routes  # NEW
-from langchain.schema.runnable import RunnableLambda, RunnableGenerator  # NEW
+from langchain.schema.runnable import RunnableGenerator  # NEW
 
 # Load environment variables
 load_dotenv()
@@ -707,27 +707,19 @@ async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeRespon
 # LANGSERVE ROUTE REGISTRATION (NO LEGACY FALLBACK)
 # ================================================================================
 
-# Create Runnable wrappers for invoke and stream
-ask_runnable = RunnableLambda(lambda req: langserve_invoke_wrapper(req)).with_types(
-    input_type=LangServeRequest,
-    output_type=LangServeResponse,
-)
+# Helper to build runnable that supports both invoke and stream
+def build_runnable():
+    async def _stream(req: LangServeRequest):
+        async for chunk in langserve_stream_wrapper(req):
+            yield chunk
 
-analyst_runnable = RunnableLambda(lambda req: langserve_invoke_wrapper(req)).with_types(
-    input_type=LangServeRequest,
-    output_type=LangServeResponse,
-)
+    return RunnableGenerator(_stream).with_types(
+        input_type=LangServeRequest,
+        output_type=LangServeResponse,
+    )
 
-# monkey-patch .astream to enable /stream endpoint using our generator
-async def _ask_astream(req: LangServeRequest):
-    async for chunk in langserve_stream_wrapper(req):
-        yield chunk
-ask_runnable.astream = _ask_astream  # type: ignore
-
-async def _analyst_astream(req: LangServeRequest):
-    async for chunk in langserve_stream_wrapper(req):
-        yield chunk
-analyst_runnable.astream = _analyst_astream  # type: ignore
+ask_runnable = build_runnable()
+analyst_runnable = build_runnable()
 
 # Register routes – mounted at /ask and /analyst (invoke + stream endpoints only)
 add_routes(
