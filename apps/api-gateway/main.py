@@ -42,9 +42,6 @@ import time
 import traceback
 from functools import partial
 
-# LangServe imports for enhanced streaming
-from langserve import add_routes
-
 # Load environment variables
 load_dotenv()
 
@@ -962,28 +959,14 @@ async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeRespon
         metadata={"mode": request.mode, "wid": request.wid, "sid": request.sid}
     )
 
-# Add LangServe routes for enhanced streaming
-add_routes(
-    app,
-    langserve_stream_wrapper,
-    path="/ask",
-    input_type=LangServeRequest,
-)
-
-add_routes(
-    app,
-    langserve_stream_wrapper,
-    path="/analyst", 
-    input_type=LangServeRequest,
-)
-
-# Add a general LangServe route that handles both modes
-add_routes(
-    app,
-    langserve_stream_wrapper,
-    path="/langserve",
-    input_type=LangServeRequest,
-)
+# Note: We have LangServe-compatible endpoints without using add_routes
+# Our custom FastAPI endpoints provide the same functionality:
+# - /chat/stream - Main streaming endpoint (SSE format)
+# - Custom request/response handling with full workbook context
+# - Enhanced error handling and tool integration
+# 
+# If needed, LangServe Runnable wrappers could be added in the future,
+# but our current implementation is more flexible and feature-rich.
 
 if __name__ == "__main__":
     import uvicorn
