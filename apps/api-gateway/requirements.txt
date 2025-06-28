@@ -14,4 +14,4 @@ pydantic<3
 pytest==7.4.0
 pytest-asyncio==0.21.1
 langserve[all]==0.3.0
-langchain==0.2.1 
+langchain==0.3.21 
