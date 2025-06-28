@@ -10,6 +10,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
     "openai:gpt-o4-mini":     {"provider": "openai",    "id": "o4-mini",             "tool_calls": True, "max_tokens": 128000, "label": "o4-mini"},  
     "anthropic:claude-3-5-sonnet": {"provider": "anthropic", "id": "claude-3-5-sonnet-20240620", "tool_calls": True, "max_tokens": 200000, "label": "Claude 3.5 sonnet"},
     "anthropic:claude-3-7-sonnet": {"provider": "anthropic", "id": "claude-3-7-sonnet-20250219", "tool_calls": True, "max_tokens": 200000, "label": "Claude 3.7 sonnet"},
+    "anthropic:claude-4-sonnet": {"provider": "anthropic", "id": "claude-4-sonnet-20250710", "tool_calls": True, "max_tokens": 200000, "label": "Claude 4 Sonnet"},
     "groq:llama-3-3-70b":     {"provider": "groq",      "id": "llama-3.3-70b-versatile", "tool_calls": True, "max_tokens": 32768, "label": "Llama-3.3-70B"},
     "groq:llama-3-1-8b":      {"provider": "groq",      "id": "llama-3.1-8b-instant", "tool_calls": True, "max_tokens": 8192, "label": "Llama-3.1-8B"},
     "groq:llama-3-8b":        {"provider": "groq",      "id": "llama3-8b-8192",    "tool_calls": True, "max_tokens": 8192, "label": "Llama-3-8B"},
@@ -38,6 +39,8 @@ ALIAS_MAP = {
     "claude-3-7-sonnet":           "claude-3-7-sonnet-20250219",
     "anthropic:claude-3-5-sonnet": "claude-3-5-sonnet-20240620",
     "claude-3-5-sonnet":           "claude-3-5-sonnet-20240620",
+    "anthropic:claude-4-sonnet":   "claude-4-sonnet-20250710",
+    "claude-4-sonnet":             "claude-4-sonnet-20250710",
     
     # OpenAI aliases
     "openai:gpt-4o":              "gpt-4o",

@@ -7,12 +7,12 @@ export const maxDuration = 60;  // Vercel hobby plan limit
 export const dynamic = 'force-dynamic'; // Prevents caching
 
 // Support both GET and POST for maximum compatibility
-export async function GET(request: NextRequest) {
-  return handleStream(request, 'GET');
+export async function GET() {
+  return new Response(JSON.stringify({ error: 'Deprecated – use /api/langserve/chat' }), { status: 410, headers: { 'Content-Type': 'application/json' } })
 }
 
-export async function POST(request: NextRequest) {
-  return handleStream(request, 'POST');
+export async function POST() {
+  return new Response(JSON.stringify({ error: 'Deprecated – use /api/langserve/chat' }), { status: 410, headers: { 'Content-Type': 'application/json' } })
 }
 
 async function handleStream(request: NextRequest, method: 'GET' | 'POST') {

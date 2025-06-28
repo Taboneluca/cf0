@@ -41,6 +41,8 @@ from fastapi.responses import StreamingResponse
 import time
 import traceback
 from functools import partial
+from langserve import add_routes  # NEW
+from langchain.schema.runnable import RunnableLambda, RunnableGenerator  # NEW
 
 # Load environment variables
 load_dotenv()
@@ -194,285 +196,15 @@ async def create_sheet(request: NewSheetRequest = None, wid: str = "default"):
         raise HTTPException(status_code=400, detail=str(e))
 
 # Chat endpoint - main interaction
-@app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
-    import time
-    import traceback
-    
-    start_time = time.time()
-    request_id = f"req-{int(time.time()*1000)}"
-    print(f"[{request_id}] 📝 Chat request received: mode={req.mode}, wid={req.wid}, sid={req.sid}")
-    
-    try:
-        # Try to use moderation if available, but don't fail if it doesn't work
-        try:
-            if os.getenv("USE_OPENAI_MODERATION", "0").lower() in ("1", "true", "yes"):
-                # Create an OpenAI client just for moderation
-                from openai import OpenAI
-                openai_key = os.getenv("OPENAI_API_KEY")
-                if openai_key:
-                    moderation_client = OpenAI(api_key=openai_key)
-                    moderation = moderation_client.moderations.create(input=req.message)
-                    if moderation.results[0].flagged:
-                        print(f"[{request_id}] ⚠️ Message flagged by moderation")
-                        raise HTTPException(400, "Message violates policy")
-        except Exception as moderation_error:
-            # Log the error but continue processing the message
-            print(f"[{request_id}] ⚠️ Moderation check failed: {moderation_error}")
-        
-        # Get the workbook and active sheet
-        print(f"[{request_id}] 🔍 Getting workbook {req.wid} and sheet {req.sid}")
-        try:
-            wb = get_workbook(req.wid)
-            if not wb:
-                print(f"[{request_id}] ❌ Workbook not found: {req.wid}")
-                raise HTTPException(404, f"Workbook not found: {req.wid}")
-            
-            sheet = wb.sheet(req.sid)
-            if not sheet:
-                print(f"[{request_id}] ❌ Sheet not found: {req.sid} in workbook {req.wid}")
-                print(f"[{request_id}] 📋 Available sheets: {wb.list_sheets()}")
-                raise HTTPException(404, f"Sheet not found: {req.sid}")
-            
-            print(f"[{request_id}] ✅ Found workbook with {len(wb.list_sheets())} sheets")
-        except Exception as e:
-            print(f"[{request_id}] ❌ Error getting workbook/sheet: {str(e)}")
-            traceback.print_exc()
-            raise HTTPException(500, f"Error accessing workbook or sheet: {str(e)}")
-        
-        # Create metadata with all sheets in the workbook for cross-sheet formulas
-        all_sheets_data = {
-            name: sheet.to_dict() for name, sheet in wb.all_sheets().items()
-        }
-        
-        print(f"[{request_id}] 🕒 Preparing to process message with {len(wb.list_sheets())} available sheets")
-        
-        # Process the message with the sheet and workbook context - rate limited
-        async with chat_limiter:
-            print(f"[{request_id}] 🚀 Processing message through agent (mode: {req.mode})")
-            process_start = time.time()
-            
-            try:
-                result = await process_message(
-                    req.mode, 
-                    req.message, 
-                    req.wid, 
-                    req.sid, 
-                    sheet,
-                    workbook_metadata={
-                        "sheets": wb.list_sheets(),
-                        "active": req.sid,
-                        "all_sheets_data": all_sheets_data,
-                        "contexts": req.contexts
-                    },
-                    model=req.model
-                )
-                process_time = time.time() - process_start
-                print(f"[{request_id}] ⏱️ Message processed in {process_time:.2f}s")
-            except Exception as process_error:
-                print(f"[{request_id}] ❌ Error in process_message: {str(process_error)}")
-                traceback.print_exc()
-                raise HTTPException(500, f"Error processing message: {str(process_error)}")
-        
-        # Verify the result structure before returning
-        if not isinstance(result, dict) or "reply" not in result or "sheet" not in result:
-            print(f"[{request_id}] ❌ Invalid result structure: {result.keys() if isinstance(result, dict) else type(result)}")
-            raise HTTPException(500, "Invalid response format from agent")
-        
-        total_time = time.time() - start_time
-        print(f"[{request_id}] ✅ Request completed in {total_time:.2f}s with reply length: {len(result['reply'])}")
-        
-        return ChatResponse(**result)
-    except HTTPException:
-        # Re-raise HTTP exceptions without modifying them
-        raise
-    except Exception as e:
-        print(f"[{request_id}] ❌ Unhandled error processing chat request: {str(e)}")
-        tb = traceback.format_exc()
-        print(f"[{request_id}] 📋 Traceback: {tb}")
-        
-        # For debugging purposes, try to identify if this is a sheet access error
-        if "Sheet is None" in str(e):
-            print(f"[{request_id}] 🔍 Sheet access error detected for wid={req.wid}, sid={req.sid}")
-            try:
-                wb = get_workbook(req.wid)
-                sheet_list = wb.list_sheets() if wb else []
-                print(f"[{request_id}] 📋 Available sheets: {sheet_list}")
-            except Exception as inner_e:
-                print(f"[{request_id}] ❌ Failed to get sheet list: {str(inner_e)}")
-        
-        total_time = time.time() - start_time
-        print(f"[{request_id}] ❌ Request failed after {total_time:.2f}s")
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/chat", include_in_schema=False)
+async def chat_deprecated(_: ChatRequest):
+    """Legacy blocking chat endpoint removed."""
+    raise HTTPException(status_code=410, detail="Deprecated – use /ask/invoke or /analyst/invoke.")
 
 # Chat endpoint with streaming support
-@app.post("/chat/stream")
-async def stream_chat(req: ChatRequest):
-    """
-    Streaming version of the chat endpoint that uses Server-Sent Events (SSE)
-    to deliver partial responses as they are generated.
-    """
-    try:
-        # Try to use moderation if available
-        try:
-            if os.getenv("USE_OPENAI_MODERATION", "0").lower() in ("1", "true", "yes"):
-                # Create an OpenAI client just for moderation
-                from openai import OpenAI
-                openai_key = os.getenv("OPENAI_API_KEY")
-                if openai_key:
-                    moderation_client = OpenAI(api_key=openai_key)
-                    moderation = moderation_client.moderations.create(input=req.message)
-                    if moderation.results[0].flagged:
-                        raise HTTPException(400, "Message violates policy")
-        except Exception as moderation_error:
-            # Log the error but continue processing the message
-            print(f"Warning: Moderation check failed: {moderation_error}")
-        
-        # Get the workbook and active sheet
-        wb = get_workbook(req.wid)
-        sheet = wb.sheet(req.sid)
-        
-        # Create metadata with all sheets
-        all_sheets_data = {
-            name: sheet.to_dict() for name, sheet in wb.all_sheets().items()
-        }
-        
-        # Enable DEBUG_STREAMING for detailed logging during stream processing
-        os.environ["DEBUG_STREAMING"] = "1"
-        
-        # Track error patterns to prevent infinite loops
-        error_count = {}
-        consecutive_errors = 0
-        last_error_signature = None
-        max_consecutive_errors = 10
-        
-        try:
-            async def event_generator():
-                request_id = f"sse-{int(time.time()*1000)}"
-                print(f"[{request_id}] 🚀 Starting SSE stream for mode={req.mode}, wid={req.wid}, sid={req.sid}")
-                
-                # Send the initial 'start' event (important for clients to initialize state)
-                start_event = f"event: start\ndata: {json.dumps({'type': 'start'})}\n\n"
-                yield start_event
-                print(f"[{request_id}] 📤 Sent start event")
-                
-                # Detect which provider we're using (for logging purposes)
-                provider = "default"
-                if req.model:
-                    provider = req.model.split(":")[0] if ":" in req.model else req.model
-                    
-                # Process the message with streaming
-                async for chunk in process_message_streaming(
-                    req.mode, 
-                    req.message, 
-                    req.wid, 
-                    req.sid, 
-                    sheet,
-                    workbook_metadata={
-                        "sheets": wb.list_sheets(),
-                        "active": req.sid,
-                        "all_sheets_data": all_sheets_data,
-                        "contexts": req.contexts
-                    },
-                    model=req.model
-                ):
-                    # Basic error tracking and loop prevention
-                    if isinstance(chunk, dict) and "error" in chunk:
-                        error_signature = str(chunk.get("error", ""))[:50]  # First 50 chars
-                        
-                        if error_signature == last_error_signature:
-                            consecutive_errors += 1
-                        else:
-                            consecutive_errors = 1
-                            last_error_signature = error_signature
-                        
-                        # Circuit breaker for repeated errors
-                        if consecutive_errors >= max_consecutive_errors:
-                            print(f"[{request_id}] 🔥 SSE Circuit breaker: Stopping after {consecutive_errors} consecutive errors")
-                            # Send a final error message and break
-                            error_payload = {
-                                "type": "error",
-                                "error": "Too many repeated errors - stopping to prevent infinite loop"
-                            }
-                            sse_payload = f"event: error\ndata: {json.dumps(error_payload)}\n\n"
-                            yield sse_payload
-                            break
-                    
-                    # Determine event type and prepare chunk for SSE
-                    if isinstance(chunk, dict):
-                        if "type" in chunk:
-                            event_type = chunk["type"]
-                        elif "error" in chunk:
-                            event_type = "error"
-                        else:
-                            event_type = "chunk"
-                    else:
-                        event_type = "chunk"
-                        # Wrap string content in proper format
-                        chunk = {"type": "chunk", "text": str(chunk)}
-                    
-                    # Format and send as Server-Sent Event
-                    sse_payload = f"event: {event_type}\ndata: {json.dumps(chunk)}\n\n"
-                    yield sse_payload
-                    
-                    # Force immediate flush for real-time streaming
-                    await asyncio.sleep(0)  # Yield control to allow immediate flush
-                    
-                    # Print debug info about the event
-                    if event_type == 'chunk' and 'text' in chunk:
-                        # For text chunks, print a sample (useful for verifying token-by-token streaming)
-                        text_preview = chunk['text'].replace('\n', '\\n')[:30]
-                        print(f"[{request_id}] 💬 {provider} text chunk[{len(chunk['text'])}]: '{text_preview}...'")
-                    elif event_type == 'error':
-                        print(f"[{request_id}] ❌ {provider} error: {chunk.get('error', 'Unknown error')}")
-                    elif event_type == 'complete':
-                        print(f"[{request_id}] 📦 {provider} complete event")
-                        # Make sure we process the complete event and then break
-                        # The frontend needs this to know the stream is finished
-                        break
-                    elif event_type in ['update', 'tool_start', 'tool_complete']:
-                        print(f"[{request_id}] 🔧 {provider} {event_type}: {str(chunk)[:100]}...")
-                    else:
-                        print(f"[{request_id}] 📦 {provider} {event_type} event")
-                
-                print(f"[{request_id}] ✅ SSE stream completed for {provider}")
-                
-                # Always send a complete event to ensure frontend knows stream is done
-                # (only if we haven't already sent one)
-                complete_event = {"type": "complete", "sheet": None}
-                sse_payload = f"event: complete\ndata: {json.dumps(complete_event)}\n\n"
-                yield sse_payload
-                print(f"[{request_id}] 📦 {provider} complete event (final)")
-            
-            return StreamingResponse(
-                event_generator(),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no"  # Helps with NGINX buffering
-                }
-            )
-        
-        except Exception as e:
-            print(f"Error processing streaming chat request: {str(e)}")
-            # Return an error event
-            async def error_generator():
-                yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
-            return StreamingResponse(
-                error_generator(),
-                media_type="text/event-stream"
-            )
-
-    except Exception as e:
-        print(f"Error processing streaming chat request: {str(e)}")
-        # Return an error event
-        async def error_generator():
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
-        return StreamingResponse(
-            error_generator(),
-            media_type="text/event-stream"
-        )
+@app.post("/chat/stream", include_in_schema=False)
+async def stream_chat_deprecated(_: ChatRequest):
+    raise HTTPException(status_code=410, detail="Deprecated – use /ask/stream or /analyst/stream.")
 
 # Keep old endpoints for backwards compatibility but mark as deprecated
 @app.get("/sheet", deprecated=True)
@@ -934,15 +666,20 @@ async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[
             workbook_metadata,
             request.model
         ):
-            # Extract text content from chunk
             if isinstance(chunk, dict):
-                if "text" in chunk:
-                    yield chunk["text"]
-                elif "type" in chunk and chunk["type"] == "chunk" and "text" in chunk:
-                    yield chunk["text"]
-                # Skip other event types for LangServe (tool calls, etc.)
+                # Map legacy dicts to our unified wire format expected by frontend
+                if "type" in chunk and chunk["type"] == "chunk" and "text" in chunk:
+                    payload = {"type": "chunk", "text": chunk["text"]}
+                    yield json.dumps(payload)
+                elif "text" in chunk:
+                    payload = {"type": "chunk", "text": chunk["text"]}
+                    yield json.dumps(payload)
+                elif "type" in chunk:
+                    # forward other structured events as-is
+                    yield json.dumps(chunk)
             elif isinstance(chunk, str):
-                yield chunk
+                payload = {"type": "chunk", "text": chunk}
+                yield json.dumps(payload)
                 
     except Exception as e:
         yield f"Error: {str(e)}"
@@ -952,21 +689,68 @@ async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeRespon
     """LangServe invoke wrapper for blocking responses"""
     content_parts = []
     async for chunk in langserve_stream_wrapper(request):
-        content_parts.append(chunk)
+        try:
+            # chunk is JSON string
+            data = json.loads(chunk)
+            if isinstance(data, dict) and data.get("type") == "chunk":
+                content_parts.append(data.get("text", ""))
+        except Exception:
+            # fallback raw
+            content_parts.append(str(chunk))
     
     return LangServeResponse(
         content="".join(content_parts),
         metadata={"mode": request.mode, "wid": request.wid, "sid": request.sid}
     )
 
-# Note: We have LangServe-compatible endpoints without using add_routes
-# Our custom FastAPI endpoints provide the same functionality:
-# - /chat/stream - Main streaming endpoint (SSE format)
-# - Custom request/response handling with full workbook context
-# - Enhanced error handling and tool integration
-# 
-# If needed, LangServe Runnable wrappers could be added in the future,
-# but our current implementation is more flexible and feature-rich.
+# ================================================================================
+# LANGSERVE ROUTE REGISTRATION (NO LEGACY FALLBACK)
+# ================================================================================
+
+# Create Runnable wrappers for invoke and stream
+ask_runnable = RunnableLambda(lambda req: langserve_invoke_wrapper(req)).with_types(
+    input_type=LangServeRequest,
+    output_type=LangServeResponse,
+)
+
+analyst_runnable = RunnableLambda(lambda req: langserve_invoke_wrapper(req)).with_types(
+    input_type=LangServeRequest,
+    output_type=LangServeResponse,
+)
+
+# monkey-patch .astream to enable /stream endpoint using our generator
+async def _ask_astream(req: LangServeRequest):
+    async for chunk in langserve_stream_wrapper(req):
+        yield chunk
+ask_runnable.astream = _ask_astream  # type: ignore
+
+async def _analyst_astream(req: LangServeRequest):
+    async for chunk in langserve_stream_wrapper(req):
+        yield chunk
+analyst_runnable.astream = _analyst_astream  # type: ignore
+
+# Register routes – mounted at /ask and /analyst (invoke + stream endpoints only)
+add_routes(
+    app,
+    ask_runnable,
+    path="/ask",
+    enabled_endpoints=["invoke", "stream"],
+)
+
+add_routes(
+    app,
+    analyst_runnable,
+    path="/analyst",
+    enabled_endpoints=["invoke", "stream"],
+)
+
+# Generic combined route (if needed) under /langserve using ask_runnable (acts as default)
+add_routes(
+    app,
+    ask_runnable,
+    path="/langserve",
+    enabled_endpoints=["invoke", "stream"],
+)
 
 if __name__ == "__main__":
     import uvicorn

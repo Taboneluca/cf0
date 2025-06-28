@@ -1,4 +1,4 @@
-fastapi==0.111.0
+fastapi<0.111
 uvicorn==0.29.0
 openai==1.78.0
 anthropic==0.51.0
@@ -10,6 +10,7 @@ sentry-sdk[fastapi]
 tenacity==8.2.3
 supabase==2.13.0
 tiktoken==0.9.0
-pydantic[email]==2.11.3
+pydantic<3
 pytest==7.4.0
-pytest-asyncio==0.21.1 
+pytest-asyncio==0.21.1
+langserve[all]==0.3.0 

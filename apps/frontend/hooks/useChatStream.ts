@@ -18,7 +18,8 @@ type StreamEvent =
   | { type: 'ping' }
   | { type: 'tool_start', payload: { id: string, name: string } }
   | { type: 'tool_complete', payload: { id: string, result: any, updates?: any[] } }
-  | { type: 'tool_error', payload: { id: string, error: any, name: string } };
+  | { type: 'tool_error', payload: { id: string, error: any, name: string } }
+  | { type: 'message', text?: string };
 
 // Enable more detailed debug logging for streaming
 const DEBUG_STREAMING = process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEBUG_STREAMING === '1';
@@ -292,7 +293,7 @@ export function useChatStream(
     
     try {
       // Use Next.js API route with proper authentication
-      const response = await fetch('/api/chat/stream', {
+      const response = await fetch('/api/langserve/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -477,6 +478,20 @@ export function useChatStream(
           case 'ping':
             // Ignore ping events silently
               break;
+            
+          case 'message':
+            // Treat default unnamed SSE events as chunk
+            const mData: any = event;
+            if (mData && mData.text !== undefined) {
+              const newText2 = mData.text;
+              debugLog('CONTENT_CHUNK', `Chunk #${streamStats.current.chunkCount} (message)`, { text: newText2, length: newText2.length });
+              accumulatedText += newText2;
+              const now2 = Date.now();
+              if (now2 - lastUpdateTime >= MIN_UPDATE_INTERVAL || newText2.includes('\n') || newText2.length > 10) {
+                flushAccumulatedText();
+              }
+            }
+            break;
             
           default:
             debugLog('UNKNOWN_EVENT', 'Unknown event type', event);
