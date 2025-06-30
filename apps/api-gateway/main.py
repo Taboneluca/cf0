@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Request, Response, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, Union, AsyncGenerator
 import os
@@ -62,6 +64,36 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include the prompts admin router
 app.include_router(prompts_admin_router)
+
+# Add RequestValidationError handler for debugging 422 errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Custom handler for RequestValidationError to capture and log detailed validation failures.
+    This helps identify the exact cause of 422 errors by logging the request body and validation error details.
+    """
+    # Get request body for logging
+    try:
+        request_body = await request.body()
+        request_body_str = request_body.decode('utf-8')
+    except Exception:
+        request_body_str = "Could not decode request body"
+    
+    # Log detailed validation error information
+    print(f"🚨 RequestValidationError on {request.method} {request.url}")
+    print(f"📄 Request body: {request_body_str}")
+    print(f"❌ Validation errors: {exc.errors()}")
+    print(f"🔍 Error details: {str(exc)}")
+    
+    # Return detailed JSON response with validation error information
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(),
+            "body": request_body_str,
+            "message": "Request validation failed - check logs for details"
+        }
+    )
 
 @app.on_event("startup")
 async def startup_event():
@@ -630,18 +662,21 @@ class LangServeResponse(BaseModel):
 # LangServe streaming wrapper that uses the existing process_message_streaming
 async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[str, None]:
     """
-    LangServe wrapper that leverages the existing robust streaming infrastructure
+    LangServe wrapper that leverages the existing robust streaming infrastructure.
+    Enhanced to ensure proper SSE format compliance with explicit start and complete events.
     """
     try:
         # Get workbook and sheet
         wb = get_workbook(request.wid)
         if not wb:
-            yield f"Error: Workbook {request.wid} not found"
+            error_event = {"type": "error", "error": f"Workbook {request.wid} not found"}
+            yield f"data: {json.dumps(error_event)}\n\n"
             return
             
         sheet = wb.sheet(request.sid)
         if not sheet:
-            yield f"Error: Sheet {request.sid} not found in workbook {request.wid}"
+            error_event = {"type": "error", "error": f"Sheet {request.sid} not found in workbook {request.wid}"}
+            yield f"data: {json.dumps(error_event)}\n\n"
             return
         
         # Create workbook metadata
@@ -656,6 +691,10 @@ async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[
             "contexts": request.contexts
         }
         
+        # Yield explicit start event
+        start_event = {"type": "start"}
+        yield f"data: {json.dumps(start_event)}\n\n"
+        
         # Use the existing process_message_streaming function
         async for chunk in process_message_streaming(
             request.mode,
@@ -666,23 +705,41 @@ async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[
             workbook_metadata,
             request.model
         ):
-            if isinstance(chunk, dict):
-                # Map legacy dicts to our unified wire format expected by frontend
-                if "type" in chunk and chunk["type"] == "chunk" and "text" in chunk:
-                    payload = {"type": "chunk", "text": chunk["text"]}
-                    yield json.dumps(payload)
-                elif "text" in chunk:
-                    payload = {"type": "chunk", "text": chunk["text"]}
-                    yield json.dumps(payload)
-                elif "type" in chunk:
-                    # forward other structured events as-is
-                    yield json.dumps(chunk)
-            elif isinstance(chunk, str):
-                payload = {"type": "chunk", "text": chunk}
-                yield json.dumps(payload)
+            try:
+                if isinstance(chunk, dict):
+                    # Map legacy dicts to our unified wire format expected by frontend
+                    if "type" in chunk and chunk["type"] == "chunk" and "text" in chunk:
+                        payload = {"type": "chunk", "text": chunk["text"]}
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    elif "text" in chunk:
+                        payload = {"type": "chunk", "text": chunk["text"]}
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    elif "type" in chunk:
+                        # forward other structured events as-is in proper SSE format
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                    else:
+                        # Default handling for other dict types
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                elif isinstance(chunk, str):
+                    payload = {"type": "chunk", "text": chunk}
+                    yield f"data: {json.dumps(payload)}\n\n"
+                else:
+                    # Handle other data types
+                    payload = {"type": "chunk", "text": str(chunk)}
+                    yield f"data: {json.dumps(payload)}\n\n"
+            except Exception as chunk_error:
+                # Handle errors in chunk processing
+                error_event = {"type": "error", "error": f"Error processing chunk: {str(chunk_error)}"}
+                yield f"data: {json.dumps(error_event)}\n\n"
+        
+        # Yield explicit complete event
+        complete_event = {"type": "complete"}
+        yield f"data: {json.dumps(complete_event)}\n\n"
                 
     except Exception as e:
-        yield f"Error: {str(e)}"
+        # Yield properly formatted error event
+        error_event = {"type": "error", "error": str(e)}
+        yield f"data: {json.dumps(error_event)}\n\n"
 
 # LangServe invoke wrapper
 async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeResponse:

@@ -29,8 +29,36 @@ async function handle(req: NextRequest, method: 'GET' | 'POST') {
     body = await req.json()
   }
 
+  // Sanitize request payload to prevent null/undefined values
+  const sanitizePayload = (payload: any) => {
+    const sanitized: any = {}
+    
+    // Ensure required fields are present and properly typed
+    sanitized.mode = payload.mode || 'ask'
+    sanitized.message = payload.message || ''
+    sanitized.wid = payload.wid || 'default'
+    sanitized.sid = payload.sid || 'Sheet1'
+    
+    // Ensure contexts is always an array (never null or undefined)
+    sanitized.contexts = Array.isArray(payload.contexts) ? payload.contexts : []
+    
+    // Only include model if it's a non-empty string
+    if (typeof payload.model === 'string' && payload.model.trim()) {
+      sanitized.model = payload.model.trim()
+    }
+    
+    return sanitized
+  }
+
+  const sanitizedBody = sanitizePayload(body)
+  
+  // Log the sanitized payload for debugging 422 errors
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔍 LangServe request payload:', JSON.stringify(sanitizedBody, null, 2))
+  }
+
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://api.cf0.ai'
-  const mode = body.mode || 'ask'
+  const mode = sanitizedBody.mode
   const targetPath = mode === 'analyst' ? '/analyst/stream' : '/ask/stream'
 
   // forward to backend langserve endpoint
@@ -41,7 +69,7 @@ async function handle(req: NextRequest, method: 'GET' | 'POST') {
       'Authorization': `Bearer ${session.access_token}`,
       'Cache-Control': 'no-cache',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(sanitizedBody),
     signal: req.signal,
   })
 

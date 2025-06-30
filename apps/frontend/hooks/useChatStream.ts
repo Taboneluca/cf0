@@ -216,6 +216,23 @@ export function useChatStream(
       return;
     }
     
+    // Defensive programming - ensure all request fields are properly typed
+    const sanitizedMessage = String(message || '');
+    const sanitizedContexts = Array.isArray(contexts) ? contexts.filter(c => typeof c === 'string' && c.trim()) : [];
+    const sanitizedWid = String(wb.wid || 'default');
+    const sanitizedSid = String(wb.active || 'Sheet1');
+    const sanitizedModel = (typeof model === 'string' && model.trim()) ? model.trim() : undefined;
+    
+    // Validation logging to capture exact request payload
+    debugLog('REQUEST_VALIDATION', 'Sanitized request data', {
+      message: sanitizedMessage.slice(0, 100) + (sanitizedMessage.length > 100 ? '...' : ''),
+      contexts: sanitizedContexts,
+      wid: sanitizedWid,
+      sid: sanitizedSid,
+      model: sanitizedModel,
+      mode
+    });
+    
     // Cancel any existing stream
     cancelStream();
     
@@ -293,6 +310,17 @@ export function useChatStream(
     
     try {
       // Use Next.js API route with proper authentication
+      const requestPayload = {
+        mode,
+        message: sanitizedMessage,
+        wid: sanitizedWid,
+        sid: sanitizedSid,
+        contexts: sanitizedContexts,
+        ...(sanitizedModel && { model: sanitizedModel })
+      };
+      
+      debugLog('FETCH_REQUEST', 'Sending request to /api/langserve/chat', requestPayload);
+      
       const response = await fetch('/api/langserve/chat', {
         method: 'POST',
         headers: {
@@ -300,19 +328,31 @@ export function useChatStream(
           'Accept': 'text/event-stream',
           'Cache-Control': 'no-cache',
         },
-        body: JSON.stringify({
-          mode,
-          message,
-          wid: wb.wid,
-          sid: wb.active,
-          contexts,
-          model
-        }),
+        body: JSON.stringify(requestPayload),
         signal: abortController.signal
       });
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        
+        // Enhanced error handling for 422 validation errors
+        if (response.status === 422) {
+          try {
+            const errorData = await response.json();
+            debugLog('VALIDATION_ERROR', '422 validation error details', errorData);
+            errorMessage = `Validation Error (422): ${errorData.message || response.statusText}`;
+            if (errorData.detail && Array.isArray(errorData.detail)) {
+              const validationDetails = errorData.detail.map((error: any) => 
+                `${error.loc?.join('.') || 'unknown'}: ${error.msg}`
+              ).join(', ');
+              errorMessage += ` - Details: ${validationDetails}`;
+            }
+          } catch (parseError) {
+            debugLog('ERROR_PARSE_FAILED', 'Could not parse 422 error response', parseError);
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
       
       debugLog('HTTP_RESPONSE', 'Fetch request successful', { 

@@ -57,22 +57,54 @@ async def _save_sheet(wid: str, sheet: Spreadsheet):
         }
         
         # Check if workbook exists, create it if it doesn't
-        workbook_query = sb.table("spreadsheet_workbooks").select("wid").eq("wid", wid)
-        workbook_data = workbook_query.execute()
+        try:
+            workbook_query = sb.table("spreadsheet_workbooks").select("wid").eq("wid", wid)
+            workbook_data = workbook_query.execute()
+            
+            if len(workbook_data.data) == 0:
+                # Create the workbook first
+                workbook_insert = sb.table("spreadsheet_workbooks").insert({"wid": wid}).execute()
+                print(f"Created workbook {wid} in Supabase")
+        except Exception as workbook_error:
+            # Enhanced RLS error handling for workbooks
+            error_msg = str(workbook_error).lower()
+            if "rls" in error_msg or "policy" in error_msg or "permission" in error_msg:
+                print(f"🚨 RLS Policy Violation (workbook): User lacks permission to create/access workbook {wid}")
+                print(f"🔍 RLS Error Details: {str(workbook_error)}")
+                # Fallback: continue without workbook creation (sheet might still work)
+            else:
+                print(f"❌ Workbook creation error: {str(workbook_error)}")
+                raise  # Re-raise non-RLS errors
         
-        if len(workbook_data.data) == 0:
-            # Create the workbook first
-            sb.table("spreadsheet_workbooks").insert({"wid": wid}).execute()
+        # Upsert the sheet with enhanced RLS error handling
+        try:
+            sheet_result = sb.table("spreadsheet_sheets").upsert(
+                data, 
+                on_conflict=["workbook_wid", "name"]
+            ).execute()
+            print(f"Saved sheet {sheet.name} for workbook {wid} to Supabase")
+        except Exception as sheet_error:
+            # Enhanced RLS error handling for sheets
+            error_msg = str(sheet_error).lower()
+            if "rls" in error_msg or "policy" in error_msg or "permission" in error_msg:
+                print(f"🚨 RLS Policy Violation (sheet): User lacks permission to save sheet {sheet.name} in workbook {wid}")
+                print(f"🔍 RLS Error Details: {str(sheet_error)}")
+                print(f"💡 Fallback: Sheet changes will remain in memory only")
+                # Continue execution - don't crash the application
+                return
+            else:
+                print(f"❌ Sheet save error (non-RLS): {str(sheet_error)}")
+                raise  # Re-raise non-RLS errors
         
-        # Upsert the sheet
-        sb.table("spreadsheet_sheets").upsert(
-            data, 
-            on_conflict=["workbook_wid", "name"]
-        ).execute()
-        
-        print(f"Saved sheet {sheet.name} for workbook {wid} to Supabase")
     except Exception as e:
-        print(f"Error saving sheet to Supabase: {str(e)}")
+        # Catch-all error handling with RLS detection
+        error_msg = str(e).lower()
+        if "rls" in error_msg or "policy" in error_msg or "permission" in error_msg:
+            print(f"🚨 RLS Policy Violation (general): {str(e)}")
+            print(f"💡 Workbook persistence failed due to RLS policies - check user permissions")
+        else:
+            print(f"❌ General error saving sheet to Supabase: {str(e)}")
+        # Don't re-raise to prevent application crashes
 
 
 def save_sheet(wid: str, sheet: Spreadsheet):
