@@ -36,47 +36,25 @@ BEGIN
     END IF;
 END $$;
 
--- Create RLS policies for spreadsheet_workbooks table
--- Allow authenticated users to INSERT their own workbooks
-CREATE POLICY "Users can insert their own workbooks" 
-ON spreadsheet_workbooks FOR INSERT 
-WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+-- Create optimized RLS policies for spreadsheet_workbooks table
+-- Using (select auth.uid()) for better performance as recommended by Supabase advisors
+-- Consolidated policies for better performance (fewer permissive policies)
 
--- Allow authenticated users to SELECT their own workbooks
-CREATE POLICY "Users can view their own workbooks" 
-ON spreadsheet_workbooks FOR SELECT 
-USING (auth.uid() = user_id OR user_id IS NULL);
+-- Allow authenticated users to manage their own workbooks (all operations)
+CREATE POLICY "Users can manage their own workbooks" 
+ON spreadsheet_workbooks FOR ALL 
+USING ((select auth.uid()) = user_id OR user_id IS NULL)
+WITH CHECK ((select auth.uid()) = user_id OR user_id IS NULL);
 
--- Allow authenticated users to UPDATE their own workbooks
-CREATE POLICY "Users can update their own workbooks" 
-ON spreadsheet_workbooks FOR UPDATE 
-USING (auth.uid() = user_id OR user_id IS NULL);
+-- Create optimized RLS policies for spreadsheet_sheets table
+-- Using (select auth.uid()) for better performance as recommended by Supabase advisors
+-- Consolidated policies for better performance (fewer permissive policies)
 
--- Allow authenticated users to DELETE their own workbooks
-CREATE POLICY "Users can delete their own workbooks" 
-ON spreadsheet_workbooks FOR DELETE 
-USING (auth.uid() = user_id OR user_id IS NULL);
-
--- Create RLS policies for spreadsheet_sheets table
--- Allow authenticated users to INSERT their own sheets
-CREATE POLICY "Users can insert their own sheets" 
-ON spreadsheet_sheets FOR INSERT 
-WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
-
--- Allow authenticated users to SELECT their own sheets
-CREATE POLICY "Users can view their own sheets" 
-ON spreadsheet_sheets FOR SELECT 
-USING (auth.uid() = user_id OR user_id IS NULL);
-
--- Allow authenticated users to UPDATE their own sheets
-CREATE POLICY "Users can update their own sheets" 
-ON spreadsheet_sheets FOR UPDATE 
-USING (auth.uid() = user_id OR user_id IS NULL);
-
--- Allow authenticated users to DELETE their own sheets
-CREATE POLICY "Users can delete their own sheets" 
-ON spreadsheet_sheets FOR DELETE 
-USING (auth.uid() = user_id OR user_id IS NULL);
+-- Allow authenticated users to manage their own sheets (all operations)
+CREATE POLICY "Users can manage their own sheets" 
+ON spreadsheet_sheets FOR ALL 
+USING ((select auth.uid()) = user_id OR user_id IS NULL)
+WITH CHECK ((select auth.uid()) = user_id OR user_id IS NULL);
 
 -- Create function to automatically set user_id on insert
 CREATE OR REPLACE FUNCTION set_user_id()
@@ -103,4 +81,13 @@ CREATE TRIGGER set_user_id_sheets
 -- Update existing records to have a default user_id (for backwards compatibility)
 -- This is safe for development/testing environments
 UPDATE spreadsheet_workbooks SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
-UPDATE spreadsheet_sheets SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL; 
+UPDATE spreadsheet_sheets SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
+
+-- Add indexes for foreign keys to improve performance (recommended by Supabase advisors)
+-- Only create if they don't already exist
+CREATE INDEX IF NOT EXISTS idx_spreadsheet_workbooks_user_id ON spreadsheet_workbooks(user_id);
+CREATE INDEX IF NOT EXISTS idx_spreadsheet_sheets_user_id ON spreadsheet_sheets(user_id);
+
+-- Additional indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_spreadsheet_workbooks_wid_user_id ON spreadsheet_workbooks(wid, user_id);
+CREATE INDEX IF NOT EXISTS idx_spreadsheet_sheets_workbook_wid_user_id ON spreadsheet_sheets(workbook_wid, user_id); 

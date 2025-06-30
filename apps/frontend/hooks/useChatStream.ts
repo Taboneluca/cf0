@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import { useWorkbook } from '@/context/workbook-context';
 import { Message } from '@/types/spreadsheet';
+import { validateAndLogRequest, sanitizeRequestPayload } from '@/utils/request-validator';
 
 // =========================================
 // 2025 LLM STREAMING IMPLEMENTATION
@@ -216,22 +217,24 @@ export function useChatStream(
       return;
     }
     
-    // Defensive programming - ensure all request fields are properly typed
-    const sanitizedMessage = String(message || '');
-    const sanitizedContexts = Array.isArray(contexts) ? contexts.filter(c => typeof c === 'string' && c.trim()) : [];
-    const sanitizedWid = String(wb.wid || 'default');
-    const sanitizedSid = String(wb.active || 'Sheet1');
-    const sanitizedModel = (typeof model === 'string' && model.trim()) ? model.trim() : undefined;
+    // Use the request validator for comprehensive sanitization and validation
+    const rawPayload = {
+      mode,
+      message,
+      wid: wb.wid,
+      sid: wb.active,
+      contexts,
+      model
+    };
     
-    // Validation logging to capture exact request payload
-    debugLog('REQUEST_VALIDATION', 'Sanitized request data', {
-      message: sanitizedMessage.slice(0, 100) + (sanitizedMessage.length > 100 ? '...' : ''),
-      contexts: sanitizedContexts,
-      wid: sanitizedWid,
-      sid: sanitizedSid,
-      model: sanitizedModel,
-      mode
-    });
+    // Validate the raw payload first
+    const validationResult = validateAndLogRequest(rawPayload, 'Frontend Request Validation');
+    
+    // Sanitize the payload for reliable processing
+    const sanitizedPayload = sanitizeRequestPayload(rawPayload);
+    
+    // Additional validation logging for the sanitized payload
+    debugLog('REQUEST_SANITIZED', 'Final sanitized payload', sanitizedPayload);
     
     // Cancel any existing stream
     cancelStream();
@@ -244,11 +247,11 @@ export function useChatStream(
     };
     
     debugLog('STREAM_START', 'Starting fetch-based streaming for LLM', { 
-      message: message.slice(0, 100) + (message.length > 100 ? '...' : ''), 
-      mode, 
-      wid: wb.wid, 
-      sid: wb.active,
-      model 
+      message: sanitizedPayload.message.slice(0, 100) + (sanitizedPayload.message.length > 100 ? '...' : ''), 
+      mode: sanitizedPayload.mode, 
+      wid: sanitizedPayload.wid, 
+      sid: sanitizedPayload.sid,
+      model: sanitizedPayload.model 
     });
     
     const id = `msg-${Date.now()}`;
@@ -262,7 +265,7 @@ export function useChatStream(
     setMessages(prev => [...prev, {
       id: `user-${id}`,
       role: 'user',
-      content: message,
+      content: sanitizedPayload.message,
       status: 'complete'
     }]);
     
@@ -309,17 +312,23 @@ export function useChatStream(
     };
     
     try {
-      // Use Next.js API route with proper authentication
-      const requestPayload = {
-        mode,
-        message: sanitizedMessage,
-        wid: sanitizedWid,
-        sid: sanitizedSid,
-        contexts: sanitizedContexts,
-        ...(sanitizedModel && { model: sanitizedModel })
-      };
+      // Use the sanitized payload directly for the request
+      const requestPayload = sanitizedPayload;
       
+      // Enhanced logging to track request format for LangServe debugging
       debugLog('FETCH_REQUEST', 'Sending request to /api/langserve/chat', requestPayload);
+      debugLog('REQUEST_FORMAT_CHECK', 'Verifying request structure', {
+        payloadSize: JSON.stringify(requestPayload).length,
+        hasRequiredFields: {
+          mode: !!requestPayload.mode,
+          message: !!requestPayload.message,
+          wid: !!requestPayload.wid,
+          sid: !!requestPayload.sid,
+          contexts: Array.isArray(requestPayload.contexts)
+        },
+        contextCount: requestPayload.contexts.length,
+        modelSpecified: !!requestPayload.model
+      });
       
       const response = await fetch('/api/langserve/chat', {
         method: 'POST',
@@ -335,17 +344,30 @@ export function useChatStream(
       if (!response.ok) {
         let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
         
-        // Enhanced error handling for 422 validation errors
+        // Enhanced error handling for 422 validation errors with better debugging
         if (response.status === 422) {
           try {
             const errorData = await response.json();
             debugLog('VALIDATION_ERROR', '422 validation error details', errorData);
+            debugLog('REQUEST_PAYLOAD_DUMP', 'Failed request payload for analysis', requestPayload);
+            
             errorMessage = `Validation Error (422): ${errorData.message || response.statusText}`;
             if (errorData.detail && Array.isArray(errorData.detail)) {
               const validationDetails = errorData.detail.map((error: any) => 
                 `${error.loc?.join('.') || 'unknown'}: ${error.msg}`
               ).join(', ');
               errorMessage += ` - Details: ${validationDetails}`;
+              
+              // Additional analysis for debugging
+              debugLog('VALIDATION_FIELD_ANALYSIS', 'Analyzing validation errors', {
+                errorCount: errorData.detail.length,
+                errorsByField: errorData.detail.reduce((acc: any, error: any) => {
+                  const field = error.loc?.[0] || 'unknown';
+                  acc[field] = (acc[field] || 0) + 1;
+                  return acc;
+                }, {}),
+                rawErrors: errorData.detail
+              });
             }
           } catch (parseError) {
             debugLog('ERROR_PARSE_FAILED', 'Could not parse 422 error response', parseError);

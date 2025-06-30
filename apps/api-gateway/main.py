@@ -655,27 +655,43 @@ class LangServeRequest(BaseModel):
     contexts: List[str] = []
     model: Optional[str] = None
 
+class LangServeInputWrapper(BaseModel):
+    """
+    LangServe-compatible request wrapper that handles the input field requirement.
+    LangServe expects all parameters to be nested under an 'input' field.
+    """
+    input: LangServeRequest
+
 class LangServeResponse(BaseModel):
     content: str
     metadata: Dict[str, Any] = {}
 
 # LangServe streaming wrapper that uses the existing process_message_streaming
-async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[str, None]:
+async def langserve_stream_wrapper(request: Union[LangServeRequest, LangServeInputWrapper]) -> AsyncGenerator[str, None]:
     """
     LangServe wrapper that leverages the existing robust streaming infrastructure.
     Enhanced to ensure proper SSE format compliance with explicit start and complete events.
+    Supports both direct LangServeRequest and wrapped LangServeInputWrapper formats.
     """
     try:
-        # Get workbook and sheet
-        wb = get_workbook(request.wid)
+        # Extract the actual request from the input wrapper if needed
+        if isinstance(request, LangServeInputWrapper):
+            actual_request = request.input
+            print(f"🔄 Extracted request from LangServe input wrapper: {actual_request.model_dump()}")
+        else:
+            actual_request = request
+            print(f"📝 Using direct LangServe request: {actual_request.model_dump()}")
+        
+        # Get workbook and sheet using the extracted request
+        wb = get_workbook(actual_request.wid)
         if not wb:
-            error_event = {"type": "error", "error": f"Workbook {request.wid} not found"}
+            error_event = {"type": "error", "error": f"Workbook {actual_request.wid} not found"}
             yield f"data: {json.dumps(error_event)}\n\n"
             return
             
-        sheet = wb.sheet(request.sid)
+        sheet = wb.sheet(actual_request.sid)
         if not sheet:
-            error_event = {"type": "error", "error": f"Sheet {request.sid} not found in workbook {request.wid}"}
+            error_event = {"type": "error", "error": f"Sheet {actual_request.sid} not found in workbook {actual_request.wid}"}
             yield f"data: {json.dumps(error_event)}\n\n"
             return
         
@@ -686,9 +702,9 @@ async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[
         
         workbook_metadata = {
             "sheets": wb.list_sheets(),
-            "active": request.sid,
+            "active": actual_request.sid,
             "all_sheets_data": all_sheets_data,
-            "contexts": request.contexts
+            "contexts": actual_request.contexts
         }
         
         # Yield explicit start event
@@ -697,13 +713,13 @@ async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[
         
         # Use the existing process_message_streaming function
         async for chunk in process_message_streaming(
-            request.mode,
-            request.message,
-            request.wid,
-            request.sid,
+            actual_request.mode,
+            actual_request.message,
+            actual_request.wid,
+            actual_request.sid,
             sheet,
             workbook_metadata,
-            request.model
+            actual_request.model
         ):
             try:
                 if isinstance(chunk, dict):
@@ -742,8 +758,11 @@ async def langserve_stream_wrapper(request: LangServeRequest) -> AsyncGenerator[
         yield f"data: {json.dumps(error_event)}\n\n"
 
 # LangServe invoke wrapper
-async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeResponse:
+async def langserve_invoke_wrapper(request: Union[LangServeRequest, LangServeInputWrapper]) -> LangServeResponse:
     """LangServe invoke wrapper for blocking responses"""
+    # Extract the actual request for metadata
+    actual_request = request.input if isinstance(request, LangServeInputWrapper) else request
+    
     content_parts = []
     async for chunk in langserve_stream_wrapper(request):
         try:
@@ -757,7 +776,7 @@ async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeRespon
     
     return LangServeResponse(
         content="".join(content_parts),
-        metadata={"mode": request.mode, "wid": request.wid, "sid": request.sid}
+        metadata={"mode": actual_request.mode, "wid": actual_request.wid, "sid": actual_request.sid}
     )
 
 # ================================================================================
@@ -766,12 +785,12 @@ async def langserve_invoke_wrapper(request: LangServeRequest) -> LangServeRespon
 
 # Helper to build runnable that supports both invoke and stream
 def build_runnable():
-    async def _stream(req: LangServeRequest):
+    async def _stream(req: Union[LangServeRequest, LangServeInputWrapper]):
         async for chunk in langserve_stream_wrapper(req):
             yield chunk
 
     return RunnableGenerator(_stream).with_types(
-        input_type=LangServeRequest,
+        input_type=LangServeInputWrapper,  # Use wrapper type for LangServe compatibility
         output_type=LangServeResponse,
     )
 

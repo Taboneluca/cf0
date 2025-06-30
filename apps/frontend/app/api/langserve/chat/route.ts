@@ -52,16 +52,22 @@ async function handle(req: NextRequest, method: 'GET' | 'POST') {
 
   const sanitizedBody = sanitizePayload(body)
   
-  // Log the sanitized payload for debugging 422 errors
+  // Wrap payload in LangServe input format - this is the key fix for 422 errors
+  const langservePayload = {
+    input: sanitizedBody
+  }
+  
+  // Log both original and wrapped payloads for debugging
   if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 LangServe request payload:', JSON.stringify(sanitizedBody, null, 2))
+    console.log('🔍 Original request payload:', JSON.stringify(sanitizedBody, null, 2))
+    console.log('📦 LangServe wrapped payload:', JSON.stringify(langservePayload, null, 2))
   }
 
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://api.cf0.ai'
   const mode = sanitizedBody.mode
   const targetPath = mode === 'analyst' ? '/analyst/stream' : '/ask/stream'
 
-  // forward to backend langserve endpoint
+  // forward to backend langserve endpoint with wrapped format
   const resp = await fetch(`${backendUrl}${targetPath}`, {
     method: 'POST',
     headers: {
@@ -69,7 +75,7 @@ async function handle(req: NextRequest, method: 'GET' | 'POST') {
       'Authorization': `Bearer ${session.access_token}`,
       'Cache-Control': 'no-cache',
     },
-    body: JSON.stringify(sanitizedBody),
+    body: JSON.stringify(langservePayload),
     signal: req.signal,
   })
 
