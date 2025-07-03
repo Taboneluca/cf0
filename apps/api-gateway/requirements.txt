@@ -1,0 +1,65 @@
+fastapi==0.115.6
+uvicorn[standard]
+gunicorn
+pydantic>=2.10.5
+httpx>=0.28.1
+aiofiles
+sqlalchemy[asyncio]
+
+# OpenAI and other LLM SDKs
+openai>=1.63.1
+groq>=0.13.2
+anthropic>=0.42.0
+
+# Supabase
+supabase>=2.10.2
+asyncpg
+
+# Serialization
+orjson
+
+# SSE for streaming
+sse-starlette>=2.3.4
+
+# For formula evaluation
+numpy
+pandas
+
+# LLM provider SDK
+langfuse>=2.60.1
+
+# Async handling
+asyncio
+aiohttp
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+
+# For environment variables
+python-dotenv
+
+# File handling
+openpyxl
+
+# Monitoring and logging
+structlog
+
+# Additional utilities
+tenacity
+tiktoken>=0.8.0
+
+# For sheet operations
+xlsxwriter
+
+# For memory management and caching  
+psutil
+cachetools
+
+# Template compilation
+pyyaml
+jinja2
+
+# For hot reload in development
+watchdog[watchmedo] 

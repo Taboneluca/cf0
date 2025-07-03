@@ -1,0 +1,272 @@
+version: "3.9"
+
+networks:
+  cf0-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  storage-data:
+  redis-data:
+
+services:
+  # Local Supabase Stack
+  postgres:
+    image: supabase/postgres:15.1.0.117
+    container_name: cf0-postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - cf0-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  supabase-auth:
+    image: supabase/gotrue:v2.132.3
+    container_name: cf0-auth
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GOTRUE_DB_DATABASE_URL: postgresql://postgres:YOUR-DB-PASSWORD@postgres:5432/postgres?search_path=auth
+      GOTRUE_SITE_URL: http://localhost:3000
+      GOTRUE_URI_ALLOW_LIST: http://localhost:3000,http://localhost:3001
+      GOTRUE_JWT_SECRET: super-secret-jwt-token-for-local-dev-only
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_SMTP_HOST: mailhog
+      GOTRUE_SMTP_PORT: 1025
+      GOTRUE_SMTP_USER: ""
+      GOTRUE_SMTP_PASS: ""
+      GOTRUE_SMTP_SENDER_NAME: CF0
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SMTP_MAX_FREQUENCY: 1s
+      API_EXTERNAL_URL: http://localhost:9999
+      GOTRUE_DISABLE_SIGNUP: "false"
+    ports:
+      - "9999:9999"
+    networks:
+      - cf0-network
+
+  supabase-storage:
+    image: supabase/storage-api:v0.40.4
+    container_name: cf0-storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGREST_URL: http://supabase-rest:3000
+      PGRST_JWT_SECRET: super-secret-jwt-token-for-local-dev-only
+      DATABASE_URL: postgresql://postgres:YOUR-DB-PASSWORD@postgres:5432/postgres?search_path=storage
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: local
+      ANON_KEY: your-supabase-anon-key
+      SERVICE_KEY: your-supabase-service-role-key
+    volumes:
+      - storage-data:/var/lib/storage
+    ports:
+      - "8001:5000"
+    networks:
+      - cf0-network
+
+  supabase-rest:
+    image: postgrest/postgrest:v11.2.0
+    container_name: cf0-rest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgresql://postgres:YOUR-DB-PASSWORD@postgres:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage,auth
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-for-local-dev-only
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports:
+      - "3100:3000"
+    networks:
+      - cf0-network
+
+  # Email testing
+  mailhog:
+    image: mailhog/mailhog
+    container_name: cf0-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - cf0-network
+
+  # Caching
+  redis:
+    image: redis:7-alpine
+    container_name: cf0-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - cf0-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Gateway with hot reload
+  api-gateway:
+    build:
+      context: ./apps/api-gateway
+      dockerfile: Dockerfile.dev
+    container_name: cf0-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:YOUR-DB-PASSWORD@postgres:5432/postgres
+      SUPABASE_URL: "" # Empty to disable
+      SUPABASE_SERVICE_ROLE_KEY: "" # Empty to disable
+      PYTHONUNBUFFERED: 1
+      WATCHDOG_ENABLE: 1
+      DEBUG: 1
+      DEBUG_STREAMING: 1
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN}
+    volumes:
+      - ./apps/api-gateway:/app
+      - /app/__pycache__
+      - /app/.venv
+    command: |
+      sh -c "pip install watchdog[watchmedo] && 
+             watchmedo auto-restart --recursive --pattern='*.py' -- 
+             uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level debug"
+    ports:
+      - "8000:8000"
+      - "5678:5678"  # Python debugger port
+    networks:
+      - cf0-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend with hot reload
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile.dev
+    container_name: cf0-frontend
+    depends_on:
+      - api-gateway
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:9999
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: your-supabase-anon-key
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NODE_ENV: development
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./apps/frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    networks:
+      - cf0-network
+    stdin_open: true
+    tty: true
+
+  # Workers
+  workers:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile.dev
+    container_name: cf0-workers
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:YOUR-DB-PASSWORD@postgres:5432/postgres
+      REDIS_URL: redis://redis:6379
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./apps/workers:/app
+      - /app/__pycache__
+      - /app/.venv
+    command: |
+      sh -c "pip install watchdog[watchmedo] && 
+             watchmedo auto-restart --recursive --pattern='*.py' -- 
+             python worker.py"
+    networks:
+      - cf0-network
+
+  # Supabase Studio
+  supabase-studio:
+    image: supabase/studio:latest
+    container_name: cf0-studio
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_PASSWORD: postgres
+      DEFAULT_ORGANIZATION_NAME: Default
+      DEFAULT_PROJECT_NAME: CF0 Local
+      SUPABASE_URL: http://supabase-rest:3000
+      SUPABASE_PUBLIC_URL: http://localhost:3100
+      SUPABASE_ANON_KEY: your-supabase-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: your-supabase-service-role-key
+      STUDIO_PG_META_URL: http://postgres:5432/postgres
+    ports:
+      - "3001:3000"
+    networks:
+      - cf0-network
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cf0-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    networks:
+      - cf0-network
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cf0-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3002:3000"
+    networks:
+      - cf0-network 

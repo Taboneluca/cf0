@@ -1,0 +1,11 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "devCommand": "next dev",
+  "installCommand": "npm install --legacy-peer-deps",
+  "outputDirectory": ".next",
+  "env": {
+    "NODE_ENV": "production",
+    "NEXT_PUBLIC_SITE_URL": "https://www.cf0.ai"
+  }
+} 

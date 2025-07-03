@@ -1,0 +1,17 @@
+{
+  "projectId": "cf0",
+  "orgId": "your-org-id",
+  "settings": {
+    "framework": "nextjs",
+    "buildCommand": "npm run build",
+    "outputDirectory": ".next",
+    "rootDirectory": "apps/frontend",
+    "monorepo": true,
+    "nodeVersion": "18.x"
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  }
+} 

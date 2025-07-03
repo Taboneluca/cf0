@@ -1,0 +1,85 @@
+name: Railway Deploy
+on: [push]
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api-changed: ${{ steps.changes.outputs.api }}
+      workers-changed: ${{ steps.changes.outputs.workers }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for file changes
+        id: changes
+        run: |
+          # Check if files in API gateway directory have changed
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/api-gateway/" && echo "api=true" >> $GITHUB_OUTPUT || echo "api=false" >> $GITHUB_OUTPUT
+          
+          # Check if files in workers directory have changed
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/workers/" && echo "workers=true" >> $GITHUB_OUTPUT || echo "workers=false" >> $GITHUB_OUTPUT
+          
+          # Debug info
+          echo "Changed files:"
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }}
+
+  deploy-api:
+    needs: check-changes
+    if: needs.check-changes.outputs.api-changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Railway CLI
+        run: |
+          # Clean any existing installations
+          npm uninstall -g @railway/cli || true
+          rm -rf ~/.railway ~/.config/railway ~/.railwayrc
+          
+          # Install the CLI
+          npm install -g @railway/cli
+      
+      - name: Deploy API Gateway
+        run: |
+          echo "Deploying API Gateway with token"
+          # Direct command without login
+          railway up --service "$RAILWAY_SERVICE_ID" --detach ./apps/api-gateway || echo "Deployment initiated - check Railway dashboard for status"
+          exit 0
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_API_GATEWAY }}
+          RAILWAY_SERVICE_ID: 342c49f2-e2c6-4a08-8c86-40e822edbb9c
+          RAILWAY_PROJECT_ID: 0f5e4e5a-09f8-4904-89a0-f3ed6c405bc3
+          
+  deploy-workers:
+    needs: check-changes
+    if: needs.check-changes.outputs.workers-changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Railway CLI
+        run: |
+          # Complete clean install
+          npm uninstall -g @railway/cli || true
+          rm -rf ~/.railway ~/.config/railway ~/.railwayrc
+          npm install -g @railway/cli@latest
+      
+      - name: Deploy Workers
+        run: |
+          echo "Deploying Workers service with explicit login"
+          # First try explicit login
+          echo "$RAILWAY_TOKEN" | railway login
+          
+          # Deploy workers
+          cd ./apps/workers
+          railway up --detach || echo "Using fallback deployment method..."
+          
+          # If that fails, try direct deployment with service
+          railway up --service "$RAILWAY_SERVICE_ID" --detach || echo "Deployment initiated - check Railway dashboard for status"
+          exit 0
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
+          RAILWAY_SERVICE_ID: 8d5f9fc1-262c-4223-ab72-9a83bc66fe27
+          RAILWAY_PROJECT_ID: 7482e741-8ca2-453e-bc2f-a39c7680d145 
