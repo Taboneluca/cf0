@@ -11,7 +11,7 @@
   },
   "git": {
     "deploymentEnabled": {
-      "main": true
+      "production-main-clean": true
     }
   }
 } 

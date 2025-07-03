@@ -15,15 +15,23 @@ jobs:
       - name: Check for file changes
         id: changes
         run: |
-          # Check if files in API gateway directory have changed
-          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/api-gateway/" && echo "api=true" >> $GITHUB_OUTPUT || echo "api=false" >> $GITHUB_OUTPUT
-          
-          # Check if files in workers directory have changed
-          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/workers/" && echo "workers=true" >> $GITHUB_OUTPUT || echo "workers=false" >> $GITHUB_OUTPUT
-          
-          # Debug info
-          echo "Changed files:"
-          git diff --name-only ${{ github.event.before }} ${{ github.sha }}
+          # Handle case where github.event.before is all zeros (new/orphan branch)
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "New branch detected - deploying all services"
+            echo "api=true" >> $GITHUB_OUTPUT
+            echo "workers=true" >> $GITHUB_OUTPUT
+            echo "Changed files: All files (new branch)"
+          else
+            # Check if files in API gateway directory have changed
+            git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/api-gateway/" && echo "api=true" >> $GITHUB_OUTPUT || echo "api=false" >> $GITHUB_OUTPUT
+            
+            # Check if files in workers directory have changed
+            git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^apps/workers/" && echo "workers=true" >> $GITHUB_OUTPUT || echo "workers=false" >> $GITHUB_OUTPUT
+            
+            # Debug info
+            echo "Changed files:"
+            git diff --name-only ${{ github.event.before }} ${{ github.sha }}
+          fi
 
   deploy-api:
     needs: check-changes
