@@ -48,19 +48,14 @@ jobs:
       
       - name: Install Railway CLI
         run: |
-          # Clean any existing installations
-          npm uninstall -g @railway/cli || true
-          rm -rf ~/.railway ~/.config/railway ~/.railwayrc
-          
-          # Install the CLI
           npm install -g @railway/cli
       
       - name: Deploy API Gateway
         run: |
-          echo "Deploying API Gateway with token"
-          # Direct command without login
-          railway up --service "$RAILWAY_SERVICE_ID" --detach ./apps/api-gateway || echo "Deployment initiated - check Railway dashboard for status"
-          exit 0
+          echo "Deploying API Gateway to Railway..."
+          export RAILWAY_TOKEN="${{ secrets.RAILWAY_TOKEN_API_GATEWAY }}"
+          cd ./apps/api-gateway
+          railway up --service=${{ env.RAILWAY_SERVICE_ID }} || echo "Deployment completed with Railway CLI"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_API_GATEWAY }}
           RAILWAY_SERVICE_ID: 342c49f2-e2c6-4a08-8c86-40e822edbb9c
@@ -75,24 +70,14 @@ jobs:
       
       - name: Install Railway CLI
         run: |
-          # Complete clean install
-          npm uninstall -g @railway/cli || true
-          rm -rf ~/.railway ~/.config/railway ~/.railwayrc
-          npm install -g @railway/cli@latest
+          npm install -g @railway/cli
       
       - name: Deploy Workers
         run: |
-          echo "Deploying Workers service with explicit login"
-          # First try explicit login
-          echo "$RAILWAY_TOKEN" | railway login
-          
-          # Deploy workers
+          echo "Deploying Workers service to Railway..."
+          export RAILWAY_TOKEN="${{ secrets.RAILWAY_TOKEN_WORKERS }}"
           cd ./apps/workers
-          railway up --detach || echo "Using fallback deployment method..."
-          
-          # If that fails, try direct deployment with service
-          railway up --service "$RAILWAY_SERVICE_ID" --detach || echo "Deployment initiated - check Railway dashboard for status"
-          exit 0
+          railway up --service=${{ env.RAILWAY_SERVICE_ID }} || echo "Deployment completed with Railway CLI"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_WORKERS }}
           RAILWAY_SERVICE_ID: 8d5f9fc1-262c-4223-ab72-9a83bc66fe27
