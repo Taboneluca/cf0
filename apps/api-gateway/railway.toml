@@ -1,0 +1,15 @@
+[build]
+builder = "nixpacks"
+
+[build.env]
+NODE_ENV = "production"
+
+[deploy]
+startCommand = "chmod +x start.sh && ./start.sh"
+healthcheckTimeout = 0
+restartPolicyType = "always"
+
+[env]
+PORT = { default = "8080" }
+PYTHONPATH = "/app:$PYTHONPATH"
+PYTHON_VERSION = "3.12" 
