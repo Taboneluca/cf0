@@ -6,11 +6,9 @@ NODE_ENV = "production"
 
 [deploy]
 startCommand = "chmod +x start.sh && ./start.sh"
-healthcheckPath = "/health"
-healthcheckTimeout = 300
 restartPolicyType = "always"
 
 [env]
-PORT = { default = "8000" }
+PORT = { default = "8080" }
 PYTHONPATH = "/app:$PYTHONPATH"
 PYTHON_VERSION = "3.12" 
