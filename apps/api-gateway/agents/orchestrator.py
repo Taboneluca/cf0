@@ -285,12 +285,14 @@ class Orchestrator:
         agent = self.get_agent(mode)
         agent = self._prepare_context_aware_agent(agent, mode, message, history)
         
-        # For ask mode, limit to 1 iteration to prevent loops
+        # Dynamically choose max iterations based on user intent
+        original_max_iterations = os.environ.get("MAX_TOOL_ITERATIONS")
         if mode == "ask":
-            # Override the MAX_TOOL_ITERATIONS environment variable for ask mode
-            original_max_iterations = os.environ.get("MAX_TOOL_ITERATIONS")
-            os.environ["MAX_TOOL_ITERATIONS"] = "1"
-            print(f"[{request_id}] 🔧 Limited ask mode to 1 iteration to prevent loops")
+            os.environ["MAX_TOOL_ITERATIONS"] = "2"  # think → explain
+            print(f"[{request_id}] ⚡ Ask mode capped at 2 iterations (think→explain)")
+        else:  # analyst
+            # Leave MAX_TOOL_ITERATIONS unchanged to allow flexible think→act→explain cycles
+            print(f"[{request_id}] 🚀 Analyst mode running without hard iteration cap (think→act→explain groups)")
         
         try:
             # Apply legacy financial model tool filtering for llama-70b model
@@ -346,7 +348,7 @@ class Orchestrator:
         
         finally:
             # Restore the original MAX_TOOL_ITERATIONS environment variable
-            if mode == "ask":
+            if mode in ("ask", "analyst"):
                 if original_max_iterations is None:
                     os.environ.pop("MAX_TOOL_ITERATIONS", None)  # clean delete
                 else:
@@ -375,7 +377,7 @@ class Orchestrator:
             print(f"[{request_id}] 🎭 Orchestrator.stream_run: mode={mode}, model={self.llm.model}")
             print(f"[{request_id}] 📝 Message: {message[:100]}{'...' if len(message) > 100 else ''}")
             print(f"[{request_id}] 📚 History: {len(history) if history else 0} messages")
-            print(f"[{request_id}] 🔍 LLM Provider: {getattr(self.llm, 'name', 'unknown')}")
+            print(f"[{request_id}] �� LLM Provider: {getattr(self.llm, 'name', 'unknown')}")
             print(f"[{request_id}] 🔍 LLM Model: {getattr(self.llm, 'model', 'unknown')}")
             print(f"[{request_id}] 🔍 LLM Supports Tool Calls: {getattr(self.llm, 'supports_tool_calls', 'unknown')}")
         
@@ -396,13 +398,14 @@ class Orchestrator:
                 print(f"[{request_id}]   {i+1}. {tool['name']}")
             print(f"[{request_id}] 📝 System prompt length: {len(agent.system_prompt)} chars")
         
-        # For ask mode, limit to 1 iteration to prevent loops
+        # Dynamically choose max iterations based on user intent
+        original_max_iterations = os.environ.get("MAX_TOOL_ITERATIONS")
         if mode == "ask":
-            # Override the MAX_TOOL_ITERATIONS environment variable for ask mode
-            original_max_iterations = os.environ.get("MAX_TOOL_ITERATIONS")
-            os.environ["MAX_TOOL_ITERATIONS"] = "1"
-            if debug_orchestrator:
-                print(f"[{request_id}] 🔧 Limited ask mode to 1 iteration to prevent loops")
+            os.environ["MAX_TOOL_ITERATIONS"] = "2"  # think → explain
+            print(f"[{request_id}] ⚡ Ask mode capped at 2 iterations (think→explain)")
+        else:  # analyst
+            # Leave MAX_TOOL_ITERATIONS unchanged to allow flexible think→act→explain cycles
+            print(f"[{request_id}] 🚀 Analyst mode running without hard iteration cap (think→act→explain groups)")
         
         try:
             # Apply legacy financial model tool filtering for llama-70b model
@@ -530,7 +533,7 @@ class Orchestrator:
         
         finally:
             # Restore the original MAX_TOOL_ITERATIONS environment variable
-            if mode == "ask":
+            if mode in ("ask", "analyst"):
                 if original_max_iterations is None:
                     os.environ.pop("MAX_TOOL_ITERATIONS", None)  # clean delete
                 else:

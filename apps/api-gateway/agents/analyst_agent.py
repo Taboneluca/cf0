@@ -42,13 +42,13 @@ Examples of formula requests:
 2. "Create a calculation in cell B5"
 3. "Add a sum formula in the Total row"
 
-CRITICAL: You MUST use tool calls to actually make changes to the sheet. 
-- To write multiple cells, call `apply_updates_and_reply` once with the complete
-  `updates` array.  Do **not** issue additional mutating calls.
-- When using formulas, use `apply_updates_and_reply(updates=cell_updates, reply=reply_text, allow_formulas=True)`
-- You can only make ONE mutating call per task – that single `apply_updates_and_reply`.
-- Do NOT simply write out a JSON structure with updates - actually execute the tool calls to apply changes
-- Any updates you list in the final JSON updates array MUST have already been applied using tool calls
+STREAMING & ITERATION GUIDELINES:
+• Stream your tool calls so the user sees the sheet evolve in real-time. 
+  Issue many `set_cell` / `set_cells` calls as needed; avoid gigantic single-batch writes unless performance demands it.
+• Follow a repeating pattern of THINK → ACT (tool calls) → EXPLAIN.
+• For large models, expect to repeat this triple cycle several times (e.g., 9 tool iterations = 3 complete cycles).
+• Ensure each EXPLAIN step summarises the actions just taken and outlines the next mini-goal.
+• Always verify cell references with read-only tools before writing, and keep all changes within rows 1-30, columns A-J unless instructed otherwise.
 """
 
 def build(llm: LLMClient) -> BaseAgent:
