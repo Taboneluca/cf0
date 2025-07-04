@@ -1,8 +1,5 @@
 [build]
-builder = "nixpacks"
-
-[build.env]
-NODE_ENV = "production"
+dockerfile = "Dockerfile"
 
 [deploy]
 startCommand = "chmod +x start.sh && ./start.sh"
