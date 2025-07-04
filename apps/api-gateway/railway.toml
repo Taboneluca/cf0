@@ -2,7 +2,7 @@
 dockerfile = "Dockerfile"
 
 [deploy]
-startCommand = "chmod +x start.sh && ./start.sh"
+startCommand = "/app/start.sh"
 healthcheckTimeout = 0
 restartPolicyType = "always"
 
