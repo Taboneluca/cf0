@@ -27,5 +27,6 @@ ENV PYTHONUNBUFFERED=1 \
 # Expose port (Railway will override this)
 EXPOSE $PORT
 
-# Use shell form to allow environment variable expansion
-CMD uvicorn main:app --host 0.0.0.0 --port $PORT 
+# Run startup script that respects Railway $PORT
+RUN chmod +x start.sh
+CMD ["./start.sh"] 
