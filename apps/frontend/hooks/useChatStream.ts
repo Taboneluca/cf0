@@ -11,11 +11,13 @@ import { validateAndLogRequest, sanitizeRequestPayload } from '@/utils/request-v
 
 type StreamEvent = 
   | { type: 'start' }
-  | { type: 'chunk', text: string }
+  | { type: 'status', data?: any }
   | { type: 'content', delta?: string, text?: string }
+  | { type: 'chunk', text: string }
   | { type: 'update', payload: any }
   | { type: 'pending', updates: any[] }
   | { type: 'complete', sheet: any }
+  | { type: 'done', data?: any }
   | { type: 'error', error: string }
   | { type: 'ping' }
   | { type: 'tool_start', payload: { id: string, name: string } }
@@ -73,7 +75,7 @@ async function* parseSSEStream(response: Response): AsyncGenerator<StreamEvent, 
               const eventData = JSON.parse(currentEvent.data);
               yield {
                 ...eventData,
-                type: currentEvent.event || 'message'
+                type: currentEvent.event || eventData.type || 'message'
               } as StreamEvent;
             } catch (e) {
               debugLog('PARSE_ERROR', 'Failed to parse SSE event', { line, error: e });
@@ -400,6 +402,7 @@ export function useChatStream(
         // Handle different event types
         switch (event.type) {
           case 'start':
+          case 'status':
               debugLog('STREAM_STARTED', 'Stream officially started');
             hasStarted = true;
               flushSync(() => {
@@ -437,19 +440,21 @@ export function useChatStream(
               });
             }
             
-            const newText = event.type === 'content' ? (event.delta || event.text || '') : (event.text || '');
-            debugLog('CONTENT_CHUNK', `Chunk #${streamStats.current.chunkCount}`, { 
-              text: newText, 
-              length: newText.length 
-            });
-            
-            // Intelligent batching: accumulate text and update UI at reasonable intervals
-            accumulatedText += newText;
-            const now = Date.now();
-            
-            // Update immediately if enough time has passed or if it's a significant chunk
-            if (now - lastUpdateTime >= MIN_UPDATE_INTERVAL || newText.includes('\n') || newText.length > 10) {
-              flushAccumulatedText();
+            const newText = event.text || (event as any).delta;
+            if (newText) {
+              debugLog('CONTENT_CHUNK', `Chunk #${streamStats.current.chunkCount}`, { 
+                text: newText, 
+                length: newText.length 
+              });
+              
+              // Intelligent batching: accumulate text and update UI at reasonable intervals
+              accumulatedText += newText;
+              const now = Date.now();
+              
+              // Update immediately if enough time has passed or if it's a significant chunk
+              if (now - lastUpdateTime >= MIN_UPDATE_INTERVAL || newText.includes('\n') || newText.length > 10) {
+                flushAccumulatedText();
+              }
             }
             break;
             
@@ -468,6 +473,7 @@ export function useChatStream(
             break;
             
           case 'complete':
+          case 'done':
             debugLog('STREAM_COMPLETE', 'Stream completed successfully');
             const totalTime = Date.now() - streamStats.current.startTime;
             debugLog('PERFORMANCE', `Total stream time: ${totalTime}ms, chunks: ${streamStats.current.chunkCount}`);
@@ -489,18 +495,18 @@ export function useChatStream(
                 });
               });
               
-            // SAFETY CHECK: Only update sheet if data is valid
-            if (event.sheet && event.sheet.columns && event.sheet.rows) {
+            // SAFETY CHECK: Only update sheet if data is valid (only for complete events)
+            if (event.type === 'complete' && event.sheet && event.sheet.columns && event.sheet.rows) {
                 dispatch({
                 type: "UPDATE_SHEET",
                 payload: { id: wb.active, data: event.sheet }
                 });
-            } else if (event.sheet) {
+            } else if (event.type === 'complete' && event.sheet) {
               debugLog('SHEET_UPDATE_SKIPPED', 'Skipping incomplete sheet data', event.sheet);
               }
               
               setIsStreaming(false);
-            return; // Exit the loop
+            break;
             
           case 'tool_start':
             debugLog('TOOL_START', `Tool started: ${event.payload.name}`, event.payload);
