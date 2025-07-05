@@ -183,11 +183,17 @@ async def _do_save_sheet(wid: str, sheet: Spreadsheet) -> None:
         if workbook_response.data:
             workbook_id = workbook_response.data[0]["id"]
         else:
-            # Create the workbook if it doesn't exist
-            create_response = supabase.table("spreadsheet_workbooks").insert({
-                "wid": wid,
-                "user_id": DEFAULT_USER_ID
-            }).execute()
+            # For anonymous/server-side inserts we avoid setting user_id to prevent RLS violations
+            create_data = {"wid": wid}
+
+            # Only attach a user_id if an actual user is authenticated (i.e., DEFAULT_USER_ID has been
+            # overridden via environment variable). When using an anon or service role key without a
+            # session, auth.uid() will return NULL, so the RLS policy permits rows where user_id IS NULL.
+            # Setting a dummy UUID would violate that policy, resulting in a 42501 error.  
+            if DEFAULT_USER_ID and DEFAULT_USER_ID != "00000000-0000-0000-0000-000000000000":
+                create_data["user_id"] = DEFAULT_USER_ID
+
+            create_response = supabase.table("spreadsheet_workbooks").insert(create_data).execute()
             if create_response.data:
                 workbook_id = create_response.data[0]["id"]
         
