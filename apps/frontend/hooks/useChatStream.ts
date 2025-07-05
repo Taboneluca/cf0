@@ -12,6 +12,7 @@ import { validateAndLogRequest, sanitizeRequestPayload } from '@/utils/request-v
 type StreamEvent = 
   | { type: 'start' }
   | { type: 'chunk', text: string }
+  | { type: 'content', delta?: string, text?: string }
   | { type: 'update', payload: any }
   | { type: 'pending', updates: any[] }
   | { type: 'complete', sheet: any }
@@ -417,6 +418,7 @@ export function useChatStream(
             break;
             
           case 'chunk':
+          case 'content':
             if (!hasStarted) {
               // Start streaming on first chunk if no start event
               hasStarted = true;
@@ -435,7 +437,7 @@ export function useChatStream(
               });
             }
             
-            const newText = event.text;
+            const newText = event.type === 'content' ? (event.delta || event.text || '') : (event.text || '');
             debugLog('CONTENT_CHUNK', `Chunk #${streamStats.current.chunkCount}`, { 
               text: newText, 
               length: newText.length 
