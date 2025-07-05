@@ -35,7 +35,14 @@ export class SSEClient {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const envBase =
+      process.env.NEXT_PUBLIC_BACKEND_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      process.env.API_URL;
+
+    const resolved = baseUrl || envBase || 'http://localhost:8000';
+    // Remove trailing slash to avoid '//'
+    this.baseUrl = resolved.replace(/\/$/, '');
   }
 
   async streamChat(
@@ -53,15 +60,18 @@ export class SSEClient {
     this.close();
 
     // Create new EventSource with POST support via polyfill
-    this.eventSource = new EventSourcePolyfill(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
-      body: JSON.stringify(request),
-      withCredentials: true,
-    });
+    this.eventSource = new EventSourcePolyfill(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify(request),
+        withCredentials: true,
+      } as any // cast to allow non-standard props like method
+    );
 
     // Set up event handlers
     this.setupEventHandlers(handlers);
