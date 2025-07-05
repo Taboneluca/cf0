@@ -2,8 +2,12 @@ import { NextRequest } from 'next/server'
 
 // Helper to pick the backend base URL
 function getBackendBaseUrl() {
-  // Prefer an explicit environment variable so that production can target Railway
-  const fromEnv = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL
+  // Prefer newer NEXT_PUBLIC_BACKEND_URL but fall back to older names for back-compat
+  const fromEnv =
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.API_URL
+
   return fromEnv || 'http://localhost:8000'
 }
 
@@ -15,7 +19,12 @@ export async function POST(req: NextRequest) {
 
     // Determine which downstream endpoint to hit
     const mode = payload?.mode === 'analyst' ? 'analyst' : 'ask'
-    const downstreamUrl = `${getBackendBaseUrl()}/${mode}/stream`
+    const backendBase = getBackendBaseUrl()
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[api/langserve/chat] Using backend', backendBase)
+    }
+
+    const downstreamUrl = `${backendBase.replace(/\/$/, '')}/${mode}/stream`
 
     // Initiate fetch to backend with identical headers and body
     const backendResp = await fetch(downstreamUrl, {
