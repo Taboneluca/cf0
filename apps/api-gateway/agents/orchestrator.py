@@ -330,7 +330,7 @@ class Orchestrator:
             # For analyst mode, validate the output
             if mode == "analyst" and "updates" in result and result["updates"]:
                 # Validate updates through rule checking
-                from chat.validators import validate_updates
+                from api.validators import validate_updates
                 
                 try:
                     print(f"[{request_id}] 🔍 Validating {len(result['updates'])} updates")

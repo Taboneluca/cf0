@@ -8,7 +8,7 @@ import time
 import traceback
 from dotenv import load_dotenv
 from .tools import TOOL_CATALOG
-from chat.token_utils import trim_history
+from api.token_utils import trim_history
 from agents.json_utils import safe_json_loads
 from llm.base import LLMClient
 from pydantic import BaseModel

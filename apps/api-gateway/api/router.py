@@ -17,9 +17,9 @@ from agents.analyst_agent import build as build_analyst_agent
 from spreadsheet_engine.model import Spreadsheet
 from spreadsheet_engine.summary import sheet_summary
 from workbook_store import get_sheet, get_workbook
-from chat.memory import get_history, add_to_history
+from api.memory import get_history, add_to_history
 from agents.base_agent import ChatStep
-from chat.schemas import ChatRequest, ChatResponse
+from api.schemas import ChatRequest, ChatResponse
 from spreadsheet_engine.operations import (
     get_cell, get_range, summarize_sheet, calculate,
     set_cell, add_row, add_column, delete_row, delete_column,
