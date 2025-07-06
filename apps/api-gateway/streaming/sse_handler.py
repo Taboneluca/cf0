@@ -192,14 +192,14 @@ class StreamingHandler:
             
         # Handle different chunk types from legacy streaming (dict format)
         
-        # Handle chunk format from process_message_streaming
+        # Handle {'type': 'chunk', 'text': '...'} format
         if isinstance(chunk, dict):
             # Handle {'type': 'chunk', 'text': '...'} format
             if chunk.get('type') == 'chunk' and 'text' in chunk:
                 return StreamEvent(
                     type=EventType.CONTENT,
                     data={
-                        "delta": chunk['text']
+                        "delta": chunk['text']  # Changed from 'text' to 'delta'
                     }
                 )
             
@@ -207,9 +207,9 @@ class StreamingHandler:
             if chunk.get('type') == 'complete':
                 # This is the final completion, can include sheet state
                 return StreamEvent(
-                    type=EventType.STATUS,
+                    type=EventType.DONE,  # Changed from STATUS to DONE
                     data={
-                        "status": "complete",
+                        "status": "completed",
                         "sheet": chunk.get('sheet')
                     }
                 )
