@@ -54,6 +54,9 @@ from functools import partial
 # Load environment variables
 load_dotenv()
 
+# Initialize pending store for optimistic updates
+PENDING_STORE: Dict[tuple[str, str], Any] = {}
+
 # Initialize Sentry only if available and DSN is configured
 if SENTRY_AVAILABLE and os.environ.get("SENTRY_DSN"):
     sentry_sdk.init(
@@ -544,7 +547,6 @@ async def apply_updates(request: ApplyUpdatesRequest, wid: str, sid: str):
         result = set_cells_with_xref(request.updates)
         
         # Clear cached snapshot – changes are now accepted
-        from chat.router import PENDING_STORE
         PENDING_STORE.pop((wid, sid), None)
         
         # Return the updated sheet and results
@@ -560,8 +562,6 @@ async def apply_updates(request: ApplyUpdatesRequest, wid: str, sid: str):
 async def reject_updates(wid: str, sid: str):
     """Roll back all optimistic updates that were streamed but not applied."""
     try:
-        from chat.router import PENDING_STORE
-        
         key = (wid, sid)
         snap = PENDING_STORE.pop(key, None)
         if snap is None:

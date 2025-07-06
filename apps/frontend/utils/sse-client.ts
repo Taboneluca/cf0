@@ -4,7 +4,7 @@
 import { EventSourcePolyfill } from 'event-source-polyfill';
 
 export interface StreamEvent {
-  type: 'reasoning' | 'tool_call' | 'tool_result' | 'content' | 'error' | 'status' | 'done' | 'heartbeat';
+  type: 'reasoning' | 'tool_call' | 'tool_result' | 'content' | 'error' | 'status' | 'done' | 'heartbeat' | 'update';
   data: any;
   id?: string;
   timestamp?: number;
@@ -26,8 +26,9 @@ export type StreamHandlers = {
   onContent?: (data: any) => void;
   onError?: (data: any) => void;
   onStatus?: (data: any) => void;
-  onDone?: () => void;
+  onDone?: (data: any) => void;
   onHeartbeat?: () => void;
+  onUpdate?: (data: any) => void;
 };
 
 export class SSEClient {
@@ -172,18 +173,48 @@ export class SSEClient {
 
     // Done events
     if (handlers.onDone) {
-      this.eventSource.addEventListener('done', () => {
-        handlers.onDone!();
-        this.close();
+      this.eventSource.addEventListener('done', (e: any) => {
+        try {
+          const data = e.data ? JSON.parse(e.data) : {};
+          handlers.onDone!(data);
+        } catch (err) {
+          console.error('Error handling done event:', err);
+        }
       });
     }
 
     // Heartbeat events
     if (handlers.onHeartbeat) {
-      this.eventSource.addEventListener('heartbeat', () => {
-        handlers.onHeartbeat!();
+      this.eventSource.addEventListener('heartbeat', (e: any) => {
+        try {
+          handlers.onHeartbeat!();
+        } catch (err) {
+          console.error('Error handling heartbeat event:', err);
+        }
       });
     }
+
+    // Update events for workbook modifications
+    if (handlers.onUpdate) {
+      this.eventSource.addEventListener('update', (e: any) => {
+        try {
+          const data = JSON.parse(e.data);
+          handlers.onUpdate!(data);
+        } catch (err) {
+          console.error('Error parsing update event:', err);
+        }
+      });
+    }
+
+    // Default message handler for unknown events
+    this.eventSource.addEventListener('message', (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        console.log('Unknown event:', data);
+      } catch (err) {
+        console.error('Error parsing unknown event:', err);
+      }
+    });
   }
 
   close(): void {

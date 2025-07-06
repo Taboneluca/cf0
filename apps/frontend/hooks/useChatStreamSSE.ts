@@ -3,6 +3,9 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { SSEClient, StreamEvent, ChatRequest } from '@/utils/sse-client';
+import { useWorkbook } from '@/context/workbook-context';
+import type { Message as MessageType } from '@/types/spreadsheet';
+import { backendSheetToUI } from '@/utils/transform';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -19,24 +22,33 @@ export interface ChatMessage {
 
 interface StreamingState {
   isStreaming: boolean;
-  currentMessage: ChatMessage | null;
+  currentMessage: MessageType | null;
   accumulatedContent: string;
   accumulatedReasoning: string;
   toolCalls: Map<string, any>;
   error: string | null;
 }
 
-interface UseChatStreamReturn {
-  messages: ChatMessage[];
-  isStreaming: boolean;
-  error: string | null;
-  startStream: (request: ChatRequest) => Promise<void>;
-  stopStream: () => void;
-  clearMessages: () => void;
+interface PendingUpdate {
+  cell: string;
+  old_value: any;
+  new_value: any;
+  kind: string;
 }
 
-export function useChatStreamSSE(): UseChatStreamReturn {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+interface UseChatStreamReturn {
+  sendMessage: (message: string, contexts: string[], model: string) => void;
+  cancelStream: () => void;
+  isStreaming: boolean;
+  pendingUpdates: PendingUpdate[];
+  applyPendingUpdates: () => Promise<void>;
+  rejectPendingUpdates: () => Promise<void>;
+}
+
+export function useChatStreamSSE(
+  setMessages: React.Dispatch<React.SetStateAction<MessageType[]>>,
+  mode: 'ask' | 'analyst'
+): UseChatStreamReturn {
   const [state, setState] = useState<StreamingState>({
     isStreaming: false,
     currentMessage: null,
@@ -45,6 +57,10 @@ export function useChatStreamSSE(): UseChatStreamReturn {
     toolCalls: new Map(),
     error: null,
   });
+  
+  const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([]);
+  const [wb, dispatch] = useWorkbook();
+  const { wid, active } = wb;
 
   const clientRef = useRef<SSEClient | null>(null);
   const streamIdRef = useRef<number>(0);
@@ -62,18 +78,20 @@ export function useChatStreamSSE(): UseChatStreamReturn {
   // Batched UI updates for performance
   const flushUpdates = useCallback(() => {
     if (updateBufferRef.current && state.currentMessage) {
+      const newContent = state.accumulatedContent + updateBufferRef.current;
       setState(prev => ({
         ...prev,
-        accumulatedContent: prev.accumulatedContent + updateBufferRef.current,
+        accumulatedContent: newContent,
       }));
       
       setMessages(prev => {
         const newMessages = [...prev];
         const lastIndex = newMessages.length - 1;
-        if (lastIndex >= 0) {
+        if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
           newMessages[lastIndex] = {
             ...newMessages[lastIndex],
-            content: state.accumulatedContent + updateBufferRef.current,
+            content: newContent,
+            timestamp: Date.now(), // Force re-render
           };
         }
         return newMessages;
@@ -81,7 +99,7 @@ export function useChatStreamSSE(): UseChatStreamReturn {
       
       updateBufferRef.current = '';
     }
-  }, [state.accumulatedContent, state.currentMessage]);
+  }, [state.accumulatedContent, state.currentMessage, setMessages]);
 
   // Set up timer for batched updates
   const scheduleUpdate = useCallback(() => {
@@ -91,23 +109,23 @@ export function useChatStreamSSE(): UseChatStreamReturn {
     updateTimerRef.current = setTimeout(flushUpdates, 50); // 50ms batching
   }, [flushUpdates]);
 
-  const startStream = useCallback(async (request: ChatRequest) => {
+  const sendMessage = useCallback(async (message: string, contexts: string[], model: string) => {
     // Clear any existing stream
-    stopStream();
+    cancelStream();
 
     // Generate new stream ID
     const currentStreamId = ++streamIdRef.current;
 
     // Add user message
-    const userMessage: ChatMessage = {
+    const userMessage: MessageType = {
       role: 'user',
-      content: request.message,
+      content: message,
       status: 'complete',
     };
     setMessages(prev => [...prev, userMessage]);
 
-    // Initialize assistant message
-    const assistantMessage: ChatMessage = {
+    // Initialize assistant message  
+    const assistantMessage: MessageType = {
       role: 'assistant',
       content: '',
       status: 'streaming',
@@ -123,34 +141,48 @@ export function useChatStreamSSE(): UseChatStreamReturn {
       toolCalls: new Map(),
       error: null,
     });
+    
+    // Clear pending updates
+    setPendingUpdates([]);
+
+    const request: ChatRequest = {
+      message,
+      wid,
+      sid: active,
+      model,
+      mode,
+      contexts: contexts.length > 0 ? contexts : undefined,
+    };
 
     try {
       await clientRef.current?.streamChat(request, {
         onStatus: (data) => {
           console.log('Status:', data);
+          
+          // Update status if it's thinking
+          if (data.status === 'thinking') {
+            setMessages(prev => {
+              const newMessages = [...prev];
+              const lastIndex = newMessages.length - 1;
+              if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+                newMessages[lastIndex] = {
+                  ...newMessages[lastIndex],
+                  status: 'thinking',
+                };
+              }
+              return newMessages;
+            });
+          }
         },
 
         onReasoning: (data) => {
           if (streamIdRef.current !== currentStreamId) return;
           
-          setState(prev => ({
-            ...prev,
-            accumulatedReasoning: prev.accumulatedReasoning + (data.content || ''),
-          }));
-
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const lastIndex = newMessages.length - 1;
-            if (lastIndex >= 0) {
-              newMessages[lastIndex] = {
-                ...newMessages[lastIndex],
-                reasoning: prev[lastIndex].reasoning 
-                  ? prev[lastIndex].reasoning + (data.content || '')
-                  : data.content || '',
-              };
-            }
-            return newMessages;
-          });
+          // For DeepSeek models, reasoning is shown as content
+          if (data.thinking) {
+            updateBufferRef.current += `[Thinking: ${data.content}]\n`;
+            scheduleUpdate();
+          }
         },
 
         onContent: (data) => {
@@ -164,47 +196,34 @@ export function useChatStreamSSE(): UseChatStreamReturn {
         onToolCall: (data) => {
           if (streamIdRef.current !== currentStreamId) return;
           
-          const toolCall = {
-            id: data.id || `tool_${Date.now()}`,
-            tool: data.tool,
-            arguments: data.arguments,
-          };
-
-          setState(prev => {
-            const newToolCalls = new Map(prev.toolCalls);
-            newToolCalls.set(toolCall.id, toolCall);
-            return { ...prev, toolCalls: newToolCalls };
-          });
-
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const lastIndex = newMessages.length - 1;
-            if (lastIndex >= 0) {
-              const existingCalls = newMessages[lastIndex].toolCalls || [];
-              newMessages[lastIndex] = {
-                ...newMessages[lastIndex],
-                toolCalls: [...existingCalls, toolCall],
-              };
-            }
-            return newMessages;
-          });
+          // Tool calls are shown as content for now
+          const toolName = data.tool || 'unknown';
+          updateBufferRef.current += `\nUsing tool: ${toolName}\n`;
+          scheduleUpdate();
         },
 
         onToolResult: (data) => {
           if (streamIdRef.current !== currentStreamId) return;
           
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const lastIndex = newMessages.length - 1;
-            if (lastIndex >= 0 && newMessages[lastIndex].toolCalls) {
-              newMessages[lastIndex].toolCalls = newMessages[lastIndex].toolCalls!.map(
-                call => call.id === data.tool_id 
-                  ? { ...call, result: data.result }
-                  : call
-              );
+          // Handle tool results that may contain cell updates
+          if (data.result && typeof data.result === 'object') {
+            if ('cell' in data.result && 'new_value' in data.result) {
+              // Single cell update
+              setPendingUpdates(prev => [...prev, data.result as PendingUpdate]);
+            } else if ('updates' in data.result && Array.isArray(data.result.updates)) {
+              // Multiple cell updates
+              setPendingUpdates(prev => [...prev, ...data.result.updates]);
             }
-            return newMessages;
-          });
+          }
+        },
+
+        onUpdate: (data) => {
+          if (streamIdRef.current !== currentStreamId) return;
+          
+          // Handle workbook update events
+          if (data.updates && Array.isArray(data.updates)) {
+            setPendingUpdates(prev => [...prev, ...data.updates]);
+          }
         },
 
         onError: (data) => {
@@ -223,6 +242,7 @@ export function useChatStreamSSE(): UseChatStreamReturn {
             if (lastIndex >= 0) {
               newMessages[lastIndex] = {
                 ...newMessages[lastIndex],
+                content: newMessages[lastIndex].content || `Error: ${data.error || 'Unknown error'}`,
                 status: 'error',
               };
             }
@@ -230,11 +250,17 @@ export function useChatStreamSSE(): UseChatStreamReturn {
           });
         },
 
-        onDone: () => {
+        onDone: (data) => {
           if (streamIdRef.current !== currentStreamId) return;
           
           // Flush any remaining updates
           flushUpdates();
+
+          // Handle final sheet state if provided
+          if (data.sheet) {
+            const uiSheet = backendSheetToUI(data.sheet);
+            dispatch({ type: 'UPDATE_SHEET', sid: active, data: uiSheet });
+          }
 
           setState(prev => ({
             ...prev,
@@ -246,6 +272,12 @@ export function useChatStreamSSE(): UseChatStreamReturn {
             const newMessages = [...prev];
             const lastIndex = newMessages.length - 1;
             if (lastIndex >= 0) {
+              // Ensure we have some content in the message
+              if (!newMessages[lastIndex].content || newMessages[lastIndex].content.trim() === '') {
+                newMessages[lastIndex].content = mode === 'analyst' 
+                  ? 'I\'ve completed the updates to your spreadsheet.' 
+                  : 'Analysis complete.';
+              }
               newMessages[lastIndex] = {
                 ...newMessages[lastIndex],
                 status: 'complete',
@@ -267,9 +299,9 @@ export function useChatStreamSSE(): UseChatStreamReturn {
         isStreaming: false,
       }));
     }
-  }, [flushUpdates, scheduleUpdate]);
+  }, [flushUpdates, scheduleUpdate, mode, wid, active, setMessages, dispatch]);
 
-  const stopStream = useCallback(() => {
+  const cancelStream = useCallback(() => {
     clientRef.current?.abort();
     streamIdRef.current++;
     
@@ -287,17 +319,49 @@ export function useChatStreamSSE(): UseChatStreamReturn {
     }));
   }, [flushUpdates]);
 
-  const clearMessages = useCallback(() => {
-    setMessages([]);
-    setState({
-      isStreaming: false,
-      currentMessage: null,
-      accumulatedContent: '',
-      accumulatedReasoning: '',
-      toolCalls: new Map(),
-      error: null,
-    });
-  }, []);
+  const applyPendingUpdates = useCallback(async () => {
+    if (pendingUpdates.length === 0) return;
+    
+    try {
+      const response = await fetch(`/api/workbooks/${wid}/sheets/${active}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: pendingUpdates }),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.sheet) {
+          const uiSheet = backendSheetToUI(result.sheet);
+          dispatch({ type: 'UPDATE_SHEET', sid: active, data: uiSheet });
+        }
+        setPendingUpdates([]);
+      }
+    } catch (error) {
+      console.error('Failed to apply updates:', error);
+    }
+  }, [pendingUpdates, wid, active, dispatch]);
+
+  const rejectPendingUpdates = useCallback(async () => {
+    if (pendingUpdates.length === 0) return;
+    
+    try {
+      const response = await fetch(`/api/workbooks/${wid}/sheets/${active}/reject`, {
+        method: 'POST',
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.sheet) {
+          const uiSheet = backendSheetToUI(result.sheet);
+          dispatch({ type: 'UPDATE_SHEET', sid: active, data: uiSheet });
+        }
+        setPendingUpdates([]);
+      }
+    } catch (error) {
+      console.error('Failed to reject updates:', error);
+    }
+  }, [pendingUpdates, wid, active, dispatch]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -305,16 +369,16 @@ export function useChatStreamSSE(): UseChatStreamReturn {
       if (updateTimerRef.current) {
         clearTimeout(updateTimerRef.current);
       }
-      stopStream();
+      cancelStream();
     };
-  }, [stopStream]);
+  }, [cancelStream]);
 
   return {
-    messages,
+    sendMessage,
+    cancelStream,
     isStreaming: state.isStreaming,
-    error: state.error,
-    startStream,
-    stopStream,
-    clearMessages,
+    pendingUpdates,
+    applyPendingUpdates,
+    rejectPendingUpdates,
   };
 } 

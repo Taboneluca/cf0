@@ -18,6 +18,7 @@ class EventType(Enum):
     STATUS = "status"
     DONE = "done"
     HEARTBEAT = "heartbeat"
+    UPDATE = "update"  # For workbook cell updates
 
 
 class StreamEvent(BaseModel):
@@ -131,4 +132,12 @@ class StreamEvent(BaseModel):
         return cls(
             type=EventType.DONE,
             data={"status": "completed", **kwargs}
+        )
+    
+    @classmethod
+    def update(cls, updates: list, **kwargs) -> "StreamEvent":
+        """Create a workbook update event"""
+        return cls(
+            type=EventType.UPDATE,
+            data={"updates": updates, **kwargs}
         ) 

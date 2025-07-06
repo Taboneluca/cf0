@@ -14,7 +14,7 @@ import { backendSheetToUI, backendSheetToUIMap } from "@/utils/transform"
 import { useWorkbook } from "@/context/workbook-context"
 import { useModel } from "@/context/ModelContext"
 import ModelSelect from "@/components/ui/ModelSelect"
-import { useChatStream } from "@/hooks/useChatStream"
+import { useChatStreamSSE } from "@/hooks/useChatStreamSSE"
 import { PendingBar } from "@/components/PendingBar"
 import MessageBubble from "@/components/Message"
 
@@ -69,7 +69,7 @@ export default function ChatInterface({
     pendingUpdates,
     applyPendingUpdates,
     rejectPendingUpdates
-  } = useChatStream(setMessages, mode)
+  } = useChatStreamSSE(setMessages, mode)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })

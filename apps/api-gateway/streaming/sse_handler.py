@@ -219,6 +219,17 @@ class StreamingHandler:
                         "sheet": chunk.get('sheet')
                     }
                 )
+            
+            # Handle {'type': 'update', ...} format for workbook updates
+            if chunk.get('type') == 'update':
+                return StreamEvent(
+                    type=EventType.UPDATE,
+                    data={
+                        "updates": chunk.get('payload', []),
+                        "sheet_id": chunk.get('sheet_id'),
+                        "workbook_id": chunk.get('workbook_id')
+                    }
+                )
         
         # Tool call chunks
         if "tool_call" in chunk:

@@ -45,4 +45,41 @@ supabase/.temp/**
 **/.vscode
 
 # Project specific
-apps/workers/data/** 
+apps/workers/data/**
+
+# Backup files
+**/*backup*
+**/*.backup
+**/*.bak
+**/*.old
+
+# Temporary directories
+**/tmp/**
+**/.temp/**
+**/temp/**
+**/*.tmp
+
+# Compiled assets
+**/templates_compiled/**
+**/*.compiled
+**/*.min.js
+**/*.min.css
+
+# Database migrations (one-time use)
+**/migrations/**
+
+# Development artifacts
+**/.DS_Store
+**/*.swp
+**/*.swo
+**/Thumbs.db
+**/*~
+
+# Test coverage
+**/coverage/**
+**/.nyc_output/**
+
+# Package manager files
+**/pnpm-lock.yaml
+**/package-lock.json
+**/yarn.lock 
