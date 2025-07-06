@@ -66,14 +66,14 @@ class StreamingHandler:
             )
             
             # Send initial status event
-            yield StreamEvent(
-                type=EventType.STATUS,
-                data={
+            yield {
+                "event": EventType.STATUS.value,
+                "data": json.dumps({
                     "status": "starting",
                     "model": chat_request.model,
                     "mode": getattr(chat_request, 'mode', 'ask')
-                }
-            ).to_sse()
+                })
+            }
             
             # Process the streaming response
             # Call process_message_streaming with all required parameters
@@ -102,21 +102,27 @@ class StreamingHandler:
                     event = self._convert_legacy_chunk(chunk)
                     if event:
                         print(f"[SSE] Generated event: {event.type.value}")
-                        yield event.to_sse()
+                        yield {
+                            "event": event.type.value,
+                            "data": json.dumps(event.data)
+                        }
                     else:
                         print(f"[SSE] No event generated from ChatStep")
                 elif isinstance(chunk, dict):
                     print(f"[SSE] Converting dict chunk: {list(chunk.keys())}")
                     event = self._convert_legacy_chunk(chunk)
                     if event:
-                        yield event.to_sse()
+                        yield {
+                            "event": event.type.value,
+                            "data": json.dumps(event.data)
+                        }
                 elif isinstance(chunk, str):
                     print(f"[SSE] String chunk: {repr(chunk)}")
                     # Plain text content
-                    yield StreamEvent(
-                        type=EventType.CONTENT,
-                        data={"delta": chunk}
-                    ).to_sse()
+                    yield {
+                        "event": EventType.CONTENT.value,
+                        "data": json.dumps({"delta": chunk})
+                    }
                 else:
                     print(f"[SSE] Unknown chunk type: {type(chunk)}")
                 
@@ -124,21 +130,21 @@ class StreamingHandler:
                 await asyncio.sleep(0.001)
             
             # Send completion event
-            yield StreamEvent(
-                type=EventType.DONE,
-                data={"status": "completed"}
-            ).to_sse()
+            yield {
+                "event": EventType.DONE.value,
+                "data": json.dumps({"status": "completed"})
+            }
             
         except Exception as e:
             # Send error event
-            yield StreamEvent(
-                type=EventType.ERROR,
-                data={
+            yield {
+                "event": EventType.ERROR.value,
+                "data": json.dumps({
                     "error": str(e),
                     "code": "STREAM_ERROR",
                     "recoverable": True
-                }
-            ).to_sse()
+                })
+            }
         
         finally:
             # Clean up heartbeat task
@@ -153,10 +159,10 @@ class StreamingHandler:
         """Generate periodic heartbeat events."""
         while True:
             await asyncio.sleep(self.heartbeat_interval)
-            heartbeat = StreamEvent(
-                type=EventType.HEARTBEAT,
-                data={"status": "alive"}
-            ).to_sse()
+            heartbeat = {
+                "event": EventType.HEARTBEAT.value,
+                "data": json.dumps({"status": "alive"})
+            }
             await queue.put(heartbeat)
     
     def _convert_legacy_chunk(self, chunk: Dict[str, Any]) -> Optional[StreamEvent]:
