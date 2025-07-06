@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from types import SimpleNamespace
 from llm.chat_types import AIResponse, Message
 from llm.catalog import normalise, normalize_model_name  # Import the normalize_model_name function
-from llm import wrap_stream_with_guard
 from abc import ABC, abstractmethod
 from collections import defaultdict
 
@@ -1176,8 +1175,8 @@ class BaseAgent:
                     stream = _one_shot()
                 # ――― end guard rail ―――
                 
-                # Wrap the stream with our guard to protect against infinite loops
-                guarded_stream = wrap_stream_with_guard(stream)
+                # Stream is already protected by SSE handler and LLM timeouts
+                guarded_stream = stream  # No guard needed
                 
                 chunk_count = 0
                 tool_call_chunks = 0

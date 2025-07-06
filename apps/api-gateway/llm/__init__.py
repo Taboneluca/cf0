@@ -1,7 +1,6 @@
 from .providers.openai_client import OpenAIClient
 from .providers.anthropic_client import AnthropicClient
 from .providers.groq_client import GroqClient
-from .streaming_utils import StreamGuard, wrap_stream_with_guard
 
 PROVIDERS = {
     "openai": OpenAIClient,
@@ -21,5 +20,5 @@ SUPPORTED_MODELS = [
     "groq:llama-3-8b",               # Llama-3-8b
 ]
 
-# Make the streaming utilities available at the package level
-__all__ = ["OpenAIClient", "AnthropicClient", "GroqClient", "PROVIDERS", "SUPPORTED_MODELS", "StreamGuard", "wrap_stream_with_guard"] 
+# Make the providers available at the package level
+__all__ = ["OpenAIClient", "AnthropicClient", "GroqClient", "PROVIDERS", "SUPPORTED_MODELS"] 

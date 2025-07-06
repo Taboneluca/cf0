@@ -7,7 +7,6 @@ import re
 
 from llm.base import LLMClient
 from llm.factory import get_client
-from llm import wrap_stream_with_guard
 from .analyst_agent import build as build_analyst_agent
 from .ask_agent import build as build_ask_agent
 from .base_agent import BaseAgent, ChatStep
@@ -466,12 +465,12 @@ class Orchestrator:
                     print(f"[{request_id}] ❌ Agent did not return an async generator or coroutine")
                     raise TypeError("Agent.stream_run did not return an async generator")
             
-            # Now wrap it with the guard
+            # Stream is already protected by SSE handler and LLM timeouts
             if debug_orchestrator:
-                print(f"[{request_id}] 🛡️ Wrapping stream with guard")
-            guarded_stream = wrap_stream_with_guard(agent_stream)
+                print(f"[{request_id}] 🔄 Starting to iterate over stream")
+            guarded_stream = agent_stream  # No guard needed
             if debug_orchestrator:
-                print(f"[{request_id}] 🔄 Starting to iterate over guarded stream")
+                print(f"[{request_id}] 🔄 Stream ready for iteration")
             
             step_count = 0
             tool_steps = 0
