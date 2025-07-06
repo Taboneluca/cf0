@@ -1,7 +1,6 @@
 /**
- * SSE Client for handling Server-Sent Events with POST support.
+ * SSE Client for handling Server-Sent Events with POST support using fetch streaming.
  */
-import { EventSourcePolyfill } from 'event-source-polyfill';
 
 export interface StreamEvent {
   type: 'reasoning' | 'tool_call' | 'tool_result' | 'content' | 'error' | 'status' | 'done' | 'heartbeat' | 'update';
@@ -32,8 +31,9 @@ export type StreamHandlers = {
 };
 
 export class SSEClient {
-  private eventSource: EventSourcePolyfill | null = null;
+  private abortController: AbortController | null = null;
   private baseUrl: string;
+  private currentStream: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
   constructor(baseUrl?: string) {
     // In the browser, always use the relative proxy endpoint
@@ -60,180 +60,198 @@ export class SSEClient {
     // Close any existing connection
     this.close();
 
-    // Create new EventSource with POST support via polyfill
-    this.eventSource = new EventSourcePolyfill(
+    // Create new abort controller for this stream
+    this.abortController = new AbortController();
+
+    // Log the request details for debugging
+    console.log('[SSE] Starting stream with fetch:', {
       url,
-      {
+      method: 'POST',
+      body: request
+    });
+
+    try {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
         },
         body: JSON.stringify(request),
-        withCredentials: true,
-      } as any // cast to allow non-standard props like method
-    );
+        credentials: 'include',
+        signal: this.abortController.signal,
+      });
 
-    // Set up event handlers
-    this.setupEventHandlers(handlers);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-    // Handle connection errors
-    this.eventSource.onerror = (error: any) => {
-      console.error('[SSE] Connection error:', error);
-      console.error('[SSE] ReadyState:', this.eventSource?.readyState);
+      if (!response.body) {
+        throw new Error('Response body is null');
+      }
+
+      console.log('[SSE] Stream connected successfully');
+      
+      // Process the stream
+      await this.processStream(response.body, handlers);
+      
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('[SSE] Stream aborted');
+        return;
+      }
+      
+      console.error('[SSE] Stream error:', error);
       if (handlers.onError) {
         handlers.onError({
-          error: 'Connection lost',
-          code: 'SSE_CONNECTION_ERROR',
+          error: error.message || 'Stream connection failed',
+          code: 'STREAM_ERROR',
           recoverable: true
         });
       }
-      // EventSource will automatically reconnect
-    };
-
-    // Handle connection open
-    this.eventSource.onopen = () => {
-      console.log('[SSE] Connection opened successfully');
-      console.log('[SSE] URL:', url);
-      console.log('[SSE] ReadyState:', this.eventSource?.readyState);
-    };
+    }
   }
 
-  private setupEventHandlers(handlers: StreamHandlers): void {
-    if (!this.eventSource) return;
+  private async processStream(
+    body: ReadableStream<Uint8Array>,
+    handlers: StreamHandlers
+  ): Promise<void> {
+    const reader = body.getReader();
+    this.currentStream = reader;
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    console.log('[SSE] Setting up event handlers');
-
-    // Reasoning events
-    if (handlers.onReasoning) {
-      this.eventSource.addEventListener('reasoning', (e: any) => {
-        try {
-          console.log('[SSE] Received reasoning event:', e.data);
-          const data = JSON.parse(e.data);
-          handlers.onReasoning!(data);
-        } catch (err) {
-          console.error('[SSE] Error parsing reasoning event:', err);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          console.log('[SSE] Stream completed');
+          if (handlers.onDone) {
+            handlers.onDone({ status: 'completed' });
+          }
+          break;
         }
-      });
-    }
 
-    // Tool call events
-    if (handlers.onToolCall) {
-      this.eventSource.addEventListener('tool_call', (e: any) => {
-        try {
-          console.log('[SSE] Received tool_call event:', e.data);
-          const data = JSON.parse(e.data);
-          handlers.onToolCall!(data);
-        } catch (err) {
-          console.error('[SSE] Error parsing tool_call event:', err);
+        // Decode the chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events from the buffer
+        const events = this.extractSSEEvents(buffer);
+        buffer = events.remainder;
+
+        for (const event of events.events) {
+          this.handleSSEEvent(event, handlers);
         }
-      });
-    }
-
-    // Tool result events
-    if (handlers.onToolResult) {
-      this.eventSource.addEventListener('tool_result', (e: any) => {
-        try {
-          console.log('[SSE] Received tool_result event:', e.data);
-          const data = JSON.parse(e.data);
-          handlers.onToolResult!(data);
-        } catch (err) {
-          console.error('[SSE] Error parsing tool_result event:', err);
-        }
-      });
-    }
-
-    // Content events
-    if (handlers.onContent) {
-      this.eventSource.addEventListener('content', (e: any) => {
-        try {
-          console.log('[SSE] Received content event:', e.data);
-          const data = JSON.parse(e.data);
-          handlers.onContent!(data);
-        } catch (err) {
-          console.error('[SSE] Error parsing content event:', err);
-        }
-      });
-    }
-
-    // Status events
-    if (handlers.onStatus) {
-      this.eventSource.addEventListener('status', (e: any) => {
-        try {
-          const data = JSON.parse(e.data);
-          handlers.onStatus!(data);
-        } catch (err) {
-          console.error('Error parsing status event:', err);
-        }
-      });
-    }
-
-    // Error events
-    if (handlers.onError) {
-      this.eventSource.addEventListener('error', (e: any) => {
-        try {
-          const data = JSON.parse(e.data);
-          handlers.onError!(data);
-        } catch (err) {
-          console.error('Error parsing error event:', err);
-        }
-      });
-    }
-
-    // Done events
-    if (handlers.onDone) {
-      this.eventSource.addEventListener('done', (e: any) => {
-        try {
-          console.log('[SSE] Received done event:', e.data);
-          const data = e.data ? JSON.parse(e.data) : {};
-          handlers.onDone!(data);
-        } catch (err) {
-          console.error('[SSE] Error handling done event:', err);
-        }
-      });
-    }
-
-    // Heartbeat events
-    if (handlers.onHeartbeat) {
-      this.eventSource.addEventListener('heartbeat', (e: any) => {
-        try {
-          console.log('[SSE] Received heartbeat event');
-          handlers.onHeartbeat!();
-        } catch (err) {
-          console.error('[SSE] Error handling heartbeat event:', err);
-        }
-      });
-    }
-
-    // Update events for workbook modifications
-    if (handlers.onUpdate) {
-      this.eventSource.addEventListener('update', (e: any) => {
-        try {
-          console.log('[SSE] Received update event:', e.data);
-          const data = JSON.parse(e.data);
-          handlers.onUpdate!(data);
-        } catch (err) {
-          console.error('[SSE] Error parsing update event:', err);
-        }
-      });
-    }
-
-    // Default message handler for unknown events
-    this.eventSource.addEventListener('message', (e: any) => {
-      try {
-        console.log('[SSE] Received unknown message event:', e);
-        const data = JSON.parse(e.data);
-        console.log('[SSE] Unknown event data:', data);
-      } catch (err) {
-        console.error('[SSE] Error parsing unknown event:', err);
       }
-    });
+    } catch (error) {
+      console.error('[SSE] Error reading stream:', error);
+      throw error;
+    } finally {
+      reader.releaseLock();
+      this.currentStream = null;
+    }
+  }
+
+  private extractSSEEvents(buffer: string): { events: Array<{ event?: string; data?: string; id?: string }>, remainder: string } {
+    const events = [];
+    const lines = buffer.split('\n');
+    let currentEvent: any = {};
+    let i = 0;
+
+    for (; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      if (line === '') {
+        // Empty line signals end of event
+        if (currentEvent.data !== undefined) {
+          events.push(currentEvent);
+        }
+        currentEvent = {};
+      } else if (line.startsWith('event:')) {
+        currentEvent.event = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        const data = line.substring(5).trim();
+        if (currentEvent.data === undefined) {
+          currentEvent.data = data;
+        } else {
+          currentEvent.data += '\n' + data;
+        }
+      } else if (line.startsWith('id:')) {
+        currentEvent.id = line.substring(3).trim();
+      } else if (line.startsWith(':')) {
+        // Comment, ignore
+      } else {
+        // If we hit an incomplete line, put it back in the buffer
+        break;
+      }
+    }
+
+    // Reconstruct the remainder
+    const remainder = lines.slice(i).join('\n');
+
+    return { events, remainder };
+  }
+
+  private handleSSEEvent(
+    event: { event?: string; data?: string; id?: string },
+    handlers: StreamHandlers
+  ): void {
+    const eventType = event.event || 'message';
+    const data = event.data;
+
+    if (!data) return;
+
+    console.log(`[SSE] Received ${eventType} event:`, data);
+
+    try {
+      const parsedData = JSON.parse(data);
+
+      switch (eventType) {
+        case 'reasoning':
+          if (handlers.onReasoning) handlers.onReasoning(parsedData);
+          break;
+        case 'tool_call':
+          if (handlers.onToolCall) handlers.onToolCall(parsedData);
+          break;
+        case 'tool_result':
+          if (handlers.onToolResult) handlers.onToolResult(parsedData);
+          break;
+        case 'content':
+          if (handlers.onContent) handlers.onContent(parsedData);
+          break;
+        case 'status':
+          if (handlers.onStatus) handlers.onStatus(parsedData);
+          break;
+        case 'error':
+          if (handlers.onError) handlers.onError(parsedData);
+          break;
+        case 'done':
+          if (handlers.onDone) handlers.onDone(parsedData);
+          break;
+        case 'heartbeat':
+          console.log('[SSE] Received heartbeat');
+          if (handlers.onHeartbeat) handlers.onHeartbeat();
+          break;
+        case 'update':
+          if (handlers.onUpdate) handlers.onUpdate(parsedData);
+          break;
+        default:
+          console.log('[SSE] Unknown event type:', eventType, parsedData);
+      }
+    } catch (err) {
+      console.error(`[SSE] Error parsing ${eventType} event:`, err, data);
+    }
   }
 
   close(): void {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    if (this.currentStream) {
+      this.currentStream.releaseLock();
+      this.currentStream = null;
     }
   }
 
@@ -242,7 +260,6 @@ export class SSEClient {
   }
 
   isConnected(): boolean {
-    return this.eventSource !== null && 
-           this.eventSource.readyState === EventSourcePolyfill.OPEN;
+    return this.abortController !== null && !this.abortController.signal.aborted;
   }
 } 
