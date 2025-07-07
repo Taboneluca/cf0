@@ -254,7 +254,7 @@ export default function ChatInterface({
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-[#1a1a1a]">
             {messages.map((message, index) => (
-              <div key={index}>
+              <div key={`${message.role}-${index}-${message.timestamp || 'static'}`}>
                 <MessageBubble message={message} />
               </div>
             ))}
