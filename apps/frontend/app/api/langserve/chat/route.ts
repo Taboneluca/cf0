@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
     const backendBase = getBackendBaseUrl()
     if (process.env.NODE_ENV !== 'production') {
       console.log('[api/langserve/chat] Using backend', backendBase)
+      console.log('[api/langserve/chat] Forwarding to', `${backendBase}/${mode}/stream`)
     }
 
     const downstreamUrl = `${backendBase.replace(/\/$/, '')}/${mode}/stream`
@@ -31,11 +32,10 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // The backend returns SSE, so we explicitly request that
-        Accept: 'text/event-stream',
+        'Accept': 'text/event-stream',
       },
       body: JSON.stringify(payload),
-      // We need the Response body as a stream
+      // Ensure no caching
       cache: 'no-store',
     })
 
@@ -48,51 +48,26 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // For streaming responses, we need to ensure proper headers and no buffering
-    const headers = new Headers({
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      // Disable compression for SSE
-      'Content-Encoding': 'none',
-      // Disable buffering
-      'X-Accel-Buffering': 'no',
-    })
-
-    // Create a TransformStream to ensure proper streaming
-    const stream = new TransformStream()
-    const writer = stream.writable.getWriter()
-    const encoder = new TextEncoder()
-
-    // Start piping the backend response to our stream
-    if (backendResp.body) {
-      const reader = backendResp.body.getReader()
-      
-      // Read and forward chunks
-      ;(async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            
-            // Forward the chunk directly
-            await writer.write(value)
-          }
-        } catch (error) {
-          console.error('[api/langserve/chat] Stream error:', error)
-        } finally {
-          await writer.close()
-        }
-      })()
+    // Debug log the response
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[api/langserve/chat] Backend response:', {
+        status: backendResp.status,
+        headers: Object.fromEntries(backendResp.headers.entries()),
+      })
     }
 
-    // Return the streaming response
-    return new Response(stream.readable, {
+    // Return the backend response directly with proper SSE headers
+    return new Response(backendResp.body, {
       status: 200,
-      headers,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
     })
   } catch (err: any) {
-    console.error('[api/langserve/chat] Proxy error', err)
+    console.error('[api/langserve/chat] Proxy error:', err)
     return new Response(JSON.stringify({ error: 'Proxy error', detail: err?.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

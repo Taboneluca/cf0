@@ -55,8 +55,22 @@ export class SSEClient {
     request: ChatRequest,
     handlers: StreamHandlers
   ): Promise<void> {
-    // Always use the Next.js proxy endpoint which handles backend routing
-    const url = '/api/langserve/chat';
+    // Check if we should use direct backend connection
+    const useDirectConnection = process.env.NEXT_PUBLIC_DIRECT_BACKEND_URL && 
+                               typeof window !== 'undefined';
+    
+    let url: string;
+    if (useDirectConnection) {
+      // Direct connection to backend, bypassing Next.js proxy
+      const backendUrl = process.env.NEXT_PUBLIC_DIRECT_BACKEND_URL;
+      const mode = request.mode || 'ask';
+      url = `${backendUrl}/${mode}/stream`;
+      console.log('[SSE] Using direct backend connection:', url);
+    } else {
+      // Use Next.js proxy endpoint (default)
+      url = '/api/langserve/chat';
+      console.log('[SSE] Using Next.js proxy endpoint');
+    }
 
     // Close any existing connection
     this.close();
@@ -71,7 +85,8 @@ export class SSEClient {
     console.log('[SSE] Starting stream with fetch:', {
       url,
       method: 'POST',
-      body: request
+      body: request,
+      direct: useDirectConnection
     });
 
     try {
@@ -82,7 +97,7 @@ export class SSEClient {
           'Accept': 'text/event-stream',
         },
         body: JSON.stringify(request),
-        credentials: 'include',
+        credentials: useDirectConnection ? 'omit' : 'include', // Omit credentials for CORS
         signal: this.abortController.signal,
       });
 

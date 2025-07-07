@@ -404,9 +404,9 @@ export function useChatStreamSSE(
       if (updateTimerRef.current) {
         clearTimeout(updateTimerRef.current);
       }
-      cancelStream();
+      clientRef.current?.abort();
     };
-  }, [cancelStream]);
+  }, []); // Empty dependency array - only run on mount/unmount
 
   return {
     sendMessage,
