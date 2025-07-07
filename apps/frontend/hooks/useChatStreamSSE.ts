@@ -77,17 +77,17 @@ export function useChatStreamSSE(
 
   // Batched UI updates for performance
   const flushUpdates = useCallback(() => {
-    if (updateBufferRef.current && state.currentMessage) {
-      const newContent = state.accumulatedContent + updateBufferRef.current;
-      setState(prev => ({
-        ...prev,
-        accumulatedContent: newContent,
-      }));
+    if (updateBufferRef.current) {
+      const contentToAdd = updateBufferRef.current;
+      console.log('[useChatStreamSSE] flushUpdates called with content:', contentToAdd.substring(0, 50));
       
       setMessages(prev => {
         const newMessages = [...prev];
         const lastIndex = newMessages.length - 1;
         if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+          const oldContent = newMessages[lastIndex].content || '';
+          const newContent = oldContent + contentToAdd;
+          console.log('[useChatStreamSSE] Updating message content:', { oldLength: oldContent.length, newLength: newContent.length });
           newMessages[lastIndex] = {
             ...newMessages[lastIndex],
             content: newContent,
@@ -97,9 +97,15 @@ export function useChatStreamSSE(
         return newMessages;
       });
       
+      // Update accumulated content in state
+      setState(prev => ({
+        ...prev,
+        accumulatedContent: prev.accumulatedContent + contentToAdd,
+      }));
+      
       updateBufferRef.current = '';
     }
-  }, [state.accumulatedContent, state.currentMessage, setMessages]);
+  }, [setMessages]);
 
   // Set up timer for batched updates
   const scheduleUpdate = useCallback(() => {
@@ -204,8 +210,11 @@ export function useChatStreamSSE(
         onContent: (data) => {
           if (streamIdRef.current !== currentStreamId) return;
           
+          console.log('[useChatStreamSSE] onContent called with:', data);
+          
           // Buffer content updates
           updateBufferRef.current += data.delta || '';
+          console.log('[useChatStreamSSE] Buffer now:', updateBufferRef.current.substring(updateBufferRef.current.length - 50));
           scheduleUpdate();
         },
 
