@@ -64,9 +64,6 @@ export function useChatStreamSSE(
 
   const clientRef = useRef<SSEClient | null>(null);
   const streamIdRef = useRef<number>(0);
-  const updateBufferRef = useRef<string>('');
-  // ID returned by requestAnimationFrame; `number` works in browser & Node typings
-  const updateTimerRef = useRef<number | null>(null);
 
   // Initialize SSE client
   useEffect(() => {
@@ -76,48 +73,27 @@ export function useChatStreamSSE(
     };
   }, []);
 
-  // Batched UI updates for performance
-  const flushUpdates = useCallback(() => {
-    if (updateBufferRef.current) {
-      const contentToAdd = updateBufferRef.current;
-      console.log('[useChatStreamSSE] flushUpdates called with content:', contentToAdd.substring(0, 50));
-      
-      setMessages(prev => {
-        const newMessages = [...prev];
-        const lastIndex = newMessages.length - 1;
-        if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
-          const oldContent = newMessages[lastIndex].content || '';
-          const newContent = oldContent + contentToAdd;
-          console.log('[useChatStreamSSE] Updating message content:', { oldLength: oldContent.length, newLength: newContent.length });
-          newMessages[lastIndex] = {
-            ...newMessages[lastIndex],
-            content: newContent,
-            timestamp: Date.now(), // Force re-render
-          };
-        }
-        return newMessages;
-      });
-      
-      // Update accumulated content in state
-      setState(prev => ({
-        ...prev,
-        accumulatedContent: prev.accumulatedContent + contentToAdd,
-      }));
-      
-      updateBufferRef.current = '';
-    }
-  }, [setMessages]);
-
-  // Set up timer for batched updates
-  const scheduleUpdate = useCallback(() => {
-    // If a frame is already scheduled, do nothing
-    if (updateTimerRef.current !== null) return;
-
-    updateTimerRef.current = window.requestAnimationFrame(() => {
-      flushUpdates();
-      updateTimerRef.current = null; // allow next frame
+  // Immediate content update - ChatGPT style (no batching)
+  const appendContent = useCallback((delta: string) => {
+    setMessages(prev => {
+      const newMessages = [...prev];
+      const lastIndex = newMessages.length - 1;
+      if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+        newMessages[lastIndex] = {
+          ...newMessages[lastIndex],
+          content: (newMessages[lastIndex].content || '') + delta,
+          timestamp: Date.now(), // Force re-render
+        };
+      }
+      return newMessages;
     });
-  }, [flushUpdates]);
+
+    // Update accumulated content in state
+    setState(prev => ({
+      ...prev,
+      accumulatedContent: prev.accumulatedContent + delta,
+    }));
+  }, [setMessages]);
 
   const sendMessage = useCallback(async (message: string, contexts: string[], model: string) => {
     // Generate new stream ID first
@@ -206,8 +182,7 @@ export function useChatStreamSSE(
           
           // For DeepSeek models, reasoning is shown as content
           if (data.thinking) {
-            updateBufferRef.current += `[Thinking: ${data.content}]\n`;
-            scheduleUpdate();
+            appendContent(`[Thinking: ${data.content}]\n`);
           }
         },
 
@@ -217,9 +192,7 @@ export function useChatStreamSSE(
           console.log('[useChatStreamSSE] onContent called with:', data);
           
           // Buffer content updates
-          updateBufferRef.current += data.delta || '';
-          console.log('[useChatStreamSSE] Buffer now:', updateBufferRef.current.substring(updateBufferRef.current.length - 50));
-          scheduleUpdate();
+          appendContent(data.delta || '');
         },
 
         onToolCall: (data) => {
@@ -227,8 +200,7 @@ export function useChatStreamSSE(
           
           // Tool calls are shown as content for now
           const toolName = data.tool || 'unknown';
-          updateBufferRef.current += `\nUsing tool: ${toolName}\n`;
-          scheduleUpdate();
+          appendContent(`\nUsing tool: ${toolName}\n`);
         },
 
         onToolResult: (data) => {
@@ -283,7 +255,7 @@ export function useChatStreamSSE(
           if (streamIdRef.current !== currentStreamId) return;
           
           // Flush any remaining updates
-          flushUpdates();
+          appendContent('');
 
           // Handle final sheet state if provided
           if (data.sheet) {
@@ -347,24 +319,20 @@ export function useChatStreamSSE(
         });
       }
     }
-  }, [flushUpdates, scheduleUpdate, mode, wid, active, setMessages, dispatch, state.isStreaming]);
+  }, [appendContent, mode, wid, active, setMessages, dispatch, state.isStreaming]);
 
   const cancelStream = useCallback(() => {
     clientRef.current?.abort();
     streamIdRef.current++;
     
-    if (updateTimerRef.current !== null) {
-      cancelAnimationFrame(updateTimerRef.current);
-    }
-    
-    flushUpdates();
+    appendContent('');
     
     setState(prev => ({
       ...prev,
       isStreaming: false,
       currentMessage: null,
     }));
-  }, [flushUpdates]);
+  }, [appendContent]);
 
   const applyPendingUpdates = useCallback(async () => {
     if (pendingUpdates.length === 0) return;
@@ -413,9 +381,6 @@ export function useChatStreamSSE(
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (updateTimerRef.current !== null) {
-        cancelAnimationFrame(updateTimerRef.current);
-      }
       clientRef.current?.abort();
     };
   }, []); // Empty dependency array - only run on mount/unmount
