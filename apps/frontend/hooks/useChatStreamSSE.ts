@@ -2,6 +2,7 @@
  * React hook for handling chat streaming with SSE.
  */
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { flushSync } from 'react-dom';
 import { SSEClient, StreamEvent, ChatRequest } from '@/utils/sse-client';
 import { useWorkbook } from '@/context/workbook-context';
 import type { Message as MessageType } from '@/types/spreadsheet';
@@ -77,28 +78,30 @@ export function useChatStreamSSE(
   const appendContent = useCallback((delta: string) => {
     console.log('[useChatStreamSSE] appendContent called with delta:', delta);
     
-    setMessages(prev => {
-      const newMessages = [...prev];
-      const lastIndex = newMessages.length - 1;
-      console.log('[useChatStreamSSE] Messages array length:', newMessages.length, 'Last message role:', newMessages[lastIndex]?.role);
-      
-      if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
-        const oldContent = newMessages[lastIndex].content || '';
-        const newContent = oldContent + delta;
-        console.log('[useChatStreamSSE] Updating content:', { oldLength: oldContent.length, newLength: newContent.length, delta });
+    flushSync(() => {
+      setMessages(prev => {
+        const newMessages = [...prev];
+        const lastIndex = newMessages.length - 1;
+        console.log('[useChatStreamSSE] Messages array length:', newMessages.length, 'Last message role:', newMessages[lastIndex]?.role);
         
-        newMessages[lastIndex] = {
-          ...newMessages[lastIndex],
-          content: newContent,
-          timestamp: Date.now(), // Force re-render
-        };
-      } else {
-        console.log('[useChatStreamSSE] Not updating - no assistant message found');
-      }
-      return newMessages;
+        if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+          const oldContent = newMessages[lastIndex].content || '';
+          const newContent = oldContent + delta;
+          console.log('[useChatStreamSSE] Updating content:', { oldLength: oldContent.length, newLength: newContent.length, delta });
+          
+          newMessages[lastIndex] = {
+            ...newMessages[lastIndex],
+            content: newContent,
+            timestamp: Date.now(), // Force re-render
+          };
+        } else {
+          console.log('[useChatStreamSSE] Not updating - no assistant message found');
+        }
+        return newMessages;
+      });
     });
 
-    // Update accumulated content in state
+    // Update accumulated content in state (outside flushSync for performance)
     setState(prev => ({
       ...prev,
       accumulatedContent: prev.accumulatedContent + delta,
