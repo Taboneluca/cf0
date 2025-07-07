@@ -70,11 +70,11 @@ class StreamingHandler:
             # Send initial status event
             yield {
                 "event": EventType.STATUS.value,
-                "data": {
+                "data": json.dumps({
                     "status": "starting",
                     "model": chat_request.model,
                     "mode": getattr(chat_request, 'mode', 'ask')
-                }
+                })
             }
             
             # Process the streaming response
@@ -106,7 +106,7 @@ class StreamingHandler:
                         print(f"[SSE] Generated event: {event.type.value}")
                         yield {
                             "event": event.type.value,
-                            "data": event.data
+                            "data": json.dumps(event.data)
                         }
                     else:
                         print(f"[SSE] No event generated from ChatStep")
@@ -116,14 +116,14 @@ class StreamingHandler:
                     if event:
                         yield {
                             "event": event.type.value,
-                            "data": event.data
+                            "data": json.dumps(event.data)
                         }
                 elif isinstance(chunk, str):
                     print(f"[SSE] String chunk: {repr(chunk)}")
                     # Plain text content
                     yield {
                         "event": EventType.CONTENT.value,
-                        "data": {"delta": chunk}
+                        "data": json.dumps({"delta": chunk})
                     }
                 else:
                     print(f"[SSE] Unknown chunk type: {type(chunk)}")
@@ -134,18 +134,18 @@ class StreamingHandler:
             # Send completion event
             yield {
                 "event": EventType.DONE.value,
-                "data": {"status": "completed"}
+                "data": json.dumps({"status": "completed"})
             }
             
         except Exception as e:
             # Send error event
             yield {
                 "event": EventType.ERROR.value,
-                "data": {
+                "data": json.dumps({
                     "error": str(e),
                     "code": "STREAM_ERROR",
                     "recoverable": True
-                }
+                })
             }
         
         finally:
@@ -163,7 +163,7 @@ class StreamingHandler:
             await asyncio.sleep(self.heartbeat_interval)
             heartbeat = {
                 "event": EventType.HEARTBEAT.value,
-                "data": {"status": "alive"}
+                "data": json.dumps({"status": "alive"})
             }
             await queue.put(heartbeat)
     
