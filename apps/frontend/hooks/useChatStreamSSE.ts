@@ -77,29 +77,50 @@ export function useChatStreamSSE(
   // Immediate content update - ChatGPT style (no batching)
   const appendContent = useCallback((delta: string) => {
     console.log('[useChatStreamSSE] appendContent called with delta:', delta);
+    console.log('[useChatStreamSSE] Timestamp:', Date.now());
+    
+    // Store the current content length for comparison
+    let oldLength = 0;
+    let newLength = 0;
     
     flushSync(() => {
       setMessages(prev => {
         const newMessages = [...prev];
         const lastIndex = newMessages.length - 1;
-        console.log('[useChatStreamSSE] Messages array length:', newMessages.length, 'Last message role:', newMessages[lastIndex]?.role);
         
         if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
           const oldContent = newMessages[lastIndex].content || '';
           const newContent = oldContent + delta;
-          console.log('[useChatStreamSSE] Updating content:', { oldLength: oldContent.length, newLength: newContent.length, delta });
+          oldLength = oldContent.length;
+          newLength = newContent.length;
+          
+          console.log('[useChatStreamSSE] BEFORE update - content length:', oldLength);
+          console.log('[useChatStreamSSE] AFTER update - content length:', newLength);
+          console.log('[useChatStreamSSE] Delta being added:', JSON.stringify(delta));
+          console.log('[useChatStreamSSE] Old content (last 20 chars):', JSON.stringify(oldContent.slice(-20)));
+          console.log('[useChatStreamSSE] New content (last 20 chars):', JSON.stringify(newContent.slice(-20)));
           
           newMessages[lastIndex] = {
             ...newMessages[lastIndex],
             content: newContent,
             timestamp: Date.now(), // Force re-render
           };
+          
+          console.log('[useChatStreamSSE] Message object updated:', {
+            role: newMessages[lastIndex].role,
+            contentLength: newMessages[lastIndex].content?.length,
+            status: newMessages[lastIndex].status,
+            timestamp: newMessages[lastIndex].timestamp,
+            hasContent: !!newMessages[lastIndex].content
+          });
         } else {
-          console.log('[useChatStreamSSE] Not updating - no assistant message found');
+          console.log('[useChatStreamSSE] ❌ NOT UPDATING - no assistant message found. Messages:', newMessages.map(m => ({ role: m.role, contentLength: m.content?.length })));
         }
         return newMessages;
       });
     });
+
+    console.log('[useChatStreamSSE] ✅ flushSync completed. Content changed from', oldLength, 'to', newLength, 'chars');
 
     // Update accumulated content in state (outside flushSync for performance)
     setState(prev => ({

@@ -39,6 +39,18 @@ type MessageProps = {
  * when message content contains headings (## Title)
  */
 const Message: React.FC<MessageProps> = ({ message }) => {
+  console.log('[Message] Rendering with:', {
+    role: message.role,
+    contentLength: message.content?.length || 0,
+    status: message.status,
+    timestamp: message.timestamp,
+    content: message.content?.substring(0, 50) + (message.content?.length > 50 ? '...' : ''),
+    hasContent: !!message.content
+  });
+
+  // Track if this message was ever streamed (to maintain consistent blue formatting)
+  const wasStreamed = message.status === 'streaming' || message.status === 'complete';
+
   // Don't process sections for user messages
   if (message.role === 'user') {
     const parts = message.content.split(/(@[\w!:.]+)/g);
@@ -88,9 +100,6 @@ const Message: React.FC<MessageProps> = ({ message }) => {
   // Pattern: ## Heading\nContent until next heading or end
   const sectionPattern = /##\s+([^\n]+)(?:\n([\s\S]+?)(?=##|$))?/g;
   const matches = [...message.content.matchAll(sectionPattern)];
-  
-  // STREAMING FIX: Check if message was ever streamed (has timestamp) or is currently streaming/thinking
-  const wasStreamed = message.timestamp || message.status === 'thinking' || message.status === 'streaming';
   
   // CRITICAL FIX: If message was streamed, ALWAYS render as blue text to prevent visual flash
   // This maintains consistent formatting throughout the streaming lifecycle
