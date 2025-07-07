@@ -65,7 +65,8 @@ export function useChatStreamSSE(
   const clientRef = useRef<SSEClient | null>(null);
   const streamIdRef = useRef<number>(0);
   const updateBufferRef = useRef<string>('');
-  const updateTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // ID returned by requestAnimationFrame; `number` works in browser & Node typings
+  const updateTimerRef = useRef<number | null>(null);
 
   // Initialize SSE client
   useEffect(() => {
@@ -109,14 +110,13 @@ export function useChatStreamSSE(
 
   // Set up timer for batched updates
   const scheduleUpdate = useCallback(() => {
-    // Start a timer if one is not already running – prevents continuous
-    // resetting which caused the entire message to appear at once.
-    if (updateTimerRef.current) return;
+    // If a frame is already scheduled, do nothing
+    if (updateTimerRef.current !== null) return;
 
-    updateTimerRef.current = setTimeout(() => {
+    updateTimerRef.current = window.requestAnimationFrame(() => {
       flushUpdates();
-      updateTimerRef.current = null; // allow next schedule
-    }, 50); // flush roughly 20× per second
+      updateTimerRef.current = null; // allow next frame
+    });
   }, [flushUpdates]);
 
   const sendMessage = useCallback(async (message: string, contexts: string[], model: string) => {
@@ -353,9 +353,8 @@ export function useChatStreamSSE(
     clientRef.current?.abort();
     streamIdRef.current++;
     
-    if (updateTimerRef.current) {
-      clearTimeout(updateTimerRef.current);
-      updateTimerRef.current = null;
+    if (updateTimerRef.current !== null) {
+      cancelAnimationFrame(updateTimerRef.current);
     }
     
     flushUpdates();
@@ -414,8 +413,8 @@ export function useChatStreamSSE(
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (updateTimerRef.current) {
-        clearTimeout(updateTimerRef.current);
+      if (updateTimerRef.current !== null) {
+        cancelAnimationFrame(updateTimerRef.current);
       }
       clientRef.current?.abort();
     };
