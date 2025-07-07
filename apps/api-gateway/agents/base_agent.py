@@ -1051,10 +1051,18 @@ class BaseAgent:
 
     async def stream_run(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[ChatStep, None]:
         """
-        Execute the tool-loop in streaming mode, yielding ChatStep objects as they are generated.
+        Streaming version of the agent run with enhanced termination conditions.
+        
+        This method implements comprehensive safeguards to prevent infinite loops:
+        1. Explicit finish_reason detection from LLM responses
+        2. Content-based termination for natural stopping points
+        3. Streaming timeout and token budget limits
+        4. Enhanced circuit breaker logic for repeated errors
+        5. Streaming metrics and repetition detection
+        6. Improved tool call validation
         
         Args:
-            user_message: The user message to process
+            user_message: The user's message to respond to
             history: Optional conversation history
             
         Yields:
@@ -1065,11 +1073,26 @@ class BaseAgent:
         print(f"[{agent_id}] 🔧 Using LLM: {self.llm.__class__.__name__} - {getattr(self.llm, 'model', 'unknown')}")
         print(f"[{agent_id}] 🛠️ Available tools: {[tool['name'] for tool in self.tools]}")
         print(f"[{agent_id}] 📝 Message preview: {user_message[:150]}{'...' if len(user_message) > 150 else ''}")
-        
 
-        
-        # Initialize retry manager
+        # Initialize enhanced retry manager and streaming metrics
         retry_manager = ToolCallRetryManager()
+        streaming_metrics = StreamingMetrics()
+        
+        # Streaming safeguards configuration
+        max_streaming_duration = float(os.getenv("MAX_STREAMING_DURATION", "60"))  # 60 seconds
+        max_response_tokens = int(os.getenv("MAX_RESPONSE_TOKENS", "4000"))
+        max_consecutive_empty_chunks = int(os.getenv("MAX_CONSECUTIVE_EMPTY_CHUNKS", "10"))
+        max_content_repetition_ratio = float(os.getenv("MAX_CONTENT_REPETITION_RATIO", "0.7"))
+        
+        # Termination detection state
+        consecutive_empty_chunks = 0
+        content_history = []
+        tokens_generated = 0
+        natural_stopping_phrases = [
+            "I hope this helps", "Let me know if you need", "Feel free to ask",
+            "Is there anything else", "That's all", "I've completed",
+            "The analysis is complete", "This concludes", "To summarize"
+        ]
         
         # Prepare the basic message structure with system prompt
         print(f"[{agent_id}] 📋 Preparing system message")
@@ -1085,20 +1108,19 @@ class BaseAgent:
         # Add the current user message
         messages.append({"role": "user", "content": user_message})
         
-        # Trim history to fit within token limits - use model name from the LLM client
+        # Trim history to fit within token limits
         orig_message_count = len(messages)
-        # Construct full model key (provider:model_id) for context window calculation
         model_key = f"{self.llm.name}:{self.llm.model}"
         messages = trim_history(messages, system_message, None, model_key)
         if len(messages) < orig_message_count:
             print(f"[{agent_id}] ✂️ Trimmed history from {orig_message_count} to {len(messages)} messages")
 
-        # Allow many small tool calls without bailing out too early
+        # Enhanced iteration and error tracking
         max_iterations = int(os.getenv("MAX_TOOL_ITERATIONS", "50"))
         iterations = 0
         collected_updates: list = []
         mutating_calls = 0
-        error_count = {}  # Track repeated errors to prevent infinite loops
+        error_count = {}
         mutating_tools = {
             "set_cell", "set_cells", "apply_updates_and_reply",
             "add_row", "add_column", "delete_row", "delete_column",
@@ -1108,45 +1130,94 @@ class BaseAgent:
         final_text_buffer = ""
         start_time = time.time()
         
-        # Enable debug flags for tracing different aspects of streaming
+        # Enhanced debug flags
         debug_streaming = os.getenv("DEBUG_STREAMING", "0") == "1"
         debug_delta = os.getenv("DEBUG_STREAMING_DELTA", "0") == "1"
         debug_tools = os.getenv("DEBUG_STREAMING_TOOLS", "0") == "1"
+        debug_termination = os.getenv("DEBUG_TERMINATION", "0") == "1"
         
-        print(f"[{agent_id}] 🔄 Starting streaming tool loop with max_iterations={max_iterations}")
-        print(f"[{agent_id}] 🐛 Debug flags: streaming={debug_streaming}, delta={debug_delta}, tools={debug_tools}")
+        print(f"[{agent_id}] 🔄 Starting enhanced streaming loop with max_iterations={max_iterations}")
+        print(f"[{agent_id}] ⏱️ Streaming safeguards: duration={max_streaming_duration}s, tokens={max_response_tokens}, empty_chunks={max_consecutive_empty_chunks}")
+        print(f"[{agent_id}] 🐛 Debug flags: streaming={debug_streaming}, delta={debug_delta}, tools={debug_tools}, termination={debug_termination}")
         in_tool_calling_phase = True
         
         # Create tool function mapping for easy lookup
         tool_functions = {t["name"]: t["func"] for t in self.tools}
         
+        # Main streaming loop with enhanced termination conditions
         while iterations < max_iterations:
             iterations += 1
             loop_start = time.time()
-            print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations}")
+            elapsed_time = loop_start - start_time
             
-            # CHECK CIRCUIT BREAKER - Exit if too many consecutive errors
+            print(f"[{agent_id}] ⏱️ Iteration {iterations}/{max_iterations} (elapsed: {elapsed_time:.1f}s)")
+            
+            # ENHANCED TERMINATION CONDITIONS
+            
+            # 1. Check streaming timeout
+            if elapsed_time > max_streaming_duration:
+                print(f"[{agent_id}] ⏰ TERMINATION: Maximum streaming duration ({max_streaming_duration}s) exceeded")
+                yield ChatStep(
+                    role="assistant",
+                    content="\n\n[Streaming timeout reached. Response may be incomplete.]"
+                )
+                return
+            
+            # 2. Check token budget
+            if tokens_generated > max_response_tokens:
+                print(f"[{agent_id}] 📊 TERMINATION: Token budget ({max_response_tokens}) exceeded")
+                yield ChatStep(
+                    role="assistant",
+                    content="\n\n[Response limit reached.]"
+                )
+                return
+            
+            # 3. Check circuit breaker
             if retry_manager.is_circuit_broken():
-                print(f"[{agent_id}] 🔥 CIRCUIT BREAKER ACTIVATED - Stopping due to repeated errors")
+                print(f"[{agent_id}] 🔥 TERMINATION: Circuit breaker activated due to repeated errors")
                 yield ChatStep(
                     role="assistant",
                     content="I'm having trouble with tool calls and need to stop to prevent errors. Let me help you with a direct response instead."
                 )
                 return
             
+            # 4. Check consecutive empty chunks
+            if consecutive_empty_chunks > max_consecutive_empty_chunks:
+                print(f"[{agent_id}] 🔄 TERMINATION: Too many consecutive empty chunks ({consecutive_empty_chunks})")
+                yield ChatStep(
+                    role="assistant",
+                    content="\n\n[Stream appears to have stalled.]"
+                )
+                return
+            
+            # 5. Check content repetition
+            if len(content_history) > 5:
+                recent_content = " ".join(content_history[-5:])
+                if len(recent_content) > 50:
+                    unique_words = len(set(recent_content.split()))
+                    total_words = len(recent_content.split())
+                    repetition_ratio = 1 - (unique_words / total_words) if total_words > 0 else 0
+                    
+                    if repetition_ratio > max_content_repetition_ratio:
+                        print(f"[{agent_id}] 🔄 TERMINATION: High content repetition detected ({repetition_ratio:.2f})")
+                        yield ChatStep(
+                            role="assistant",
+                            content="\n\n[Detected repetitive content, stopping generation.]"
+                        )
+                        return
+            
             # Initialize streaming tool call handler for this iteration
             tool_handler = StreamingToolCallHandler()
             current_content = ""
-            previous_content = ""  # Initialize for delta calculation
+            previous_content = ""
             
             # Call the LLM model with streaming enabled
             print(f"[{agent_id}] 🔌 Calling LLM model in streaming mode: {self.llm.model}")
             
             try:
-                # Sanitize legacy fields so Groq/OpenAI v2 accept the history
+                # Sanitize legacy fields for LLM compatibility
                 for m in messages:
-                    m.pop("executed_tools", None)   # Groq legacy
-                    # Convert for both OpenAI and Groq, leave Anthropic untouched
+                    m.pop("executed_tools", None)
                     if self.llm.name in {"openai", "groq"} and "function_call" in m and "tool_calls" not in m:
                         m["tool_calls"] = [{
                             "id": "auto-" + str(time.time_ns()),
@@ -1155,39 +1226,52 @@ class BaseAgent:
                         }]
                 
                 # Get the stream object from llm.chat
-                max_resp_tokens = int(os.getenv("MAX_RESPONSE_TOKENS", "4000"))
                 stream = self.llm.chat(
                     messages=_dicts_to_messages(messages),
                     stream=True,
                     tools=[_serialize_tool(t) for t in self.tools] if self.llm.supports_tool_calls else None,
-                    temperature=None,  # let the per-model filter decide
-                    max_tokens=max_resp_tokens
+                    temperature=None,
+                    max_tokens=min(max_response_tokens - tokens_generated, 1000)  # Respect remaining budget
                 )
                 
-                # ――― guard rail ―――
+                # Ensure we have an async generator
                 import inspect
                 if inspect.isawaitable(stream) and not inspect.isasyncgen(stream):
-                    # somebody returned a coroutine by mistake – await it once & wrap
                     print(f"[{agent_id}] ⚠️ Provider returned a coroutine instead of an async generator - converting")
                     stream_result = await stream
                     async def _one_shot():
                         yield stream_result
                     stream = _one_shot()
-                # ――― end guard rail ―――
                 
-                # Stream is already protected by SSE handler and LLM timeouts
-                guarded_stream = stream  # No guard needed
-                
+                # Enhanced streaming metrics tracking
                 chunk_count = 0
                 tool_call_chunks = 0
                 content_chunks = 0
+                has_received_content = False
+                has_received_finish_reason = False
+                iteration_start_time = time.time()
                 
-                # Process streaming chunks
-                async for chunk in guarded_stream:
+                # Process streaming chunks with enhanced termination detection
+                async for chunk in stream:
                     chunk_count += 1
+                    chunk_time = time.time()
+                    iteration_elapsed = chunk_time - iteration_start_time
+                    
+                    # Track streaming metrics
+                    streaming_metrics.log_chunk("received", 1)
                     
                     if debug_streaming:
-                        print(f"[{agent_id}] 📦 Chunk #{chunk_count}: {type(chunk)}")
+                        print(f"[{agent_id}] 📦 Chunk #{chunk_count}: {type(chunk)} (iteration_time: {iteration_elapsed:.2f}s)")
+                    
+                    # ENHANCED FINISH REASON DETECTION
+                    finish_reason = None
+                    if hasattr(chunk, "choices") and chunk.choices:
+                        choice = chunk.choices[0]
+                        if hasattr(choice, "finish_reason") and choice.finish_reason:
+                            finish_reason = choice.finish_reason
+                            has_received_finish_reason = True
+                            if debug_termination:
+                                print(f"[{agent_id}] 🏁 FINISH REASON detected: {finish_reason}")
                     
                     # Check if this is an OpenAI-style response
                     if hasattr(chunk, "choices") and chunk.choices:
@@ -1195,195 +1279,48 @@ class BaseAgent:
                         
                         if debug_delta:
                             print(f"[{agent_id}] 🔍 Processing OpenAI-style delta: {delta}")
-                            print(f"[{agent_id}] 🔍 Delta attributes: {dir(delta)}")
-                            if hasattr(delta, 'tool_calls'):
-                                print(f"[{agent_id}] 🔍 Delta has tool_calls: {delta.tool_calls}")
-                            if hasattr(delta, 'content'):
-                                print(f"[{agent_id}] 🔍 Delta has content: '{delta.content}'")
                         
-                        # Process tool calls using the new handler
+                        # Process tool calls using the enhanced handler
                         completed_calls = tool_handler.process_delta(delta)
                         
-                        # NEW: Yield any keep-alive chunks to prevent timeout during long tool calls
+                        # Yield keep-alive chunks during tool call accumulation
                         keep_alive_chunks = tool_handler.get_keep_alive_chunks()
                         for keep_alive_chunk in keep_alive_chunks:
                             if debug_streaming:
-                                print(f"[{agent_id}] 💓 Sending keep-alive chunk during tool call accumulation")
+                                print(f"[{agent_id}] 💓 Sending keep-alive chunk")
                             yield ChatStep(role="assistant", content="")
                         
                         if completed_calls:
                             tool_call_chunks += 1
+                            consecutive_empty_chunks = 0  # Reset on successful tool call
                             if debug_tools:
-                                print(f"[{agent_id}] 🔧 Got {len(completed_calls)} completed tool calls in chunk #{chunk_count}")
+                                print(f"[{agent_id}] 🔧 Got {len(completed_calls)} completed tool calls")
                         
-                        # Execute any completed tool calls
+                        # Execute completed tool calls with enhanced validation
                         for tool_call in completed_calls:
                             name = tool_call['name']
                             args = tool_call['arguments']
                             tool_call_id = tool_call['id']
                             
-                            print(f"[{agent_id}] 🔧 Executing completed tool call: {name} with args: {args}")
+                            print(f"[{agent_id}] 🔧 Executing tool call: {name}")
                             
-                            # EARLY VALIDATION - Reject obviously empty or malformed calls
-                            if not args or (isinstance(args, dict) and len(args) == 0):
-                                print(f"[{agent_id}] ⚠️ Rejecting tool call with completely empty arguments")
-                                error_msg = "Empty arguments provided"
-                                if not retry_manager.should_retry(name, error_msg):
-                                    print(f"[{agent_id}] 🛑 Circuit breaker: stopping retry loop for {name}")
-                                    # Add strong instruction to stop making empty calls
+                            # ENHANCED TOOL CALL VALIDATION
+                            validation_result = self._validate_tool_call(name, args, retry_manager, agent_id)
+                            if not validation_result["valid"]:
+                                if validation_result["should_retry"]:
                                     messages.append({
                                         "role": "system",
-                                        "content": f"STOP: Tool {name} has failed multiple times with empty arguments. Do NOT call this tool again without proper arguments. Provide a text response instead."
+                                        "content": validation_result["retry_prompt"]
                                     })
                                     continue
                                 else:
-                                    retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
                                     messages.append({
                                         "role": "system",
-                                        "content": retry_prompt
+                                        "content": validation_result["stop_message"]
                                     })
                                     continue
                             
-                            # Specific validation for problematic tools
-                            if name == "set_cell":
-                                if isinstance(args, dict):
-                                    cell = args.get('cell', '') or args.get('cell_ref', '')
-                                    value = args.get('value', '')
-                                    if not cell or not str(cell).strip():
-                                        print(f"[{agent_id}] ⚠️ Rejecting set_cell with empty cell reference")
-                                        error_msg = "Empty cell reference"
-                                        if not retry_manager.should_retry(name, error_msg):
-                                            messages.append({
-                                                "role": "system",
-                                                "content": "STOP: set_cell requires a valid cell reference like 'A1'. Do not call set_cell with empty arguments. Provide a text response instead."
-                                            })
-                                            continue
-                                        else:
-                                            retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                            messages.append({
-                                                "role": "system",
-                                                "content": retry_prompt
-                                            })
-                                            continue
-                            
-                            if debug_tools:
-                                print(f"[{agent_id}] 🔍 Tool call details:")
-                                print(f"   Name: {name}")
-                                print(f"   ID: {tool_call_id}")
-                                print(f"   Args type: {type(args)}")
-                                print(f"   Args content: {args}")
-                            
-                            # Enhanced argument validation
-                            if isinstance(args, dict) and 'error' in args:
-                                # Handle parsing errors
-                                error_msg = args.get('error', 'Unknown error')
-                                print(f"[{agent_id}] ❌ Tool call parsing error: {error_msg}")
-                                
-                                # Check if we should retry
-                                if retry_manager.should_retry(name, error_msg):
-                                    retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                    messages.append({
-                                        "role": "system",
-                                        "content": retry_prompt
-                                    })
-                                    print(f"[{agent_id}] 🔄 Scheduling retry for {name}")
-                                    continue
-                                else:
-                                    print(f"[{agent_id}] 🛑 Max retries exceeded for {name}")
-                                    # Send error feedback but don't break the stream
-                                    yield ChatStep(
-                                        role="assistant",
-                                        content=f"Sorry, I'm having trouble with the {name} tool. Let me try a different approach."
-                                    )
-                                    continue
-                            
-                            # Validate non-empty arguments for critical tools
-                            if name == "apply_updates_and_reply":
-                                if not args or not isinstance(args, dict):
-                                    args = {}
-                                
-                                updates = args.get('updates', [])
-                                reply = args.get('reply', '')
-                                
-                                if debug_tools:
-                                    print(f"[{agent_id}] 🔍 apply_updates_and_reply validation:")
-                                    print(f"   Updates: {updates}")
-                                    print(f"   Updates type: {type(updates)}")
-                                    print(f"   Updates length: {len(updates) if isinstance(updates, list) else 'N/A'}")
-                                    print(f"   Reply: '{reply}'")
-                                
-                                if not updates or not isinstance(updates, list) or len(updates) == 0:
-                                    print(f"[{agent_id}] ⚠️ Empty updates for apply_updates_and_reply")
-                                    
-                                    error_msg = "Empty updates array"
-                                    if retry_manager.should_retry(name, error_msg):
-                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                        messages.append({
-                                            "role": "system",
-                                            "content": retry_prompt
-                                        })
-                                        print(f"[{agent_id}] 🔄 Retry scheduled for empty updates")
-                                        continue
-                                else:
-                                    yield ChatStep(
-                                        role="assistant",
-                                        content="I'll use individual cell updates instead of batch updates."
-                                    )
-                                    print(f"[{agent_id}] 🔄 Switching to individual updates approach")
-                                    continue
-                                
-                                # Validate each update in the array
-                                valid_updates = []
-                                for j, update in enumerate(updates):
-                                    if isinstance(update, dict) and 'cell' in update and 'value' in update:
-                                        valid_updates.append(update)
-                                        if debug_tools:
-                                            print(f"[{agent_id}] ✅ Valid update {j}: {update}")
-                                    else:
-                                        print(f"[{agent_id}] ⚠️ Invalid update format {j}: {update}")
-                                
-                                if len(valid_updates) != len(updates):
-                                    print(f"[{agent_id}] ⚠️ Some updates were invalid, using {len(valid_updates)}/{len(updates)}")
-                                    args['updates'] = valid_updates
-                                
-                                if not valid_updates:
-                                    error_msg = "No valid updates found"
-                                    if retry_manager.should_retry(name, error_msg):
-                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                        messages.append({
-                                            "role": "system",
-                                            "content": retry_prompt
-                                        })
-                                        print(f"[{agent_id}] 🔄 Retry scheduled for invalid updates")
-                                        continue
-                                    else:
-                                        print(f"[{agent_id}] 🛑 Skipping tool call due to invalid updates")
-                                        continue
-                            
-                            elif name == "set_cell":
-                                if not args or not isinstance(args, dict):
-                                    args = {}
-                                
-                                if debug_tools:
-                                    print(f"[{agent_id}] 🔍 set_cell validation:")
-                                    print(f"   Args: {args}")
-                                    print(f"   Has 'cell': {'cell' in args}")
-                                    print(f"   Has 'value': {'value' in args}")
-                                
-                                if 'cell' not in args or 'value' not in args:
-                                    error_msg = "Missing cell or value parameter"
-                                    print(f"[{agent_id}] ❌ set_cell missing parameters: {error_msg}")
-                                    if retry_manager.should_retry(name, error_msg):
-                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                        messages.append({
-                                            "role": "system",
-                                            "content": retry_prompt
-                                        })
-                                        continue
-                                    else:
-                                        continue
-                            
-                            # Execute the tool with validated arguments
+                            # Execute the validated tool call
                             try:
                                 tool_fn = tool_functions.get(name)
                                 if tool_fn:
@@ -1404,8 +1341,7 @@ class BaseAgent:
                                     
                                     if debug_tools:
                                         print(f"[{agent_id}] ✅ Tool {name} executed in {execution_time:.3f}s")
-                                        print(f"[{agent_id}] 📤 Tool result: {result}")
-                                        
+                                    
                                     # Add tool call and result to messages
                                     messages.append({
                                         "role": "assistant",
@@ -1422,22 +1358,15 @@ class BaseAgent:
                                     })
                                     
                                     yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
+                                    consecutive_empty_chunks = 0  # Reset on successful tool execution
                                     
                                 else:
                                     print(f"[{agent_id}] ❌ Unknown tool: {name}")
                                     
                             except Exception as e:
                                 print(f"[{agent_id}] ❌ Tool execution error: {e}")
-                                import traceback
-                                traceback.print_exc()
-                                
                                 error_msg = str(e)
-                                error_count[error_msg] = error_count.get(error_msg, 0) + 1
-                                if error_count[error_msg] > 3:
-                                    print(f"[{agent_id}] 🛑 Too many repeated errors, breaking")
-                                    break
-                        
-                                # Check if we should retry this error
+                                
                                 if retry_manager.should_retry(name, error_msg):
                                     retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
                                     messages.append({
@@ -1445,46 +1374,77 @@ class BaseAgent:
                                         "content": f"Tool execution failed: {error_msg}. {retry_prompt}"
                                     })
                                 else:
-                                    # Send error feedback
                                     yield ChatStep(
                                         role="assistant",
                                         content=f"I encountered an error with {name}: {error_msg}. Let me try a different approach."
                                     )
                         
-                        # Handle regular content (OpenAI format) - Process content deltas
+                        # Handle regular content with enhanced termination detection
                         if hasattr(delta, "content") and delta.content:
                             content_chunks += 1
-                            new_content = delta.content  # This is already the NEW content only (delta)
+                            new_content = delta.content
+                            has_received_content = True
+                            consecutive_empty_chunks = 0  # Reset on content
+                            
+                            # Track content for repetition detection
+                            content_history.append(new_content)
+                            if len(content_history) > 20:  # Keep sliding window
+                                content_history.pop(0)
+                            
+                            # Update token count (rough estimation)
+                            tokens_generated += len(new_content.split())
                             
                             if debug_streaming:
-                                print(f"[{agent_id}] 💬 Content delta #{content_chunks}: '{new_content}'")
+                                print(f"[{agent_id}] 💬 Content delta #{content_chunks}: '{new_content}' (tokens: {tokens_generated})")
                             
                             if in_tool_calling_phase:
-                                # We've transitioned from tool calling to final answer
                                 in_tool_calling_phase = False
                                 print(f"[{agent_id}] 💬 Transitioning to final answer")
                             
-                            # For OpenAI/Groq: delta.content is already the new bit, no calculation needed
+                            # Check for natural stopping phrases
+                            if any(phrase.lower() in new_content.lower() for phrase in natural_stopping_phrases):
+                                if debug_termination:
+                                    print(f"[{agent_id}] 🏁 Natural stopping phrase detected in content")
+                            
                             yield ChatStep(role="assistant", content=new_content)
-                    # Handle AIResponse format (for providers that return our standard format)
+                        
+                        # Handle empty content chunks
+                        elif not hasattr(delta, "content") or not delta.content:
+                            consecutive_empty_chunks += 1
+                            if debug_termination:
+                                print(f"[{agent_id}] ⭕ Empty chunk #{consecutive_empty_chunks}")
+                    
+                    # Handle AIResponse format with similar termination logic
                     elif hasattr(chunk, 'content') or hasattr(chunk, 'tool_calls'):
-                        # Handle tool calls for AIResponse format (e.g., Anthropic)
                         if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
+                            consecutive_empty_chunks = 0
+                            # Process AIResponse tool calls (similar to OpenAI format)
                             for tool_call in chunk.tool_calls:
                                 if hasattr(tool_call, 'name') and hasattr(tool_call, 'args'):
                                     name = tool_call.name
                                     args = tool_call.args
                                     tool_call_id = getattr(tool_call, 'id', f"airesponse-{int(time.time_ns())}")
                                     
-                                    print(f"[{agent_id}] 🔧 Executing AIResponse tool call: {name} with args: {args}")
+                                    print(f"[{agent_id}] 🔧 Executing AIResponse tool call: {name}")
                                     
-                                    # Execute the tool with similar validation as OpenAI format
+                                    # Apply same validation as OpenAI format
+                                    validation_result = self._validate_tool_call(name, args, retry_manager, agent_id)
+                                    if not validation_result["valid"]:
+                                        if validation_result["should_retry"]:
+                                            messages.append({
+                                                "role": "system",
+                                                "content": validation_result["retry_prompt"]
+                                            })
+                                            continue
+                                        else:
+                                            continue
+                                    
+                                    # Execute tool call (same logic as OpenAI format)
                                     try:
                                         tool_fn = tool_functions.get(name)
                                         if tool_fn:
                                             if name in mutating_tools:
                                                 mutating_calls += 1
-                                                print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
                                             
                                             execution_start = time.time()
                                             
@@ -1499,9 +1459,7 @@ class BaseAgent:
                                             
                                             if debug_tools:
                                                 print(f"[{agent_id}] ✅ AIResponse tool {name} executed in {execution_time:.3f}s")
-                                                print(f"[{agent_id}] 📤 AIResponse tool result: {result}")
                                             
-                                            # Add tool call and result to messages
                                             messages.append({
                                                 "role": "assistant",
                                                 "tool_calls": [{
@@ -1517,9 +1475,6 @@ class BaseAgent:
                                             })
                                             
                                             yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
-                                            
-                                        else:
-                                            print(f"[{agent_id}] ❌ Unknown AIResponse tool: {name}")
                                     except Exception as e:
                                         print(f"[{agent_id}] ❌ AIResponse tool execution error: {e}")
                                         yield ChatStep(
@@ -1527,13 +1482,17 @@ class BaseAgent:
                                             content=f"I encountered an error with {name}: {str(e)}. Let me try a different approach."
                                         )
                         
-                        # This is for providers that return AIResponse directly
                         if hasattr(chunk, 'content') and chunk.content:
                             content_chunks += 1
-                            
-                            # Forward **exactly** what the provider streamed - no delta calculation needed
-                            # The LLM providers already return proper deltas, so we don't need to re-delta them
                             new_content = chunk.content
+                            has_received_content = True
+                            consecutive_empty_chunks = 0
+                            
+                            # Track content and tokens
+                            content_history.append(new_content)
+                            if len(content_history) > 20:
+                                content_history.pop(0)
+                            tokens_generated += len(new_content.split())
                             
                             if debug_streaming:
                                 print(f"[{agent_id}] 💬 Content delta #{content_chunks} (AIResponse): '{new_content}'")
@@ -1542,8 +1501,56 @@ class BaseAgent:
                                 in_tool_calling_phase = False
                                 print(f"[{agent_id}] 💬 Transitioning to final answer")
                             
-                            # Yield the chunk exactly as received from the LLM provider
                             yield ChatStep(role="assistant", content=new_content)
+                        else:
+                            consecutive_empty_chunks += 1
+                
+                # POST-STREAM TERMINATION ANALYSIS
+                print(f"[{agent_id}] 📊 Stream iteration completed: chunks={chunk_count}, content_chunks={content_chunks}, tool_chunks={tool_call_chunks}")
+                print(f"[{agent_id}] 📊 Termination analysis: has_content={has_received_content}, has_finish_reason={has_received_finish_reason}, empty_chunks={consecutive_empty_chunks}")
+                
+                # Decide whether to continue or terminate based on multiple factors
+                should_terminate = False
+                termination_reason = ""
+                
+                # 1. Explicit finish reason from LLM
+                if has_received_finish_reason:
+                    should_terminate = True
+                    termination_reason = "LLM indicated completion via finish_reason"
+                
+                # 2. No content generated and no tool calls in this iteration
+                elif not has_received_content and tool_call_chunks == 0:
+                    should_terminate = True
+                    termination_reason = "No content or tool calls generated"
+                
+                # 3. Only received empty chunks
+                elif chunk_count > 0 and content_chunks == 0 and tool_call_chunks == 0:
+                    should_terminate = True
+                    termination_reason = "Only empty chunks received"
+                
+                # 4. Natural stopping point detection
+                elif has_received_content and len(content_history) > 0:
+                    recent_content = " ".join(content_history[-3:]).lower()
+                    if any(phrase.lower() in recent_content for phrase in natural_stopping_phrases):
+                        should_terminate = True
+                        termination_reason = "Natural stopping phrase detected"
+                
+                # 5. Content appears complete (ends with punctuation and contains complete thoughts)
+                elif has_received_content and len(content_history) > 0:
+                    last_content = content_history[-1].strip()
+                    if last_content.endswith(('.', '!', '?', ':', ';')) and len(last_content) > 10:
+                        # Additional check: does this look like a complete response?
+                        if any(indicator in last_content.lower() for indicator in 
+                               ['complete', 'done', 'finished', 'ready', 'hope this helps', 'let me know']):
+                            should_terminate = True
+                            termination_reason = "Content appears complete"
+                
+                if should_terminate:
+                    print(f"[{agent_id}] 🏁 TERMINATION: {termination_reason}")
+                    break
+                else:
+                    print(f"[{agent_id}] 🔄 Continuing to next iteration")
+                    
             except Exception as e:
                 print(f"[{agent_id}] ❌ Error in LLM call: {str(e)}")
                 import traceback
@@ -1551,7 +1558,150 @@ class BaseAgent:
                 yield ChatStep(role="assistant", content=f"\nError communicating with AI service: {str(e)}")
                 return
         
-        # Final status update
+        # Final status update with enhanced metrics
         end_time = time.time()
         elapsed = end_time - start_time
-        print(f"[{agent_id}] ✅ Tool loop completed in {elapsed:.2f}s with {iterations} iterations, {mutating_calls} mutations")
+        print(f"[{agent_id}] ✅ Enhanced streaming loop completed:")
+        print(f"[{agent_id}]   - Duration: {elapsed:.2f}s")
+        print(f"[{agent_id}]   - Iterations: {iterations}")
+        print(f"[{agent_id}]   - Mutations: {mutating_calls}")
+        print(f"[{agent_id}]   - Tokens generated: {tokens_generated}")
+        print(f"[{agent_id}]   - Content chunks: {len(content_history)}")
+        
+        # Log final streaming metrics
+        streaming_metrics.log_completion(elapsed, tokens_generated, iterations)
+
+    def _validate_tool_call(self, name: str, args: Any, retry_manager: ToolCallRetryManager, agent_id: str) -> Dict[str, Any]:
+        """
+        Enhanced tool call validation with comprehensive checks.
+        
+        Returns:
+            Dict with validation result: {"valid": bool, "should_retry": bool, "retry_prompt": str, "stop_message": str}
+        """
+        # Early validation - reject completely empty or malformed calls
+        if not args or (isinstance(args, dict) and len(args) == 0):
+            print(f"[{agent_id}] ⚠️ Rejecting tool call with completely empty arguments")
+            error_msg = "Empty arguments provided"
+            if retry_manager.should_retry(name, error_msg):
+                return {
+                    "valid": False,
+                    "should_retry": True,
+                    "retry_prompt": retry_manager.get_retry_prompt(name, error_msg)
+                }
+            else:
+                return {
+                    "valid": False,
+                    "should_retry": False,
+                    "stop_message": f"STOP: Tool {name} has failed multiple times with empty arguments. Do NOT call this tool again without proper arguments. Provide a text response instead."
+                }
+        
+        # Specific validation for problematic tools
+        if name == "set_cell":
+            if isinstance(args, dict):
+                cell = args.get('cell', '') or args.get('cell_ref', '')
+                value = args.get('value', '')
+                if not cell or not str(cell).strip():
+                    print(f"[{agent_id}] ⚠️ Rejecting set_cell with empty cell reference")
+                    error_msg = "Empty cell reference"
+                    if retry_manager.should_retry(name, error_msg):
+                        return {
+                            "valid": False,
+                            "should_retry": True,
+                            "retry_prompt": retry_manager.get_retry_prompt(name, error_msg)
+                        }
+                    else:
+                        return {
+                            "valid": False,
+                            "should_retry": False,
+                            "stop_message": "STOP: set_cell requires a valid cell reference like 'A1'. Do not call set_cell with empty arguments. Provide a text response instead."
+                        }
+        
+        elif name == "apply_updates_and_reply":
+            if not args or not isinstance(args, dict):
+                args = {}
+            
+            updates = args.get('updates', [])
+            
+            if not updates or not isinstance(updates, list) or len(updates) == 0:
+                print(f"[{agent_id}] ⚠️ Empty updates for apply_updates_and_reply")
+                error_msg = "Empty updates array"
+                if retry_manager.should_retry(name, error_msg):
+                    return {
+                        "valid": False,
+                        "should_retry": True,
+                        "retry_prompt": retry_manager.get_retry_prompt(name, error_msg)
+                    }
+                else:
+                    return {
+                        "valid": False,
+                        "should_retry": False,
+                        "stop_message": "I'll use individual cell updates instead of batch updates."
+                    }
+            
+            # Validate each update in the array
+            valid_updates = []
+            for j, update in enumerate(updates):
+                if isinstance(update, dict) and 'cell' in update and 'value' in update:
+                    valid_updates.append(update)
+                else:
+                    print(f"[{agent_id}] ⚠️ Invalid update format {j}: {update}")
+            
+            if len(valid_updates) != len(updates):
+                print(f"[{agent_id}] ⚠️ Some updates were invalid, using {len(valid_updates)}/{len(updates)}")
+                args['updates'] = valid_updates
+            
+            if not valid_updates:
+                error_msg = "No valid updates found"
+                if retry_manager.should_retry(name, error_msg):
+                    return {
+                        "valid": False,
+                        "should_retry": True,
+                        "retry_prompt": retry_manager.get_retry_prompt(name, error_msg)
+                    }
+                else:
+                    return {
+                        "valid": False,
+                        "should_retry": False,
+                        "stop_message": "Skipping tool call due to invalid updates"
+                    }
+        
+        elif name == "set_cells":
+            if not args or not isinstance(args, dict):
+                args = {}
+            
+            if 'updates' not in args or not isinstance(args['updates'], list):
+                error_msg = "Missing or invalid updates parameter"
+                print(f"[{agent_id}] ❌ set_cells missing parameters: {error_msg}")
+                if retry_manager.should_retry(name, error_msg):
+                    return {
+                        "valid": False,
+                        "should_retry": True,
+                        "retry_prompt": retry_manager.get_retry_prompt(name, error_msg)
+                    }
+                else:
+                    return {
+                        "valid": False,
+                        "should_retry": False,
+                        "stop_message": "set_cells requires a valid updates array"
+                    }
+        
+        # Handle parsing errors
+        if isinstance(args, dict) and 'error' in args:
+            error_msg = args.get('error', 'Unknown error')
+            print(f"[{agent_id}] ❌ Tool call parsing error: {error_msg}")
+            
+            if retry_manager.should_retry(name, error_msg):
+                return {
+                    "valid": False,
+                    "should_retry": True,
+                    "retry_prompt": retry_manager.get_retry_prompt(name, error_msg)
+                }
+            else:
+                return {
+                    "valid": False,
+                    "should_retry": False,
+                    "stop_message": f"Sorry, I'm having trouble with the {name} tool. Let me try a different approach."
+                }
+        
+        # If we get here, the tool call passed validation
+        return {"valid": True, "should_retry": False, "retry_prompt": "", "stop_message": ""}

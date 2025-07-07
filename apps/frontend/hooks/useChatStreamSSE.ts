@@ -1,8 +1,8 @@
 /**
  * React hook for handling chat streaming with SSE.
+ * Enhanced for 2025 with React 19 optimizations and real-time rendering.
  */
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { flushSync } from 'react-dom';
+import { useState, useCallback, useRef, useEffect, useTransition, useMemo } from 'react';
 import { SSEClient, StreamEvent, ChatRequest } from '@/utils/sse-client';
 import { useWorkbook } from '@/context/workbook-context';
 import type { Message as MessageType } from '@/types/spreadsheet';
@@ -19,6 +19,8 @@ export interface ChatMessage {
     result?: any;
   }>;
   status?: 'streaming' | 'complete' | 'error';
+  streamId?: string;  // NEW: Track which stream this message belongs to
+  stepNumber?: number;  // NEW: Track step number in stream
 }
 
 interface StreamingState {
@@ -28,6 +30,8 @@ interface StreamingState {
   accumulatedReasoning: string;
   toolCalls: Map<string, any>;
   error: string | null;
+  activeStreamId: string | null;  // NEW: Track active stream
+  contentBuffer: string;  // NEW: Micro-batching buffer
 }
 
 interface PendingUpdate {
@@ -44,6 +48,17 @@ interface UseChatStreamReturn {
   pendingUpdates: PendingUpdate[];
   applyPendingUpdates: () => Promise<void>;
   rejectPendingUpdates: () => Promise<void>;
+  streamingMetrics: StreamingMetrics;  // NEW: Performance metrics
+}
+
+interface StreamingMetrics {
+  totalChunks: number;
+  contentChunks: number;
+  toolChunks: number;
+  renderLatency: number;
+  averageChunkSize: number;
+  streamDuration: number;
+  lastUpdateTime: number;
 }
 
 export function useChatStreamSSE(
@@ -57,83 +72,218 @@ export function useChatStreamSSE(
     accumulatedReasoning: '',
     toolCalls: new Map(),
     error: null,
+    activeStreamId: null,
+    contentBuffer: '',
   });
   
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([]);
   const [wb, dispatch] = useWorkbook();
   const { wid, active } = wb;
 
+  // React 19 transition for non-blocking updates
+  const [isPending, startTransition] = useTransition();
+  
   const clientRef = useRef<SSEClient | null>(null);
   const streamIdRef = useRef<number>(0);
-
+  
+  // NEW: Micro-batching system
+  const batchingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const contentBufferRef = useRef<string>('');
+  const lastRenderTimeRef = useRef<number>(0);
+  const BATCH_INTERVAL_MS = 16; // One frame at 60fps
+  
+  // NEW: Performance metrics tracking
+  const [streamingMetrics, setStreamingMetrics] = useState<StreamingMetrics>({
+    totalChunks: 0,
+    contentChunks: 0,
+    toolChunks: 0,
+    renderLatency: 0,
+    averageChunkSize: 0,
+    streamDuration: 0,
+    lastUpdateTime: 0,
+  });
+  
+  // NEW: Stream performance monitoring
+  const streamStartTimeRef = useRef<number>(0);
+  const chunkSizesRef = useRef<number[]>([]);
+  
   // Initialize SSE client
   useEffect(() => {
     clientRef.current = new SSEClient();
     return () => {
       clientRef.current?.close();
+      if (batchingTimerRef.current) {
+        clearTimeout(batchingTimerRef.current);
+      }
     };
   }, []);
 
-  // Immediate content update - ChatGPT style (no batching)
-  const appendContent = useCallback((delta: string) => {
+  // NEW: Optimized content update with micro-batching and React 19 transitions
+  const appendContent = useCallback((delta: string, streamId?: string) => {
+    const chunkStartTime = performance.now();
+    
     console.log('[useChatStreamSSE] appendContent called with delta:', delta);
     console.log('[useChatStreamSSE] Timestamp:', Date.now());
+    console.log('[useChatStreamSSE] Stream ID:', streamId);
     
-    // Store the current content length for comparison
-    let oldLength = 0;
-    let newLength = 0;
+    // Discard updates from stale streams
+    if (streamId && state.activeStreamId && streamId !== state.activeStreamId) {
+      console.log('[useChatStreamSSE] Discarding update from stale stream:', streamId);
+      return;
+    }
     
-    flushSync(() => {
-      setMessages(prev => {
-        const newMessages = [...prev];
-        const lastIndex = newMessages.length - 1;
-        
-        if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
-          const oldContent = newMessages[lastIndex].content || '';
-          const newContent = oldContent + delta;
-          oldLength = oldContent.length;
-          newLength = newContent.length;
+    // Add to micro-batch buffer
+    contentBufferRef.current += delta;
+    
+    // Track chunk metrics
+    chunkSizesRef.current.push(delta.length);
+    if (chunkSizesRef.current.length > 100) {
+      chunkSizesRef.current = chunkSizesRef.current.slice(-100); // Keep last 100 chunks
+    }
+    
+    // Clear existing timer
+    if (batchingTimerRef.current) {
+      clearTimeout(batchingTimerRef.current);
+    }
+    
+    // Use micro-batching to group rapid updates
+    batchingTimerRef.current = setTimeout(() => {
+      const bufferedContent = contentBufferRef.current;
+      contentBufferRef.current = '';
+      
+      if (bufferedContent) {
+        // Use React 19's startTransition for non-blocking updates
+        startTransition(() => {
+          const renderStartTime = performance.now();
           
-          console.log('[useChatStreamSSE] BEFORE update - content length:', oldLength);
-          console.log('[useChatStreamSSE] AFTER update - content length:', newLength);
-          console.log('[useChatStreamSSE] Delta being added:', JSON.stringify(delta));
-          console.log('[useChatStreamSSE] Old content (last 20 chars):', JSON.stringify(oldContent.slice(-20)));
-          console.log('[useChatStreamSSE] New content (last 20 chars):', JSON.stringify(newContent.slice(-20)));
-          
-          newMessages[lastIndex] = {
-            ...newMessages[lastIndex],
-            content: newContent,
-            timestamp: Date.now(), // Force re-render
-          };
-          
-          console.log('[useChatStreamSSE] Message object updated:', {
-            role: newMessages[lastIndex].role,
-            contentLength: newMessages[lastIndex].content?.length,
-            status: newMessages[lastIndex].status,
-            timestamp: newMessages[lastIndex].timestamp,
-            hasContent: !!newMessages[lastIndex].content
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastIndex = newMessages.length - 1;
+            
+            if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+              const oldContent = newMessages[lastIndex].content || '';
+              const newContent = oldContent + bufferedContent;
+              
+              console.log('[useChatStreamSSE] BEFORE update - content length:', oldContent.length);
+              console.log('[useChatStreamSSE] AFTER update - content length:', newContent.length);
+              console.log('[useChatStreamSSE] Buffered content:', JSON.stringify(bufferedContent));
+              
+              newMessages[lastIndex] = {
+                ...newMessages[lastIndex],
+                content: newContent,
+                timestamp: Date.now(),
+                streamId: streamId,
+              };
+              
+              console.log('[useChatStreamSSE] Message object updated:', {
+                role: newMessages[lastIndex].role,
+                contentLength: newMessages[lastIndex].content?.length,
+                status: newMessages[lastIndex].status,
+                timestamp: newMessages[lastIndex].timestamp,
+                hasContent: !!newMessages[lastIndex].content,
+                streamId: newMessages[lastIndex].streamId,
+              });
+            } else {
+              console.log('[useChatStreamSSE] ❌ NOT UPDATING - no assistant message found. Messages:', 
+                newMessages.map(m => ({ role: m.role, contentLength: m.content?.length })));
+            }
+            return newMessages;
           });
-        } else {
-          console.log('[useChatStreamSSE] ❌ NOT UPDATING - no assistant message found. Messages:', newMessages.map(m => ({ role: m.role, contentLength: m.content?.length })));
-        }
-        return newMessages;
-      });
-    });
+          
+          // Update performance metrics
+          const renderEndTime = performance.now();
+          const renderLatency = renderEndTime - renderStartTime;
+          
+          setStreamingMetrics(prev => ({
+            ...prev,
+            contentChunks: prev.contentChunks + 1,
+            totalChunks: prev.totalChunks + 1,
+            renderLatency: (prev.renderLatency * prev.contentChunks + renderLatency) / (prev.contentChunks + 1),
+            averageChunkSize: chunkSizesRef.current.reduce((a, b) => a + b, 0) / chunkSizesRef.current.length,
+            lastUpdateTime: Date.now(),
+          }));
+          
+          console.log('[useChatStreamSSE] ✅ startTransition completed. Render latency:', renderLatency.toFixed(2), 'ms');
+        });
+      }
+    }, BATCH_INTERVAL_MS);
 
-    console.log('[useChatStreamSSE] ✅ flushSync completed. Content changed from', oldLength, 'to', newLength, 'chars');
-
-    // Update accumulated content in state (outside flushSync for performance)
+    // Update accumulated content in state (outside transition for immediate tracking)
     setState(prev => ({
       ...prev,
       accumulatedContent: prev.accumulatedContent + delta,
+      contentBuffer: prev.contentBuffer + delta,
     }));
+  }, [setMessages, state.activeStreamId]);
+  
+  // NEW: Enhanced stream management with ID tracking
+  const generateStreamId = useCallback(() => {
+    const id = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    streamIdRef.current++;
+    return id;
+  }, []);
+  
+  // NEW: Stream cleanup helper
+  const cleanupStream = useCallback((streamId: string) => {
+    console.log('[useChatStreamSSE] Cleaning up stream:', streamId);
+    
+    // Clear any pending micro-batch
+    if (batchingTimerRef.current) {
+      clearTimeout(batchingTimerRef.current);
+      batchingTimerRef.current = null;
+    }
+    
+    // Flush any remaining content
+    if (contentBufferRef.current) {
+      const remaining = contentBufferRef.current;
+      contentBufferRef.current = '';
+      
+      startTransition(() => {
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const lastIndex = newMessages.length - 1;
+          if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+            newMessages[lastIndex] = {
+              ...newMessages[lastIndex],
+              content: (newMessages[lastIndex].content || '') + remaining,
+              timestamp: Date.now(),
+            };
+          }
+          return newMessages;
+        });
+      });
+    }
+    
+    // Update final metrics
+    const streamEndTime = performance.now();
+    if (streamStartTimeRef.current > 0) {
+      setStreamingMetrics(prev => ({
+        ...prev,
+        streamDuration: streamEndTime - streamStartTimeRef.current,
+      }));
+    }
   }, [setMessages]);
 
   const sendMessage = useCallback(async (message: string, contexts: string[], model: string) => {
     // Generate new stream ID first
-    const currentStreamId = ++streamIdRef.current;
+    const currentStreamId = generateStreamId();
     
-    // Only cancel if there's an active stream
+    // Initialize performance tracking
+    streamStartTimeRef.current = performance.now();
+    chunkSizesRef.current = [];
+    
+    // Reset metrics
+    setStreamingMetrics({
+      totalChunks: 0,
+      contentChunks: 0,
+      toolChunks: 0,
+      renderLatency: 0,
+      averageChunkSize: 0,
+      streamDuration: 0,
+      lastUpdateTime: Date.now(),
+    });
+    
+    // Cancel existing stream if there is one
     if (state.isStreaming && clientRef.current?.isConnected()) {
       console.log('[useChatStreamSSE] Canceling existing stream before starting new one');
       cancelStream();
@@ -144,18 +294,27 @@ export function useChatStreamSSE(
       role: 'user',
       content: message,
       status: 'complete',
+      streamId: currentStreamId,
     };
-    setMessages(prev => [...prev, userMessage]);
+    
+    // Use transition for user message too
+    startTransition(() => {
+      setMessages(prev => [...prev, userMessage]);
+    });
 
     // Initialize assistant message  
     const assistantMessage: MessageType = {
       role: 'assistant',
       content: '',
       status: 'streaming',
+      streamId: currentStreamId,
     };
-    setMessages(prev => [...prev, assistantMessage]);
+    
+    startTransition(() => {
+      setMessages(prev => [...prev, assistantMessage]);
+    });
 
-    // Reset state
+    // Reset state with new stream ID
     setState({
       isStreaming: true,
       currentMessage: assistantMessage,
@@ -163,6 +322,8 @@ export function useChatStreamSSE(
       accumulatedReasoning: '',
       toolCalls: new Map(),
       error: null,
+      activeStreamId: currentStreamId,
+      contentBuffer: '',
     });
     
     // Clear pending updates
@@ -177,13 +338,14 @@ export function useChatStreamSSE(
       contexts: contexts.length > 0 ? contexts : undefined,
     };
 
-    console.log('[useChatStreamSSE] Starting stream with request:', {
+    console.log('[useChatStreamSSE] Starting enhanced stream with request:', {
       message: message.substring(0, 50) + '...',
       wid,
       sid: active,
       model,
       mode,
-      contextsCount: contexts.length
+      contextsCount: contexts.length,
+      streamId: currentStreamId,
     });
 
     try {
@@ -197,48 +359,63 @@ export function useChatStreamSSE(
           
           // Update status if it's thinking
           if (data.status === 'thinking') {
-            setMessages(prev => {
-              const newMessages = [...prev];
-              const lastIndex = newMessages.length - 1;
-              if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
-                newMessages[lastIndex] = {
-                  ...newMessages[lastIndex],
-                  status: 'thinking',
-                };
-              }
-              return newMessages;
+            startTransition(() => {
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const lastIndex = newMessages.length - 1;
+                if (lastIndex >= 0 && 
+                    newMessages[lastIndex].role === 'assistant' && 
+                    newMessages[lastIndex].streamId === currentStreamId) {
+                  newMessages[lastIndex] = {
+                    ...newMessages[lastIndex],
+                    status: 'thinking',
+                  };
+                }
+                return newMessages;
+              });
             });
           }
         },
 
         onReasoning: (data) => {
-          if (streamIdRef.current !== currentStreamId) return;
+          // Check stream ID to prevent race conditions
+          if (state.activeStreamId !== currentStreamId) return;
           
           // For DeepSeek models, reasoning is shown as content
           if (data.thinking) {
-            appendContent(`[Thinking: ${data.content}]\n`);
+            appendContent(`[Thinking: ${data.content}]\n`, currentStreamId);
           }
         },
 
         onContent: (data) => {
-          if (streamIdRef.current !== currentStreamId) return;
+          // Check stream ID to prevent race conditions
+          if (state.activeStreamId !== currentStreamId) return;
           
           console.log('[useChatStreamSSE] onContent called with:', data);
           
-          // Buffer content updates
-          appendContent(data.delta || '');
+          // Enhanced content update with stream ID
+          appendContent(data.delta || '', currentStreamId);
         },
 
         onToolCall: (data) => {
-          if (streamIdRef.current !== currentStreamId) return;
+          // Check stream ID to prevent race conditions
+          if (state.activeStreamId !== currentStreamId) return;
+          
+          // Update tool metrics
+          setStreamingMetrics(prev => ({
+            ...prev,
+            toolChunks: prev.toolChunks + 1,
+            totalChunks: prev.totalChunks + 1,
+          }));
           
           // Tool calls are shown as content for now
           const toolName = data.tool || 'unknown';
-          appendContent(`\nUsing tool: ${toolName}\n`);
+          appendContent(`\nUsing tool: ${toolName}\n`, currentStreamId);
         },
 
         onToolResult: (data) => {
-          if (streamIdRef.current !== currentStreamId) return;
+          // Check stream ID to prevent race conditions
+          if (state.activeStreamId !== currentStreamId) return;
           
           // Handle tool results that may contain cell updates
           if (data.result && typeof data.result === 'object') {
@@ -253,7 +430,8 @@ export function useChatStreamSSE(
         },
 
         onUpdate: (data) => {
-          if (streamIdRef.current !== currentStreamId) return;
+          // Check stream ID to prevent race conditions
+          if (state.activeStreamId !== currentStreamId) return;
           
           // Handle workbook update events
           if (data.updates && Array.isArray(data.updates)) {
@@ -262,7 +440,8 @@ export function useChatStreamSSE(
         },
 
         onError: (data) => {
-          if (streamIdRef.current !== currentStreamId) return;
+          // Check stream ID to prevent race conditions
+          if (state.activeStreamId !== currentStreamId) return;
           
           console.error('Stream error:', data);
           setState(prev => ({
@@ -271,25 +450,30 @@ export function useChatStreamSSE(
             isStreaming: false,
           }));
 
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const lastIndex = newMessages.length - 1;
-            if (lastIndex >= 0) {
-              newMessages[lastIndex] = {
-                ...newMessages[lastIndex],
-                content: newMessages[lastIndex].content || `Error: ${data.error || 'Unknown error'}`,
-                status: 'error',
-              };
-            }
-            return newMessages;
+          startTransition(() => {
+            setMessages(prev => {
+              const newMessages = [...prev];
+              const lastIndex = newMessages.length - 1;
+              if (lastIndex >= 0 && newMessages[lastIndex].streamId === currentStreamId) {
+                newMessages[lastIndex] = {
+                  ...newMessages[lastIndex],
+                  content: newMessages[lastIndex].content || `Error: ${data.error || 'Unknown error'}`,
+                  status: 'error',
+                };
+              }
+              return newMessages;
+            });
           });
         },
 
         onDone: (data) => {
-          if (streamIdRef.current !== currentStreamId) return;
+          // Check stream ID to prevent race conditions
+          if (state.activeStreamId !== currentStreamId) return;
           
-          // Flush any remaining updates
-          appendContent('');
+          console.log('[useChatStreamSSE] Stream completed for:', currentStreamId);
+          
+          // Clean up the stream
+          cleanupStream(currentStreamId);
 
           // Handle final sheet state if provided
           if (data.sheet) {
@@ -301,72 +485,82 @@ export function useChatStreamSSE(
             ...prev,
             isStreaming: false,
             currentMessage: null,
+            activeStreamId: null,
           }));
 
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const lastIndex = newMessages.length - 1;
-            if (lastIndex >= 0) {
-              // Ensure we have some content in the message
-              if (!newMessages[lastIndex].content || newMessages[lastIndex].content.trim() === '') {
-                newMessages[lastIndex].content = mode === 'analyst' 
-                  ? 'I\'ve completed the updates to your spreadsheet.' 
-                  : 'Analysis complete.';
+          startTransition(() => {
+            setMessages(prev => {
+              const newMessages = [...prev];
+              const lastIndex = newMessages.length - 1;
+              if (lastIndex >= 0 && newMessages[lastIndex].streamId === currentStreamId) {
+                // Ensure we have some content in the message
+                if (!newMessages[lastIndex].content || newMessages[lastIndex].content.trim() === '') {
+                  newMessages[lastIndex].content = mode === 'analyst' 
+                    ? 'I\'ve completed the updates to your spreadsheet.' 
+                    : 'Analysis complete.';
+                }
+                newMessages[lastIndex] = {
+                  ...newMessages[lastIndex],
+                  status: 'complete',
+                };
               }
-              newMessages[lastIndex] = {
-                ...newMessages[lastIndex],
-                status: 'complete',
-              };
-            }
-            return newMessages;
+              return newMessages;
+            });
           });
         },
 
         onHeartbeat: () => {
-          console.log('Heartbeat received');
+          console.log('Heartbeat received for stream:', currentStreamId);
         },
       });
       
-      console.log('[useChatStreamSSE] Stream completed successfully');
+      console.log('[useChatStreamSSE] Enhanced stream completed successfully');
     } catch (error) {
       console.error('[useChatStreamSSE] Failed to start stream:', error);
       
       // Only update state if this is still the current stream
-      if (streamIdRef.current === currentStreamId) {
+      if (state.activeStreamId === currentStreamId) {
         setState(prev => ({
           ...prev,
           error: error instanceof Error ? error.message : 'Failed to start stream',
           isStreaming: false,
+          activeStreamId: null,
         }));
 
-        setMessages(prev => {
-          const newMessages = [...prev];
-          const lastIndex = newMessages.length - 1;
-          if (lastIndex >= 0) {
-            newMessages[lastIndex] = {
-              ...newMessages[lastIndex],
-              content: `Error: ${error instanceof Error ? error.message : 'Failed to start stream'}`,
-              status: 'error',
-            };
-          }
-          return newMessages;
+        startTransition(() => {
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastIndex = newMessages.length - 1;
+            if (lastIndex >= 0 && newMessages[lastIndex].streamId === currentStreamId) {
+              newMessages[lastIndex] = {
+                ...newMessages[lastIndex],
+                content: `Error: ${error instanceof Error ? error.message : 'Failed to start stream'}`,
+                status: 'error',
+              };
+            }
+            return newMessages;
+          });
         });
       }
     }
-  }, [appendContent, mode, wid, active, setMessages, dispatch, state.isStreaming]);
+  }, [appendContent, mode, wid, active, setMessages, dispatch, state.isStreaming, state.activeStreamId, generateStreamId, cleanupStream]);
 
   const cancelStream = useCallback(() => {
-    clientRef.current?.abort();
-    streamIdRef.current++;
+    const currentStreamId = state.activeStreamId;
     
-    appendContent('');
+    clientRef.current?.abort();
+    
+    if (currentStreamId) {
+      cleanupStream(currentStreamId);
+    }
     
     setState(prev => ({
       ...prev,
       isStreaming: false,
       currentMessage: null,
+      activeStreamId: null,
     }));
-  }, [appendContent]);
+  }, [state.activeStreamId, cleanupStream]);
 
   const applyPendingUpdates = useCallback(async () => {
     if (pendingUpdates.length === 0) return;
@@ -416,15 +610,30 @@ export function useChatStreamSSE(
   useEffect(() => {
     return () => {
       clientRef.current?.abort();
+      if (batchingTimerRef.current) {
+        clearTimeout(batchingTimerRef.current);
+      }
     };
   }, []); // Empty dependency array - only run on mount/unmount
 
-  return {
+  // NEW: Memoized return object for performance
+  const returnValue = useMemo(() => ({
     sendMessage,
     cancelStream,
     isStreaming: state.isStreaming,
     pendingUpdates,
     applyPendingUpdates,
     rejectPendingUpdates,
-  };
+    streamingMetrics,
+  }), [
+    sendMessage,
+    cancelStream,
+    state.isStreaming,
+    pendingUpdates,
+    applyPendingUpdates,
+    rejectPendingUpdates,
+    streamingMetrics,
+  ]);
+
+  return returnValue;
 } 

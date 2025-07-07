@@ -53,4 +53,5 @@ export interface Message {
   lastAddedSection?: string  // Tracks the most recently added section header
   sectionStart?: boolean     // Flag when a new section is starting
   timestamp?: number         // Used to force re-renders during streaming
+  streamId?: string          // Track which stream this message belongs to
 } 
