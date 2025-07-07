@@ -159,17 +159,18 @@ export default function ChatInterface({
   }
 
   const handleSendMessage = async () => {
-    if (!input.trim()) return
+    if (!input.trim() || isStreaming) return
 
     // Extract the context ranges to send to backend
     const contextRanges = contexts.map(ctx => ctx.range);
     
-    // Use our streamable chat hook
-    sendMessage(input, contextRanges, model);
-    
-    // Reset the input and contexts
+    // Clear input immediately to prevent double-sending
+    const messageToSend = input;
     setInput("");
     setContexts([]);
+    
+    // Use our streamable chat hook with the saved message
+    sendMessage(messageToSend, contextRanges, model);
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

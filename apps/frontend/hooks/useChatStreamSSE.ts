@@ -110,11 +110,14 @@ export function useChatStreamSSE(
   }, [flushUpdates]);
 
   const sendMessage = useCallback(async (message: string, contexts: string[], model: string) => {
-    // Clear any existing stream
-    cancelStream();
-
-    // Generate new stream ID
+    // Generate new stream ID first
     const currentStreamId = ++streamIdRef.current;
+    
+    // Only cancel if there's an active stream
+    if (state.isStreaming && clientRef.current?.isConnected()) {
+      console.log('[useChatStreamSSE] Canceling existing stream before starting new one');
+      cancelStream();
+    }
 
     // Add user message
     const userMessage: MessageType = {
@@ -154,8 +157,21 @@ export function useChatStreamSSE(
       contexts: contexts.length > 0 ? contexts : undefined,
     };
 
+    console.log('[useChatStreamSSE] Starting stream with request:', {
+      message: message.substring(0, 50) + '...',
+      wid,
+      sid: active,
+      model,
+      mode,
+      contextsCount: contexts.length
+    });
+
     try {
-      await clientRef.current?.streamChat(request, {
+      if (!clientRef.current) {
+        throw new Error('SSE client not initialized');
+      }
+
+      await clientRef.current.streamChat(request, {
         onStatus: (data) => {
           console.log('Status:', data);
           
@@ -291,15 +307,34 @@ export function useChatStreamSSE(
           console.log('Heartbeat received');
         },
       });
+      
+      console.log('[useChatStreamSSE] Stream completed successfully');
     } catch (error) {
-      console.error('Failed to start stream:', error);
-      setState(prev => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to start stream',
-        isStreaming: false,
-      }));
+      console.error('[useChatStreamSSE] Failed to start stream:', error);
+      
+      // Only update state if this is still the current stream
+      if (streamIdRef.current === currentStreamId) {
+        setState(prev => ({
+          ...prev,
+          error: error instanceof Error ? error.message : 'Failed to start stream',
+          isStreaming: false,
+        }));
+
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const lastIndex = newMessages.length - 1;
+          if (lastIndex >= 0) {
+            newMessages[lastIndex] = {
+              ...newMessages[lastIndex],
+              content: `Error: ${error instanceof Error ? error.message : 'Failed to start stream'}`,
+              status: 'error',
+            };
+          }
+          return newMessages;
+        });
+      }
     }
-  }, [flushUpdates, scheduleUpdate, mode, wid, active, setMessages, dispatch]);
+  }, [flushUpdates, scheduleUpdate, mode, wid, active, setMessages, dispatch, state.isStreaming]);
 
   const cancelStream = useCallback(() => {
     clientRef.current?.abort();

@@ -37,8 +37,6 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(payload),
       // We need the Response body as a stream
       cache: 'no-store',
-      // @ts-ignore – Next.js 14.2 supports duplex: 'half'
-      duplex: 'half',
     })
 
     // If backend returned non-OK status propagate as JSON
@@ -50,16 +48,48 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Pipe the SSE stream straight through to the caller
-    return new Response(backendResp.body, {
+    // For streaming responses, we need to ensure proper headers and no buffering
+    const headers = new Headers({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      // Disable compression for SSE
+      'Content-Encoding': 'none',
+      // Disable buffering
+      'X-Accel-Buffering': 'no',
+    })
+
+    // Create a TransformStream to ensure proper streaming
+    const stream = new TransformStream()
+    const writer = stream.writable.getWriter()
+    const encoder = new TextEncoder()
+
+    // Start piping the backend response to our stream
+    if (backendResp.body) {
+      const reader = backendResp.body.getReader()
+      
+      // Read and forward chunks
+      ;(async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            
+            // Forward the chunk directly
+            await writer.write(value)
+          }
+        } catch (error) {
+          console.error('[api/langserve/chat] Stream error:', error)
+        } finally {
+          await writer.close()
+        }
+      })()
+    }
+
+    // Return the streaming response
+    return new Response(stream.readable, {
       status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        // Required for streaming in Vercel Edge / Node
-        'Transfer-Encoding': 'chunked',
-      },
+      headers,
     })
   } catch (err: any) {
     console.error('[api/langserve/chat] Proxy error', err)

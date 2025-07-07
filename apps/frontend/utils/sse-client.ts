@@ -34,6 +34,7 @@ export class SSEClient {
   private abortController: AbortController | null = null;
   private baseUrl: string;
   private currentStream: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  private isClosing: boolean = false;
 
   constructor(baseUrl?: string) {
     // In the browser, always use the relative proxy endpoint
@@ -60,6 +61,9 @@ export class SSEClient {
     // Close any existing connection
     this.close();
 
+    // Reset closing flag
+    this.isClosing = false;
+
     // Create new abort controller for this stream
     this.abortController = new AbortController();
 
@@ -82,6 +86,15 @@ export class SSEClient {
         signal: this.abortController.signal,
       });
 
+      console.log('[SSE] Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        ok: response.ok,
+        bodyUsed: response.bodyUsed,
+        hasBody: !!response.body
+      });
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -96,8 +109,9 @@ export class SSEClient {
       await this.processStream(response.body, handlers);
       
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log('[SSE] Stream aborted');
+      // Check if this was an intentional abort
+      if (error.name === 'AbortError' || this.isClosing) {
+        console.log('[SSE] Stream closed intentionally');
         return;
       }
       
@@ -123,11 +137,17 @@ export class SSEClient {
 
     try {
       while (true) {
+        // Check if we're closing
+        if (this.isClosing) {
+          console.log('[SSE] Stream processing stopped due to close request');
+          break;
+        }
+
         const { done, value } = await reader.read();
         
         if (done) {
-          console.log('[SSE] Stream completed');
-          if (handlers.onDone) {
+          console.log('[SSE] Stream completed naturally');
+          if (handlers.onDone && !this.isClosing) {
             handlers.onDone({ status: 'completed' });
           }
           break;
@@ -141,14 +161,24 @@ export class SSEClient {
         buffer = events.remainder;
 
         for (const event of events.events) {
-          this.handleSSEEvent(event, handlers);
+          if (!this.isClosing) {
+            this.handleSSEEvent(event, handlers);
+          }
         }
       }
-    } catch (error) {
-      console.error('[SSE] Error reading stream:', error);
-      throw error;
+    } catch (error: any) {
+      // Only log/throw if not intentionally closing
+      if (!this.isClosing && error.name !== 'AbortError') {
+        console.error('[SSE] Error reading stream:', error);
+        throw error;
+      }
     } finally {
-      reader.releaseLock();
+      // Ensure reader is released
+      try {
+        reader.releaseLock();
+      } catch (e) {
+        // Reader might already be released
+      }
       this.currentStream = null;
     }
   }
@@ -245,12 +275,19 @@ export class SSEClient {
   }
 
   close(): void {
-    if (this.abortController) {
+    this.isClosing = true;
+    
+    if (this.abortController && !this.abortController.signal.aborted) {
       this.abortController.abort();
-      this.abortController = null;
     }
+    this.abortController = null;
+    
     if (this.currentStream) {
-      this.currentStream.releaseLock();
+      try {
+        this.currentStream.cancel();
+      } catch (e) {
+        // Stream might already be canceled
+      }
       this.currentStream = null;
     }
   }
@@ -260,6 +297,6 @@ export class SSEClient {
   }
 
   isConnected(): boolean {
-    return this.abortController !== null && !this.abortController.signal.aborted;
+    return this.abortController !== null && !this.abortController.signal.aborted && !this.isClosing;
   }
 } 
