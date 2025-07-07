@@ -109,10 +109,14 @@ export function useChatStreamSSE(
 
   // Set up timer for batched updates
   const scheduleUpdate = useCallback(() => {
-    if (updateTimerRef.current) {
-      clearTimeout(updateTimerRef.current);
-    }
-    updateTimerRef.current = setTimeout(flushUpdates, 50); // 50ms batching
+    // Start a timer if one is not already running – prevents continuous
+    // resetting which caused the entire message to appear at once.
+    if (updateTimerRef.current) return;
+
+    updateTimerRef.current = setTimeout(() => {
+      flushUpdates();
+      updateTimerRef.current = null; // allow next schedule
+    }, 50); // flush roughly 20× per second
   }, [flushUpdates]);
 
   const sendMessage = useCallback(async (message: string, contexts: string[], model: string) => {
