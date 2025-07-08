@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from llm.base import LLMClient
-from .tools import TOOLS_REGISTRY
+from .tools import ALL_TOOLS
 
 
 class PlanPhase(Enum):
