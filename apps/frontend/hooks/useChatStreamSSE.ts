@@ -132,8 +132,43 @@ export function useChatStreamSSE(
       return;
     }
     
-    // Add to micro-batch buffer
-    contentBufferRef.current += delta;
+    // CRITICAL FIX: Use immediate state update for content to ensure React re-renders
+    // The micro-batching was causing the UI to not update properly
+    startTransition(() => {
+      setMessages(prev => {
+        const newMessages = [...prev];
+        const lastIndex = newMessages.length - 1;
+        
+        if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+          const oldContent = newMessages[lastIndex].content || '';
+          const newContent = oldContent + delta;
+          
+          console.log('[useChatStreamSSE] BEFORE update - content length:', oldContent.length);
+          console.log('[useChatStreamSSE] AFTER update - content length:', newContent.length);
+          console.log('[useChatStreamSSE] Delta added:', JSON.stringify(delta));
+          
+          newMessages[lastIndex] = {
+            ...newMessages[lastIndex],
+            content: newContent,
+            timestamp: Date.now(),
+            streamId: streamId,
+          };
+          
+          console.log('[useChatStreamSSE] ✅ Message updated successfully:', {
+            role: newMessages[lastIndex].role,
+            contentLength: newMessages[lastIndex].content?.length,
+            status: newMessages[lastIndex].status,
+            timestamp: newMessages[lastIndex].timestamp,
+            hasContent: !!newMessages[lastIndex].content,
+            streamId: newMessages[lastIndex].streamId,
+          });
+        } else {
+          console.log('[useChatStreamSSE] ❌ NOT UPDATING - no assistant message found. Messages:', 
+            newMessages.map(m => ({ role: m.role, contentLength: m.content?.length })));
+        }
+        return newMessages;
+      });
+    });
     
     // Track chunk metrics
     chunkSizesRef.current.push(delta.length);
@@ -141,78 +176,23 @@ export function useChatStreamSSE(
       chunkSizesRef.current = chunkSizesRef.current.slice(-100); // Keep last 100 chunks
     }
     
-    // Clear existing timer
-    if (batchingTimerRef.current) {
-      clearTimeout(batchingTimerRef.current);
-    }
+    // Update performance metrics
+    const renderEndTime = performance.now();
+    const renderLatency = renderEndTime - chunkStartTime;
     
-    // Use micro-batching to group rapid updates
-    batchingTimerRef.current = setTimeout(() => {
-      const bufferedContent = contentBufferRef.current;
-      contentBufferRef.current = '';
-      
-      if (bufferedContent) {
-        // Use React 19's startTransition for non-blocking updates
-        startTransition(() => {
-          const renderStartTime = performance.now();
-          
-          setMessages(prev => {
-            const newMessages = [...prev];
-            const lastIndex = newMessages.length - 1;
-            
-            if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
-              const oldContent = newMessages[lastIndex].content || '';
-              const newContent = oldContent + bufferedContent;
-              
-              console.log('[useChatStreamSSE] BEFORE update - content length:', oldContent.length);
-              console.log('[useChatStreamSSE] AFTER update - content length:', newContent.length);
-              console.log('[useChatStreamSSE] Buffered content:', JSON.stringify(bufferedContent));
-              
-              newMessages[lastIndex] = {
-                ...newMessages[lastIndex],
-                content: newContent,
-                timestamp: Date.now(),
-                streamId: streamId,
-              };
-              
-              console.log('[useChatStreamSSE] Message object updated:', {
-                role: newMessages[lastIndex].role,
-                contentLength: newMessages[lastIndex].content?.length,
-                status: newMessages[lastIndex].status,
-                timestamp: newMessages[lastIndex].timestamp,
-                hasContent: !!newMessages[lastIndex].content,
-                streamId: newMessages[lastIndex].streamId,
-              });
-            } else {
-              console.log('[useChatStreamSSE] ❌ NOT UPDATING - no assistant message found. Messages:', 
-                newMessages.map(m => ({ role: m.role, contentLength: m.content?.length })));
-            }
-            return newMessages;
-          });
-          
-          // Update performance metrics
-          const renderEndTime = performance.now();
-          const renderLatency = renderEndTime - renderStartTime;
-          
-          setStreamingMetrics(prev => ({
-            ...prev,
-            contentChunks: prev.contentChunks + 1,
-            totalChunks: prev.totalChunks + 1,
-            renderLatency: (prev.renderLatency * prev.contentChunks + renderLatency) / (prev.contentChunks + 1),
-            averageChunkSize: chunkSizesRef.current.reduce((a, b) => a + b, 0) / chunkSizesRef.current.length,
-            lastUpdateTime: Date.now(),
-          }));
-          
-          console.log('[useChatStreamSSE] ✅ startTransition completed. Render latency:', renderLatency.toFixed(2), 'ms');
-        });
-      }
-    }, BATCH_INTERVAL_MS);
+    setStreamingMetrics(prev => ({
+      ...prev,
+      contentChunks: prev.contentChunks + 1,
+      totalChunks: prev.totalChunks + 1,
+      renderLatency: (prev.renderLatency * prev.contentChunks + renderLatency) / (prev.contentChunks + 1),
+      averageChunkSize: chunkSizesRef.current.reduce((a, b) => a + b, 0) / chunkSizesRef.current.length,
+      lastUpdateTime: Date.now(),
+    }));
 
-    // Update accumulated content in state (outside transition for immediate tracking)
+    // Update accumulated content in state (for tracking)
     setState(prev => ({
       ...prev,
       accumulatedContent: prev.accumulatedContent + delta,
-      contentBuffer: prev.contentBuffer + delta,
     }));
   }, [setMessages, state.activeStreamId]);
   
