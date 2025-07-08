@@ -137,6 +137,7 @@ export function useChatStreamSSE(
     
     // CRITICAL FIX: Use immediate state update for content to ensure React re-renders
     // The micro-batching was causing the UI to not update properly
+    console.log('[useChatStreamSSE] ✨ Preparing to append delta to messages. Current messages length will update. Delta snippet:', delta.slice(0,50));
     startTransition(() => {
       setMessages(prev => {
         const newMessages = [...prev];
@@ -157,6 +158,7 @@ export function useChatStreamSSE(
             streamId: streamId,
           };
           
+          console.log('[useChatStreamSSE] 🔄 setMessages callback executed. Updated assistant content length:', newContent.length);
           console.log('[useChatStreamSSE] ✅ Message updated successfully:', {
             role: newMessages[lastIndex].role,
             contentLength: newMessages[lastIndex].content?.length,
@@ -197,6 +199,8 @@ export function useChatStreamSSE(
       ...prev,
       accumulatedContent: prev.accumulatedContent + delta,
     }));
+
+    console.log('[useChatStreamSSE] 🏁 setMessages scheduled via startTransition');
   }, [setMessages]);
   
   // NEW: Enhanced stream management with ID tracking
