@@ -83,3 +83,6 @@ apps/workers/data/**
 **/pnpm-lock.yaml
 **/package-lock.json
 **/yarn.lock 
+
+#documentation
+/Users/tabo/Cursor/cf0/docs

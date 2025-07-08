@@ -1310,169 +1310,16 @@ class BaseAgent:
                                         role="assistant",
                                         content=f"Sorry, I'm having trouble with the {name} tool. Let me try a different approach."
                                     )
-                                    continue
-                            
-                            # Validate non-empty arguments for critical tools
-                            if name == "apply_updates_and_reply":
-                                if not args or not isinstance(args, dict):
-                                    args = {}
-                                
-                                updates = args.get('updates', [])
-                                reply = args.get('reply', '')
-                                
-                                if debug_tools:
-                                    print(f"[{agent_id}] 🔍 apply_updates_and_reply validation:")
-                                    print(f"   Updates: {updates}")
-                                    print(f"   Updates type: {type(updates)}")
-                                    print(f"   Updates length: {len(updates) if isinstance(updates, list) else 'N/A'}")
-                                    print(f"   Reply: '{reply}'")
-                                
-                                if not updates or not isinstance(updates, list) or len(updates) == 0:
-                                    print(f"[{agent_id}] ⚠️ Empty updates for apply_updates_and_reply")
-                                    
-                                    error_msg = "Empty updates array"
-                                    if retry_manager.should_retry(name, error_msg):
-                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                        messages.append({
-                                            "role": "system",
-                                            "content": retry_prompt
-                                        })
-                                        print(f"[{agent_id}] 🔄 Retry scheduled for empty updates")
-                                        continue
-                                else:
-                                    yield ChatStep(
-                                        role="assistant",
-                                        content="I'll use individual cell updates instead of batch updates."
-                                    )
-                                    print(f"[{agent_id}] 🔄 Switching to individual updates approach")
-                                    continue
-                                
-                                # Validate each update in the array
-                                valid_updates = []
-                                for j, update in enumerate(updates):
-                                    if isinstance(update, dict) and 'cell' in update and 'value' in update:
-                                        valid_updates.append(update)
-                                        if debug_tools:
-                                            print(f"[{agent_id}] ✅ Valid update {j}: {update}")
-                                    else:
-                                        print(f"[{agent_id}] ⚠️ Invalid update format {j}: {update}")
-                                
-                                if len(valid_updates) != len(updates):
-                                    print(f"[{agent_id}] ⚠️ Some updates were invalid, using {len(valid_updates)}/{len(updates)}")
-                                    args['updates'] = valid_updates
-                                
-                                if not valid_updates:
-                                    error_msg = "No valid updates found"
-                                    if retry_manager.should_retry(name, error_msg):
-                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                        messages.append({
-                                            "role": "system",
-                                            "content": retry_prompt
-                                        })
-                                        print(f"[{agent_id}] 🔄 Retry scheduled for invalid updates")
-                                        continue
-                                    else:
-                                        print(f"[{agent_id}] 🛑 Skipping tool call due to invalid updates")
-                                        continue
-                            
-                            elif name == "set_cell":
-                                if not args or not isinstance(args, dict):
-                                    args = {}
-                                
-                                if debug_tools:
-                                    print(f"[{agent_id}] 🔍 set_cell validation:")
-                                    print(f"   Args: {args}")
-                                    print(f"   Has 'cell': {'cell' in args}")
-                                    print(f"   Has 'value': {'value' in args}")
-                                
-                                if 'cell' not in args or 'value' not in args:
-                                    error_msg = "Missing cell or value parameter"
-                                    print(f"[{agent_id}] ❌ set_cell missing parameters: {error_msg}")
-                                    if retry_manager.should_retry(name, error_msg):
-                                        retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                        messages.append({
-                                            "role": "system",
-                                            "content": retry_prompt
-                                        })
-                                        continue
-                                    else:
-                                        continue
-                            
-                            # Execute the tool with validated arguments
-                            try:
-                                tool_fn = tool_functions.get(name)
-                                if tool_fn:
-                                    if name in mutating_tools:
-                                        mutating_calls += 1
-                                        print(f"[{agent_id}] ✏️ Mutating call #{mutating_calls}: {name}")
-                                    
-                                    execution_start = time.time()
-                                    
-                                    if isinstance(args, dict):
-                                        result = tool_fn(**args)
-                                    elif isinstance(args, list):
-                                        result = tool_fn(*args)
-                                    else:
-                                        result = tool_fn(args)
-                                    
-                                    execution_time = time.time() - execution_start
-                                    
-                                    if debug_tools:
-                                        print(f"[{agent_id}] ✅ Tool {name} executed in {execution_time:.3f}s")
-                                        print(f"[{agent_id}] 📤 Tool result: {result}")
-                                        
-                                    # Add tool call and result to messages
-                                    messages.append({
-                                        "role": "assistant",
-                                        "tool_calls": [{
-                                            "id": tool_call_id,
-                                            "type": "function",
-                                            "function": {"name": name, "arguments": json.dumps(args)}
-                                        }]
-                                    })
-                                    messages.append({
-                                        "role": "tool",
-                                        "tool_call_id": tool_call_id,
-                                        "content": json.dumps(result) if result is not None else "null"
-                                    })
-                                    
-                                    yield ChatStep(role="tool", toolCall={"name": name, "args": args}, toolResult=result)
-                                    
-                                else:
-                                    print(f"[{agent_id}] ❌ Unknown tool: {name}")
-                                    
-                            except Exception as e:
-                                print(f"[{agent_id}] ❌ Tool execution error: {e}")
-                                import traceback
-                                traceback.print_exc()
-                                
-                                error_msg = str(e)
-                                error_count[error_msg] = error_count.get(error_msg, 0) + 1
-                                if error_count[error_msg] > 3:
-                                    print(f"[{agent_id}] 🛑 Too many repeated errors, breaking")
-                                    break
-                        
-                                # Check if we should retry this error
-                                if retry_manager.should_retry(name, error_msg):
-                                    retry_prompt = retry_manager.get_retry_prompt(name, error_msg)
-                                    messages.append({
-                                        "role": "system",
-                                        "content": f"Tool execution failed: {error_msg}. {retry_prompt}"
-                                    })
-                                else:
-                                    # Send error feedback
-                                    yield ChatStep(
-                                        role="assistant",
-                                        content=f"I encountered an error with {name}: {error_msg}. Let me try a different approach."
-                                    )
                         
                         # Handle regular content (OpenAI format) - Process content deltas
                         if hasattr(delta, "content") and delta.content:
                             content_chunks += 1
                             new_content = delta.content  # This is already the NEW content only (delta)
                             
-                            if debug_streaming:
-                                print(f"[{agent_id}] 💬 Content delta #{content_chunks}: '{new_content}'")
+                            # OPTIMIZED LOGGING: Only log periodically instead of every chunk
+                            debug_content_frequency = int(os.getenv("DEBUG_CONTENT_FREQUENCY", "50"))  # Log every 50 chunks by default
+                            if debug_streaming and content_chunks % debug_content_frequency == 0:
+                                print(f"[{agent_id}] 💬 Content progress: {content_chunks} chunks, last batch: '{new_content[:30]}{'...' if len(new_content) > 30 else ''}'")
                             
                             if in_tool_calling_phase:
                                 # We've transitioned from tool calling to final answer
@@ -1550,8 +1397,10 @@ class BaseAgent:
                             # The LLM providers already return proper deltas, so we don't need to re-delta them
                             new_content = chunk.content
                             
-                            if debug_streaming:
-                                print(f"[{agent_id}] 💬 Content delta #{content_chunks} (AIResponse): '{new_content}'")
+                            # OPTIMIZED LOGGING: Only log periodically instead of every chunk
+                            debug_content_frequency = int(os.getenv("DEBUG_CONTENT_FREQUENCY", "50"))  # Log every 50 chunks by default
+                            if debug_streaming and content_chunks % debug_content_frequency == 0:
+                                print(f"[{agent_id}] 💬 Content progress: {content_chunks} chunks, last batch: '{new_content[:30]}{'...' if len(new_content) > 30 else ''}')")
                             
                             if in_tool_calling_phase:
                                 in_tool_calling_phase = False

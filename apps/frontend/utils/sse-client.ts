@@ -118,7 +118,7 @@ export class SSEClient {
     maxReconnectAttempts: 5,
     baseReconnectDelay: 1000, // 1 second
     maxReconnectDelay: 30000,  // 30 seconds
-    heartbeatTimeout: 60000,   // 60 seconds
+    heartbeatTimeout: 45000,   // 45 seconds - reduced from 60 to match backend heartbeat interval
     eventBufferSize: 100,
     enableCompression: true,
     enableEventValidation: true,
@@ -311,19 +311,26 @@ export class SSEClient {
       console.error(`[SSE] Stream ${streamId} error on attempt ${attemptNumber}:`, error);
       this.metrics.errorEvents++;
       
-      // Attempt reconnection if within limits
-      if (attemptNumber < this.config.maxReconnectAttempts && !this.isClosing) {
+      // Enhanced error classification for better retry logic
+      const isRetryableError = this.isRetryableError(error);
+      const shouldRetry = isRetryableError && attemptNumber < this.config.maxReconnectAttempts && !this.isClosing;
+      
+      if (shouldRetry) {
+        console.log(`[SSE] Retryable error detected, scheduling reconnection (attempt ${attemptNumber + 1})`);
         await this.scheduleReconnection(url, request, handlers, useDirectConnection, streamId, attemptNumber);
       } else {
-        // Max attempts reached, call error handler
+        // Max attempts reached or non-retryable error
         this.cleanupStream(streamId);
+        const errorCode = isRetryableError ? 'MAX_RECONNECT_ATTEMPTS' : 'NON_RETRYABLE_ERROR';
+        
         if (handlers.onError) {
           handlers.onError({
             error: error.message || 'Stream connection failed',
-            code: 'MAX_RECONNECT_ATTEMPTS',
-            recoverable: false,
+            code: errorCode,
+            recoverable: isRetryableError,
             attempts: attemptNumber,
-            streamId: streamId
+            streamId: streamId,
+            suggestion: this.getErrorSuggestion(error)
           });
         }
       }
@@ -457,15 +464,17 @@ export class SSEClient {
       const timeSinceLastHeartbeat = Date.now() - this.lastHeartbeat;
       if (timeSinceLastHeartbeat > this.config.heartbeatTimeout) {
         console.warn(`[SSE] Heartbeat timeout for stream ${streamId} (${timeSinceLastHeartbeat}ms)`);
-        // Could trigger reconnection here if needed
+        // Could trigger reconnection here if needed - for now just warn
       }
       
       if (!this.isClosing) {
-        setTimeout(checkHeartbeat, this.config.heartbeatTimeout / 4);
+        // Check every 15 seconds instead of every 15 seconds (was heartbeatTimeout/4)
+        setTimeout(checkHeartbeat, 15000);
       }
     };
     
-    setTimeout(checkHeartbeat, this.config.heartbeatTimeout / 4);
+    // Start checking after 15 seconds
+    setTimeout(checkHeartbeat, 15000);
   }
   
   // NEW: Stop heartbeat monitoring
@@ -682,7 +691,25 @@ export class SSEClient {
         if (handlers.onStatus) handlers.onStatus(parsedData);
         break;
       case 'error':
-        if (handlers.onError) handlers.onError(parsedData);
+        console.error(`[SSE] Error event for stream ${streamId}:`, parsedData);
+        this.metrics.errorEvents++;
+        
+        // Handle recoverable errors differently
+        if (parsedData.recoverable && parsedData.code !== 'STREAM_PIPELINE_ERROR') {
+          console.log(`[SSE] Recoverable error for stream ${streamId}, continuing...`);
+          // For recoverable errors, just log and continue
+          if (handlers.onStatus) {
+            handlers.onStatus({
+              status: 'error_recovered',
+              error: parsedData.error,
+              code: parsedData.code,
+              streamId: streamId
+            });
+          }
+        } else {
+          // For non-recoverable errors, call the error handler
+          if (handlers.onError) handlers.onError(parsedData);
+        }
         break;
       case 'done':
         if (handlers.onDone) handlers.onDone(parsedData);
@@ -815,5 +842,73 @@ export class SSEClient {
   updateConfig(newConfig: Partial<ConnectionConfig>): void {
     this.config = { ...this.config, ...newConfig };
     console.log('[SSE] Configuration updated:', this.config);
+  }
+  
+  // NEW: Enhanced error classification for better retry logic
+  private isRetryableError(error: any): boolean {
+    // Network errors that are typically retryable
+    if (error.name === 'NetworkError' || error.name === 'TimeoutError') {
+      return true;
+    }
+    
+    // HTTP status codes that are retryable
+    if (error.message && typeof error.message === 'string') {
+      const message = error.message.toLowerCase();
+      
+      // Connection issues
+      if (message.includes('fetch') || 
+          message.includes('network') || 
+          message.includes('timeout') ||
+          message.includes('connection')) {
+        return true;
+      }
+      
+      // Server errors (5xx) are retryable, client errors (4xx) are not
+      const statusMatch = message.match(/status:\s*(\d{3})/);
+      if (statusMatch) {
+        const status = parseInt(statusMatch[1]);
+        return status >= 500 && status < 600; // 5xx errors are retryable
+      }
+    }
+    
+    // Default to non-retryable for unknown errors
+    return false;
+  }
+  
+  // NEW: Provide helpful error suggestions
+  private getErrorSuggestion(error: any): string {
+    if (error.name === 'NetworkError') {
+      return 'Check your internet connection and try again.';
+    }
+    
+    if (error.message && typeof error.message === 'string') {
+      const message = error.message.toLowerCase();
+      
+      if (message.includes('timeout')) {
+        return 'The request timed out. This may be due to a slow connection or high server load.';
+      }
+      
+      if (message.includes('500') || message.includes('internal server error')) {
+        return 'Server error occurred. Please try again in a moment.';
+      }
+      
+      if (message.includes('503') || message.includes('service unavailable')) {
+        return 'Service is temporarily unavailable. Please try again later.';
+      }
+      
+      if (message.includes('401') || message.includes('unauthorized')) {
+        return 'Authentication failed. Please refresh the page and try again.';
+      }
+      
+      if (message.includes('403') || message.includes('forbidden')) {
+        return 'Access denied. Please check your permissions.';
+      }
+      
+      if (message.includes('404') || message.includes('not found')) {
+        return 'Service endpoint not found. Please refresh the page.';
+      }
+    }
+    
+    return 'Please try again or contact support if the problem persists.';
   }
 } 

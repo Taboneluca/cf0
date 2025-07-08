@@ -121,13 +121,9 @@ export function useChatStreamSSE(
     };
   }, []);
 
-  // NEW: Optimized content update with micro-batching and React 19 transitions
+  // NEW: Optimized content update with proper micro-batching and React 19 transitions
   const appendContent = useCallback((delta: string, streamId?: string) => {
     const chunkStartTime = performance.now();
-    
-    console.log('[useChatStreamSSE] appendContent called with delta:', delta);
-    console.log('[useChatStreamSSE] Timestamp:', Date.now());
-    console.log('[useChatStreamSSE] Stream ID:', streamId);
     
     // Discard updates from stale streams
     if (streamId && activeStreamIdRef.current && streamId !== activeStreamIdRef.current) {
@@ -135,72 +131,66 @@ export function useChatStreamSSE(
       return;
     }
     
-    // CRITICAL FIX: Use immediate state update for content to ensure React re-renders
-    // The micro-batching was causing the UI to not update properly
-    console.log('[useChatStreamSSE] ✨ Preparing to append delta to messages. Current messages length will update. Delta snippet:', delta.slice(0,50));
-    startTransition(() => {
-      setMessages(prev => {
-        const newMessages = [...prev];
-        const lastIndex = newMessages.length - 1;
-        
-        if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
-          const oldContent = newMessages[lastIndex].content || '';
-          const newContent = oldContent + delta;
-          
-          console.log('[useChatStreamSSE] BEFORE update - content length:', oldContent.length);
-          console.log('[useChatStreamSSE] AFTER update - content length:', newContent.length);
-          console.log('[useChatStreamSSE] Delta added:', JSON.stringify(delta));
-          
-          newMessages[lastIndex] = {
-            ...newMessages[lastIndex],
-            content: newContent,
-            timestamp: Date.now(),
-            streamId: streamId,
-          };
-          
-          console.log('[useChatStreamSSE] 🔄 setMessages callback executed. Updated assistant content length:', newContent.length);
-          console.log('[useChatStreamSSE] ✅ Message updated successfully:', {
-            role: newMessages[lastIndex].role,
-            contentLength: newMessages[lastIndex].content?.length,
-            status: newMessages[lastIndex].status,
-            timestamp: newMessages[lastIndex].timestamp,
-            hasContent: !!newMessages[lastIndex].content,
-            streamId: newMessages[lastIndex].streamId,
-          });
-        } else {
-          console.log('[useChatStreamSSE] ❌ NOT UPDATING - no assistant message found. Messages:', 
-            newMessages.map(m => ({ role: m.role, contentLength: m.content?.length })));
-        }
-        return newMessages;
-      });
-    });
+    // Add to content buffer for batching
+    contentBufferRef.current += delta;
     
-    // Track chunk metrics
-    chunkSizesRef.current.push(delta.length);
-    if (chunkSizesRef.current.length > 100) {
-      chunkSizesRef.current = chunkSizesRef.current.slice(-100); // Keep last 100 chunks
+    // Clear existing timer to batch rapid updates
+    if (batchingTimerRef.current) {
+      clearTimeout(batchingTimerRef.current);
     }
     
-    // Update performance metrics
-    const renderEndTime = performance.now();
-    const renderLatency = renderEndTime - chunkStartTime;
+    // Track metrics for this chunk
+    chunkSizesRef.current.push(delta.length);
+    if (chunkSizesRef.current.length > 100) {
+      chunkSizesRef.current = chunkSizesRef.current.slice(-100);
+    }
     
+    // Update performance metrics (but don't trigger re-render yet)
     setStreamingMetrics(prev => ({
       ...prev,
       contentChunks: prev.contentChunks + 1,
       totalChunks: prev.totalChunks + 1,
-      renderLatency: (prev.renderLatency * prev.contentChunks + renderLatency) / (prev.contentChunks + 1),
+      renderLatency: (prev.renderLatency * prev.contentChunks + (performance.now() - chunkStartTime)) / (prev.contentChunks + 1),
       averageChunkSize: chunkSizesRef.current.reduce((a, b) => a + b, 0) / chunkSizesRef.current.length,
       lastUpdateTime: Date.now(),
     }));
-
+    
+    // Schedule batched update - shorter timeout for better responsiveness
+    batchingTimerRef.current = setTimeout(() => {
+      const bufferedContent = contentBufferRef.current;
+      contentBufferRef.current = '';
+      
+      if (bufferedContent) {
+        // Reduced logging for better performance
+        if (bufferedContent.length > 10) { // Only log substantial updates
+          console.log('[useChatStreamSSE] Batched content update:', `${bufferedContent.length} chars, sample: "${bufferedContent.slice(0, 30)}..."`);
+        }
+        
+        // Use React 19's startTransition for non-blocking updates
+        startTransition(() => {
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastIndex = newMessages.length - 1;
+            
+            if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+              newMessages[lastIndex] = {
+                ...newMessages[lastIndex],
+                content: (newMessages[lastIndex].content || '') + bufferedContent,
+                timestamp: Date.now(),
+                streamId: streamId,
+              };
+            }
+            return newMessages;
+          });
+        });
+      }
+    }, BATCH_INTERVAL_MS);
+    
     // Update accumulated content in state (for tracking)
     setState(prev => ({
       ...prev,
       accumulatedContent: prev.accumulatedContent + delta,
     }));
-
-    console.log('[useChatStreamSSE] 🏁 setMessages scheduled via startTransition');
   }, [setMessages]);
   
   // NEW: Enhanced stream management with ID tracking
@@ -350,7 +340,7 @@ export function useChatStreamSSE(
         onStatus: (data) => {
           console.log('Status:', data);
           
-          // Update status if it's thinking
+          // Handle various status updates
           if (data.status === 'thinking') {
             startTransition(() => {
               setMessages(prev => {
@@ -367,6 +357,20 @@ export function useChatStreamSSE(
                 return newMessages;
               });
             });
+          } else if (data.status === 'processing' && data.reason === 'long_operation') {
+            // Show user that we're processing a long operation
+            console.log(`[useChatStreamSSE] Long operation in progress: ${data.time_since_content}s since last content`);
+          } else if (data.status === 'timeout') {
+            // Handle timeout status
+            console.warn(`[useChatStreamSSE] Stream timeout: ${data.reason}`);
+            setState(prev => ({
+              ...prev,
+              error: `Stream timeout: ${data.reason}`,
+              isStreaming: false,
+            }));
+          } else if (data.status === 'error_recovered') {
+            // Handle recovered errors
+            console.log(`[useChatStreamSSE] Recovered from error: ${data.error}`);
           }
         },
 

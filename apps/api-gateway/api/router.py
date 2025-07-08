@@ -1069,8 +1069,10 @@ async def process_message_streaming(
                 chunk_type = type(chunk).__name__
                 has_content = False
                 
-                if debug_enabled:
-                    print(f"[{request_id}] 📦 Received chunk #{chunk_count}: {chunk_type}")
+                # OPTIMIZED LOGGING: Only log chunk progress periodically  
+                debug_chunk_frequency = int(os.getenv("DEBUG_CHUNK_FREQUENCY", "100"))  # Log every 100 chunks by default
+                if debug_enabled and chunk_count % debug_chunk_frequency == 0:
+                    print(f"[{request_id}] 📦 Chunk progress: {chunk_count} processed, current type: {chunk_type}")
                 
                 # Check for timeout without content
                 current_time = time.time()

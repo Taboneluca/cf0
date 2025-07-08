@@ -703,9 +703,11 @@ class Orchestrator:
                         elif step.role == 'assistant':
                             content_steps += 1
                             if hasattr(step, 'content') and step.content:
-                                if debug_orchestrator:
+                                # OPTIMIZED LOGGING: Only log content progress periodically
+                                debug_orch_frequency = int(os.getenv("DEBUG_ORCHESTRATOR_FREQUENCY", "25"))  # Log every 25 steps
+                                if debug_orchestrator and content_steps % debug_orch_frequency == 0:
                                     content_preview = step.content[:50] + ('...' if len(step.content) > 50 else '')
-                                    print(f"[{request_id}] 💬 Content step #{content_steps}: '{content_preview}'")
+                                    print(f"[{request_id}] 💬 Content progress: {content_steps} steps, sample: '{content_preview}'")
                         
                         elif step.role == 'error' or (hasattr(step, 'content') and 'error' in step.content.lower()):
                             error_steps += 1

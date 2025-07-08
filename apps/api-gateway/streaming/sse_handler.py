@@ -43,11 +43,13 @@ class StreamingMetrics:
         self.total_content_size = 0
         self.compression_savings = 0
         self.last_heartbeat = time.time()
+        self.last_event_time = time.time()  # Track last event time for heartbeat calculation
         self.event_timestamps = []
     
     def log_event(self, event_type: str, size: int = 0, compressed_size: int = None):
         """Log an event and its metrics."""
         self.total_events += 1
+        current_time = time.time()
         
         if event_type == EventType.CONTENT.value:
             self.content_events += 1
@@ -58,12 +60,15 @@ class StreamingMetrics:
             self.error_events += 1
         elif event_type == EventType.HEARTBEAT.value:
             self.heartbeat_events += 1
-            self.last_heartbeat = time.time()
+            self.last_heartbeat = current_time
+        
+        # Update last event time for all events (used for adaptive heartbeat)
+        self.last_event_time = current_time
         
         if compressed_size is not None and compressed_size < size:
             self.compression_savings += (size - compressed_size)
         
-        self.event_timestamps.append(time.time())
+        self.event_timestamps.append(current_time)
         # Keep only last 100 events for performance
         if len(self.event_timestamps) > 100:
             self.event_timestamps = self.event_timestamps[-100:]
@@ -103,7 +108,7 @@ class StreamingHandler:
     
     def __init__(self):
         # Enhanced configuration for 2025
-        self.base_heartbeat_interval = float(os.getenv('SSE_HEARTBEAT_INTERVAL', '30'))  # seconds
+        self.base_heartbeat_interval = float(os.getenv('SSE_HEARTBEAT_INTERVAL', '15'))  # seconds - reduced from 30 to 15
         self.adaptive_heartbeat = os.getenv('SSE_ADAPTIVE_HEARTBEAT', '1') == '1'
         self.enable_compression = os.getenv('SSE_ENABLE_COMPRESSION', '1') == '1'
         self.compression_threshold = int(os.getenv('SSE_COMPRESSION_THRESHOLD', '1024'))  # bytes
@@ -195,54 +200,147 @@ class StreamingHandler:
                 stream_id
             )
             
-            # Process the streaming response with enhanced event handling
+            # Process the streaming response with enhanced event handling and robust error recovery
             mode = getattr(chat_request, 'mode', 'ask')
             chunk_count = 0
+            content_chunks = 0
             last_progress_update = time.time()
+            last_content_time = time.time()
             progress_update_interval = 2.0  # Update progress every 2 seconds for long operations
             
-            async for chunk in process_message_streaming(
-                mode=mode,
-                message=chat_request.message,
-                wid=chat_request.wid,
-                sid=chat_request.sid,
-                model=chat_request.model
-            ):
-                chunk_count += 1
-                chunk_time = time.time()
-                
-                print(f"[SSE-{stream_id}] Processing chunk #{chunk_count}: Type={type(chunk).__name__}")
-                
-                # Check for heartbeat events
-                try:
-                    heartbeat = heartbeat_queue.get_nowait()
-                    yield heartbeat
-                except asyncio.QueueEmpty:
-                    pass
-                
-                # Convert legacy streaming format to enhanced SSE events
-                events = await self._convert_chunk_to_events(chunk, stream_id)
-                
-                for event in events:
-                    if event:
-                        yield event
-                
-                # Adaptive progress updates for long operations
-                if (mode == 'analyst' and 
-                    chunk_time - last_progress_update > progress_update_interval and
-                    chunk_count > 10):  # Only for substantial operations
+            # Enhanced timeout management
+            stream_timeout = float(os.getenv('SSE_STREAM_TIMEOUT', '300'))  # 5 minutes default
+            content_timeout = float(os.getenv('SSE_CONTENT_TIMEOUT', '60'))  # 1 minute without content
+            
+            try:
+                async for chunk in process_message_streaming(
+                    mode=mode,
+                    message=chat_request.message,
+                    wid=chat_request.wid,
+                    sid=chat_request.sid,
+                    model=chat_request.model
+                ):
+                    chunk_count += 1
+                    chunk_time = time.time()
                     
-                    progress_event = await self._create_progress_event(
-                        chunk_count, 
-                        chunk_time - self.metrics.start_time,
-                        stream_id
-                    )
-                    if progress_event:
-                        yield progress_event
-                        last_progress_update = chunk_time
+                    # Enhanced timeout checks
+                    stream_duration = chunk_time - self.metrics.start_time
+                    time_since_content = chunk_time - last_content_time
+                    
+                    # Optimized logging - only log periodically
+                    debug_sse_frequency = int(os.getenv("DEBUG_SSE_FREQUENCY", "50"))
+                    if chunk_count % debug_sse_frequency == 0:
+                        print(f"[SSE-{stream_id}] Progress: {chunk_count} chunks, {content_chunks} content, {stream_duration:.1f}s elapsed")
+                    
+                    # Check for stream timeout
+                    if stream_duration > stream_timeout:
+                        print(f"[SSE-{stream_id}] ⏰ Stream timeout after {stream_duration:.1f}s")
+                        yield await self._create_sse_event(
+                            EventType.STATUS,
+                            {
+                                "status": "timeout",
+                                "reason": "stream_timeout",
+                                "duration": stream_duration,
+                                "stream_id": stream_id
+                            },
+                            stream_id
+                        )
+                        break
+                    
+                    # Check for content timeout (no meaningful content for too long)
+                    if time_since_content > content_timeout and content_chunks > 0:
+                        print(f"[SSE-{stream_id}] ⏰ Content timeout after {time_since_content:.1f}s without content")
+                        # Don't break, just warn - might be processing tools
+                        yield await self._create_sse_event(
+                            EventType.STATUS,
+                            {
+                                "status": "processing",
+                                "reason": "long_operation",
+                                "time_since_content": time_since_content,
+                                "stream_id": stream_id
+                            },
+                            stream_id
+                        )
+                    
+                    # Check for heartbeat events
+                    try:
+                        heartbeat = heartbeat_queue.get_nowait()
+                        yield heartbeat
+                    except asyncio.QueueEmpty:
+                        pass
+                    
+                    # Convert legacy streaming format to enhanced SSE events
+                    try:
+                        events = await self._convert_chunk_to_events(chunk, stream_id)
+                        
+                        # Track content events for timeout management
+                        for event in events:
+                            if event and event.get('event') == 'content':
+                                content_chunks += 1
+                                last_content_time = chunk_time
+                            
+                            if event:
+                                yield event
+                                
+                    except Exception as chunk_error:
+                        print(f"[SSE-{stream_id}] ❌ Error processing chunk #{chunk_count}: {chunk_error}")
+                        # Continue processing instead of breaking the entire stream
+                        yield await self._create_sse_event(
+                            EventType.ERROR,
+                            {
+                                "error": f"Chunk processing error: {str(chunk_error)}",
+                                "code": "CHUNK_ERROR",
+                                "recoverable": True,
+                                "chunk_number": chunk_count,
+                                "stream_id": stream_id
+                            },
+                            stream_id
+                        )
+                        continue
+                    
+                    # Adaptive progress updates for long operations
+                    if (mode == 'analyst' and 
+                        chunk_time - last_progress_update > progress_update_interval and
+                        chunk_count > 10):  # Only for substantial operations
+                        
+                        progress_event = await self._create_progress_event(
+                            chunk_count, 
+                            chunk_time - self.metrics.start_time,
+                            stream_id
+                        )
+                        if progress_event:
+                            yield progress_event
+                            last_progress_update = chunk_time
+                    
+                    # Small delay to prevent overwhelming client (adaptive based on activity)
+                    await asyncio.sleep(0.001 if chunk_count < 100 else 0.005)
+                    
+            except asyncio.TimeoutError:
+                print(f"[SSE-{stream_id}] ⏰ Async timeout in streaming pipeline")
+                yield await self._create_sse_event(
+                    EventType.ERROR,
+                    {
+                        "error": "Streaming timeout",
+                        "code": "ASYNC_TIMEOUT",
+                        "recoverable": False,
+                        "stream_id": stream_id
+                    },
+                    stream_id
+                )
                 
-                # Small delay to prevent overwhelming client (adaptive based on activity)
-                await asyncio.sleep(0.001 if chunk_count < 100 else 0.005)
+            except Exception as stream_error:
+                print(f"[SSE-{stream_id}] ❌ Streaming pipeline error: {stream_error}")
+                yield await self._create_sse_event(
+                    EventType.ERROR,
+                    {
+                        "error": f"Streaming error: {str(stream_error)}",
+                        "code": "STREAM_PIPELINE_ERROR",
+                        "recoverable": False,
+                        "stream_id": stream_id
+                    },
+                    stream_id
+                )
+                # Don't re-raise, let the finally block handle completion
             
             # Send enhanced completion event
             completion_stats = self.metrics.get_stats()
@@ -298,16 +396,23 @@ class StreamingHandler:
         while True:
             # Calculate dynamic heartbeat interval based on activity
             if self.adaptive_heartbeat:
-                time_since_activity = time.time() - self.metrics.last_heartbeat
+                current_time = time.time()
+                # Use last event time if available, otherwise use last heartbeat
+                last_event_time = getattr(self.metrics, 'last_event_time', self.metrics.last_heartbeat)
+                time_since_activity = current_time - last_event_time
                 
                 if time_since_activity < 5:  # High activity
-                    interval = self.base_heartbeat_interval * 2  # Less frequent heartbeats
-                elif time_since_activity < 15:  # Medium activity
-                    interval = self.base_heartbeat_interval
+                    interval = self.base_heartbeat_interval  # Standard interval during high activity
+                elif time_since_activity < 15:  # Medium activity  
+                    interval = self.base_heartbeat_interval * 0.75  # Slightly more frequent
                 else:  # Low activity
-                    interval = self.base_heartbeat_interval * 0.5  # More frequent heartbeats
+                    interval = self.base_heartbeat_interval * 0.5  # More frequent heartbeats to keep connection alive
             else:
                 interval = self.base_heartbeat_interval
+            
+            # Ensure minimum heartbeat frequency
+            interval = max(interval, 5.0)  # Never less than 5 seconds
+            interval = min(interval, 30.0)  # Never more than 30 seconds
             
             await asyncio.sleep(interval)
             
@@ -317,7 +422,8 @@ class StreamingHandler:
                     "status": "alive",
                     "timestamp": time.time(),
                     "stream_id": stream_id,
-                    "interval": interval
+                    "interval": interval,
+                    "activity_level": "high" if time_since_activity < 5 else "medium" if time_since_activity < 15 else "low"
                 },
                 stream_id
             )
