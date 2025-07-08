@@ -107,6 +107,9 @@ export function useChatStreamSSE(
   const streamStartTimeRef = useRef<number>(0);
   const chunkSizesRef = useRef<number[]>([]);
   
+  // Track the current active stream ID in a ref so callbacks always have fresh value
+  const activeStreamIdRef = useRef<string | null>(null);
+  
   // Initialize SSE client
   useEffect(() => {
     clientRef.current = new SSEClient();
@@ -127,7 +130,7 @@ export function useChatStreamSSE(
     console.log('[useChatStreamSSE] Stream ID:', streamId);
     
     // Discard updates from stale streams
-    if (streamId && state.activeStreamId && streamId !== state.activeStreamId) {
+    if (streamId && activeStreamIdRef.current && streamId !== activeStreamIdRef.current) {
       console.log('[useChatStreamSSE] Discarding update from stale stream:', streamId);
       return;
     }
@@ -194,7 +197,7 @@ export function useChatStreamSSE(
       ...prev,
       accumulatedContent: prev.accumulatedContent + delta,
     }));
-  }, [setMessages, state.activeStreamId]);
+  }, [setMessages]);
   
   // NEW: Enhanced stream management with ID tracking
   const generateStreamId = useCallback(() => {
@@ -242,13 +245,19 @@ export function useChatStreamSSE(
         streamDuration: streamEndTime - streamStartTimeRef.current,
       }));
     }
+    
+    // Clear active stream ref if matches
+    if (activeStreamIdRef.current === streamId) {
+      activeStreamIdRef.current = null;
+    }
   }, [setMessages]);
 
   const sendMessage = useCallback(async (message: string, contexts: string[], model: string) => {
     // Generate new stream ID first
     const currentStreamId = generateStreamId();
     
-    // Initialize performance tracking
+    // Initialize performance tracking and set active stream ref
+    activeStreamIdRef.current = currentStreamId;
     streamStartTimeRef.current = performance.now();
     chunkSizesRef.current = [];
     
