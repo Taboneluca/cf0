@@ -123,8 +123,6 @@ export function useChatStreamSSE(
 
   // NEW: Optimized content update with proper micro-batching and React 19 transitions
   const appendContent = useCallback((delta: string, streamId?: string) => {
-    const chunkStartTime = performance.now();
-    
     // Discard updates from stale streams
     if (streamId && activeStreamIdRef.current && streamId !== activeStreamIdRef.current) {
       console.log('[useChatStreamSSE] Discarding update from stale stream:', streamId);
@@ -134,35 +132,25 @@ export function useChatStreamSSE(
     // Add to content buffer for batching
     contentBufferRef.current += delta;
     
-    // Clear existing timer to batch rapid updates
-    if (batchingTimerRef.current) {
-      clearTimeout(batchingTimerRef.current);
-    }
-    
-    // Track metrics for this chunk
+    // Track metrics for this chunk (but don't update state immediately)
     chunkSizesRef.current.push(delta.length);
     if (chunkSizesRef.current.length > 100) {
       chunkSizesRef.current = chunkSizesRef.current.slice(-100);
     }
     
-    // Update performance metrics (but don't trigger re-render yet)
-    setStreamingMetrics(prev => ({
-      ...prev,
-      contentChunks: prev.contentChunks + 1,
-      totalChunks: prev.totalChunks + 1,
-      renderLatency: (prev.renderLatency * prev.contentChunks + (performance.now() - chunkStartTime)) / (prev.contentChunks + 1),
-      averageChunkSize: chunkSizesRef.current.reduce((a, b) => a + b, 0) / chunkSizesRef.current.length,
-      lastUpdateTime: Date.now(),
-    }));
+    // Clear existing timer to batch rapid updates
+    if (batchingTimerRef.current) {
+      clearTimeout(batchingTimerRef.current);
+    }
     
-    // Schedule batched update - shorter timeout for better responsiveness
+    // Schedule batched update with React 19 transitions
     batchingTimerRef.current = setTimeout(() => {
       const bufferedContent = contentBufferRef.current;
       contentBufferRef.current = '';
       
       if (bufferedContent) {
-        // Reduced logging for better performance
-        if (bufferedContent.length > 10) { // Only log substantial updates
+        // Only log substantial batches to reduce console noise
+        if (bufferedContent.length > 20) {
           console.log('[useChatStreamSSE] Batched content update:', `${bufferedContent.length} chars, sample: "${bufferedContent.slice(0, 30)}..."`);
         }
         
@@ -183,10 +171,19 @@ export function useChatStreamSSE(
             return newMessages;
           });
         });
+        
+        // Update metrics after successful batched update
+        setStreamingMetrics(prev => ({
+          ...prev,
+          contentChunks: prev.contentChunks + 1, // Count batches, not individual chunks
+          totalChunks: prev.totalChunks + 1,
+          averageChunkSize: chunkSizesRef.current.reduce((a, b) => a + b, 0) / chunkSizesRef.current.length,
+          lastUpdateTime: Date.now(),
+        }));
       }
     }, BATCH_INTERVAL_MS);
     
-    // Update accumulated content in state (for tracking)
+    // Update accumulated content in state (for tracking only)
     setState(prev => ({
       ...prev,
       accumulatedContent: prev.accumulatedContent + delta,
@@ -387,8 +384,6 @@ export function useChatStreamSSE(
         onContent: (data) => {
           // Check stream ID to prevent race conditions
           if (state.activeStreamId !== currentStreamId) return;
-          
-          console.log('[useChatStreamSSE] onContent called with:', data);
           
           // Enhanced content update with stream ID
           appendContent(data.delta || '', currentStreamId);
