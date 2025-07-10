@@ -2,6 +2,7 @@ from openai import AsyncOpenAI, RateLimitError
 import json
 import os
 import asyncio
+import time
 from ..base import LLMClient
 from ..chat_types import Message, AIResponse, ToolCall
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union
@@ -177,6 +178,16 @@ class OpenAIClient(LLMClient):
         Internal implementation for streaming chat.
         This must be properly implemented as an async generator.
         """
+        # FIXED: Add debug logging for streaming troubleshooting
+        debug_streaming = os.getenv("DEBUG_OPENAI_STREAMING", "0") == "1"
+        stream_start_time = time.time()
+        chunk_count = 0
+        
+        if debug_streaming:
+            print(f"[OpenAI] Starting stream for model: {self.model} at {stream_start_time}")
+            print(f"[OpenAI] Params: {params}")
+            print(f"[OpenAI] Tools: {len(tools) if tools else 0}")
+        
         try:
             def _wrap_tools(tools):
                 if not tools:
@@ -224,12 +235,23 @@ class OpenAIClient(LLMClient):
                     
                     # Now iterate on the response stream
                     async for chunk in response_stream:
+                        chunk_count += 1
+                        chunk_time = time.time()
                         delta = chunk.choices[0].delta
+                        
+                        # FIXED: Debug logging for chunk processing
+                        if debug_streaming and chunk_count % 10 == 0:  # Log every 10th chunk
+                            elapsed = chunk_time - stream_start_time
+                            print(f"[OpenAI] Chunk #{chunk_count} at {elapsed:.3f}s")
                         
                         # Handle new content - CRITICAL: Only yield the delta, not accumulated
                         if delta.content:
                             new_content_delta = delta.content  # This is already a delta from OpenAI
                             current_content += new_content_delta  # Track total for tool calls if needed
+                            
+                            # FIXED: Debug log content chunks for troubleshooting
+                            if debug_streaming:
+                                print(f"[OpenAI] Content delta #{chunk_count}: '{new_content_delta}' (len: {len(new_content_delta)})")
                             
                             # Yield only the NEW content delta
                             yield AIResponse(
@@ -282,6 +304,11 @@ class OpenAIClient(LLMClient):
                                     content="",  # No content with tool calls
                                     tool_calls=tool_calls
                                 )
+                    # FIXED: Add final streaming summary
+                    if debug_streaming:
+                        total_time = time.time() - stream_start_time
+                        print(f"[OpenAI] Stream completed: {chunk_count} chunks in {total_time:.3f}s (avg: {total_time/chunk_count:.3f}s/chunk)")
+                    
                     break  # Success, exit retry loop
                 except RateLimitError as e:
                     retry_count += 1
@@ -294,6 +321,9 @@ class OpenAIClient(LLMClient):
         except Exception as e:
             # If error occurs, yield an error response
             print(f"Error in OpenAI stream processing: {str(e)}")
+            if debug_streaming:
+                total_time = time.time() - stream_start_time
+                print(f"[OpenAI] Stream failed after {total_time:.3f}s with {chunk_count} chunks")
             yield AIResponse(content=f"Error: {str(e)}", tool_calls=[])
 
     # Implement the required abstract method to meet the interface contract

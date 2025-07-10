@@ -86,11 +86,12 @@ export function useChatStreamSSE(
   const clientRef = useRef<SSEClient | null>(null);
   const streamIdRef = useRef<number>(0);
   
-  // NEW: Micro-batching system
+  // NEW: Micro-batching system - DISABLED for real-time streaming
   const batchingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const contentBufferRef = useRef<string>('');
   const lastRenderTimeRef = useRef<number>(0);
-  const BATCH_INTERVAL_MS = 16; // One frame at 60fps
+  const BATCH_INTERVAL_MS = 0; // FIXED: Immediate updates for real-time streaming
+  const IMMEDIATE_UPDATE_THRESHOLD = 50; // Characters threshold for immediate vs batched updates
   
   // NEW: Performance metrics tracking
   const [streamingMetrics, setStreamingMetrics] = useState<StreamingMetrics>({
@@ -121,7 +122,7 @@ export function useChatStreamSSE(
     };
   }, []);
 
-  // NEW: Optimized content update with proper micro-batching and React 19 transitions
+  // FIXED: Optimized content update with immediate updates for real-time streaming
   const appendContent = useCallback((delta: string, streamId?: string) => {
     // Discard updates from stale streams
     if (streamId && activeStreamIdRef.current && streamId !== activeStreamIdRef.current) {
@@ -129,14 +130,54 @@ export function useChatStreamSSE(
       return;
     }
     
-    // Add to content buffer for batching
-    contentBufferRef.current += delta;
-    
-    // Track metrics for this chunk (but don't update state immediately)
+    // Track metrics for this chunk
     chunkSizesRef.current.push(delta.length);
     if (chunkSizesRef.current.length > 100) {
       chunkSizesRef.current = chunkSizesRef.current.slice(-100);
     }
+
+    // FIXED: For small chunks or when batching is disabled, update immediately
+    if (BATCH_INTERVAL_MS === 0 || delta.length < IMMEDIATE_UPDATE_THRESHOLD) {
+      console.log('[useChatStreamSSE] IMMEDIATE content update:', `${delta.length} chars: "${delta.slice(0, 30)}..."`);
+      
+      // Update UI immediately for real-time streaming
+      startTransition(() => {
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const lastIndex = newMessages.length - 1;
+          
+          if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+            newMessages[lastIndex] = {
+              ...newMessages[lastIndex],
+              content: (newMessages[lastIndex].content || '') + delta,
+              timestamp: Date.now(),
+              streamId: streamId,
+            };
+          }
+          return newMessages;
+        });
+      });
+
+      // Update metrics for immediate update
+      setStreamingMetrics(prev => ({
+        ...prev,
+        contentChunks: prev.contentChunks + 1,
+        totalChunks: prev.totalChunks + 1,
+        averageChunkSize: chunkSizesRef.current.reduce((a, b) => a + b, 0) / chunkSizesRef.current.length,
+        lastUpdateTime: Date.now(),
+      }));
+
+      // Update accumulated content in state (for tracking only)
+      setState(prev => ({
+        ...prev,
+        accumulatedContent: prev.accumulatedContent + delta,
+      }));
+      
+      return; // Exit early for immediate updates
+    }
+    
+    // Fallback: Add to content buffer for batching (large chunks only)
+    contentBufferRef.current += delta;
     
     // Clear existing timer to batch rapid updates
     if (batchingTimerRef.current) {
@@ -149,10 +190,7 @@ export function useChatStreamSSE(
       contentBufferRef.current = '';
       
       if (bufferedContent) {
-        // Only log substantial batches to reduce console noise
-        if (bufferedContent.length > 20) {
-          console.log('[useChatStreamSSE] Batched content update:', `${bufferedContent.length} chars, sample: "${bufferedContent.slice(0, 30)}..."`);
-        }
+        console.log('[useChatStreamSSE] Batched content update:', `${bufferedContent.length} chars, sample: "${bufferedContent.slice(0, 30)}..."`);
         
         // Use React 19's startTransition for non-blocking updates
         startTransition(() => {
@@ -181,7 +219,7 @@ export function useChatStreamSSE(
           lastUpdateTime: Date.now(),
         }));
       }
-    }, BATCH_INTERVAL_MS);
+    }, BATCH_INTERVAL_MS || 16); // Fallback to 16ms if somehow still batching
     
     // Update accumulated content in state (for tracking only)
     setState(prev => ({

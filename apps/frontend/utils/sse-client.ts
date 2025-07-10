@@ -211,17 +211,19 @@ export class SSEClient {
     // Reset metrics for new stream
     this.resetMetrics();
     
-    // Check if we should use direct backend connection
-    const useDirectConnection = Boolean(process.env.NEXT_PUBLIC_DIRECT_BACKEND_URL && 
+    // FIXED: Enhanced direct backend connection for testing and debugging
+    const directBackendUrl = process.env.NEXT_PUBLIC_DIRECT_BACKEND_URL || 'http://localhost:8000';
+    const forceDirectConnection = process.env.NEXT_PUBLIC_FORCE_DIRECT_CONNECTION === 'true';
+    const useDirectConnection = forceDirectConnection || Boolean(process.env.NEXT_PUBLIC_DIRECT_BACKEND_URL && 
                                        typeof window !== 'undefined');
     
     let url: string;
     if (useDirectConnection) {
       // Direct connection to backend, bypassing Next.js proxy
-      const backendUrl = process.env.NEXT_PUBLIC_DIRECT_BACKEND_URL;
       const mode = request.mode || 'ask';
-      url = `${backendUrl}/${mode}/stream`;
+      url = `${directBackendUrl}/${mode}/stream`;
       console.log('[SSE] Using direct backend connection:', url);
+      console.log('[SSE] This bypasses Next.js proxy for testing real-time streaming');
     } else {
       // Use Next.js proxy endpoint (default)
       url = '/api/langserve/chat';

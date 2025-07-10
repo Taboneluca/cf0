@@ -1069,6 +1069,17 @@ async def process_message_streaming(
                 chunk_type = type(chunk).__name__
                 has_content = False
                 
+                # FIXED: Immediate yielding of content for real-time streaming
+                if hasattr(chunk, 'content') and chunk.content and str(chunk.content).strip():
+                    content_text = str(chunk.content).strip()
+                    print(f"[{request_id}] 🚀 IMMEDIATE YIELD: '{content_text[:50]}{'...' if len(content_text) > 50 else ''}' (len: {len(content_text)})")
+                    has_content = True
+                    content_chunks += 1
+                    last_content_time = time.time()
+                    empty_chunk_count = 0  # Reset empty chunk counter on successful content
+                    yield {"type": "chunk", "text": content_text}
+                    continue  # Skip further processing for this chunk
+                
                 # OPTIMIZED LOGGING: Only log chunk progress periodically  
                 debug_chunk_frequency = int(os.getenv("DEBUG_CHUNK_FREQUENCY", "100"))  # Log every 100 chunks by default
                 if debug_enabled and chunk_count % debug_chunk_frequency == 0:

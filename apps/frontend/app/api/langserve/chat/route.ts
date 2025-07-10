@@ -27,12 +27,14 @@ export async function POST(req: NextRequest) {
 
     const downstreamUrl = `${backendBase.replace(/\/$/, '')}/${mode}/stream`
 
-    // Initiate fetch to backend with identical headers and body
+    // FIXED: Enhanced fetch configuration for real-time streaming
     const backendResp = await fetch(downstreamUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
       },
       body: JSON.stringify(payload),
       // Ensure no caching
@@ -56,14 +58,18 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Return the backend response directly with proper SSE headers
+    // FIXED: Enhanced streaming headers to prevent buffering
     return new Response(backendResp.body, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Connection': 'keep-alive',
         'X-Accel-Buffering': 'no',
+        'Transfer-Encoding': 'chunked',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
       },
     })
   } catch (err: any) {
