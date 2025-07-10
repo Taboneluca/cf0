@@ -112,7 +112,7 @@ export function useChatStreamSSE(
   
   // Initialize SSE client
   useEffect(() => {
-    clientRef.current = new SSEClient();
+    clientRef.current = new SSEClient(undefined, { eventBufferSize: 0 });
     return () => {
       clientRef.current?.close();
       if (batchingTimerRef.current) {
