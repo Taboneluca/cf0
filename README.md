@@ -1,202 +1,112 @@
-# CF0 - Intelligent Spreadsheet Platform
+# cf0 — AI spreadsheet analyst (2025 prototype)
 
-This project is structured as an Nx monorepo containing three applications:
+> **Archived.** The original 2025 prototype of cf0, kept public as a record of the early
+> architecture. It is no longer maintained, and the hosted services it depended on (Supabase,
+> Railway) have been torn down. The product was later rebuilt on a different stack; this
+> repository is not that system.
 
-- `frontend`: Next.js web application
-- `api-gateway`: FastAPI backend service
-- `workers`: Python worker processes for background tasks
+An AI assistant that works directly inside a spreadsheet, in two modes:
 
-## Prerequisites
+- **Ask** — answer questions about the data in the open workbook.
+- **Analyst** — build and edit financial models, writing real formulas into cells.
 
-- Node.js 18+
-- Python 3.12+
-- Docker Desktop
-- Supabase account
-- Railway account
+The core problem was keeping a language model and a live spreadsheet in agreement. The model
+plans and proposes changes; a deterministic engine applies them, recalculates, and validates the
+result. Numbers come from the sheet, not from the model.
 
-## Tools Already Installed
+## Architecture
 
-The following tools have been installed globally:
+**Agent layer** (`apps/api-gateway/agents/`) — a planner decomposes a request, an orchestrator
+routes it to the `ask` or `analyst` agent, and an evaluator checks the output before it is
+committed to the workbook.
 
-- Nx CLI: `npm i -g nx@latest`
-- Railway CLI: `curl -sL https://railway.app/install.sh | sh`
-- Supabase CLI: `brew install supabase/tap/supabase`
-- Docker Desktop: `brew install --cask docker`
+| File | Role |
+| --- | --- |
+| `planner.py` | Breaks a request into steps |
+| `orchestrator.py` | Routes work between agents and tools |
+| `ask_agent.py` / `analyst_agent.py` | The two user-facing modes |
+| `evaluator_agent.py` | Validates proposed changes before they land |
+| `tools.py` | Tool definitions exposed to the model |
 
-## Getting Started
+**Spreadsheet engine** (`apps/api-gateway/spreadsheet_engine/`) — an independent, deterministic
+cell model that never asks the model to do arithmetic.
 
-### 1. Setup Environment Variables
+| File | Role |
+| --- | --- |
+| `formula_engine.py` | Formula parsing and evaluation |
+| `dag_recalc.py` | Dependency-graph recalculation on cell change |
+| `model.py` / `dataframe_model.py` | Cell and workbook representation |
+| `operations.py` | Mutations applied to the workbook |
+| `templates/` | DCF, three-statement, FSM and M&A model templates |
 
-Create the following files with appropriate Supabase credentials:
+Financial model structure lives in those template modules rather than in prompts. The model
+selects and parameterises a template; the engine generates the formulas.
 
-- `apps/frontend/.env.local`
+## Layout
+
+```
+apps/frontend      Next.js + React + Tailwind — spreadsheet grid and chat panel
+apps/api-gateway   FastAPI — agents, chat routing, spreadsheet engine
+apps/workers       Python workers for background jobs
+libs/common        Shared types and utilities
+supabase/          Database schema migrations
+```
+
+## Stack
+
+Nx monorepo · Next.js · FastAPI · Python 3.12 · Postgres via Supabase · OpenAI (with Anthropic
+support) · Docker Compose · Vercel and Railway · Sentry.
+
+## Running locally
+
+Requires Node.js 18+, Python 3.12+, Docker Desktop, and your own Supabase project.
+
+```bash
+docker compose up --build     # API + workers
+nx serve frontend             # UI on :3000, API docs on :8000/docs
+```
+
+Environment files — see `.env.example` for the full list. No real credentials belong in this
+repository.
+
+`apps/frontend/.env.local`
+
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 ```
 
-- `apps/api-gateway/.env`
+`apps/api-gateway/.env` and `apps/workers/.env`
+
 ```
-DATABASE_URL=postgresql://.../postgres?sslmode=require
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/postgres?sslmode=require
 SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<service-role>
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+OPENAI_API_KEY=<openai-key>
 ```
 
-- `apps/workers/.env`
-```
-DATABASE_URL=postgresql://.../postgres?sslmode=require
-SUPABASE_SERVICE_ROLE_KEY=<service-role>
-```
-
-### 2. Running Locally with Docker
+## Commands
 
 ```bash
-# Start Docker Desktop
-open -a Docker
-
-# Start all services with Docker Compose
-npm run docker:up
-
-# Or using Docker Compose directly
-docker compose up --build
-```
-
-Visit:
-- Frontend: http://localhost:3000
-- API Docs: http://localhost:8000/docs
-
-### 3. Development Workflow
-
-#### Using Nx
-
-```bash
-# Start all services in development mode
-npm start
-
-# Start individual services
-npm run dev:frontend
-npm run dev:api
-npm run dev:workers
-
-# Build all services
+npm start            # all services in dev mode
+npm run dev:frontend # or dev:api, dev:workers
 npm run build
-
-# Run tests
 npm run test
-
-# Lint code
 npm run lint
 ```
 
-### 4. Database Migrations
+## Database
+
+Migrations live in `supabase/migrations/` and are committed to Git.
 
 ```bash
-# Login to Supabase
-supabase login
-
-# Link to your Supabase project
 supabase link --project-ref <project-ref>
-
-# Pull the current schema
-supabase db pull
-
-# Push new migrations
-supabase db push
+supabase db pull      # sync current schema
+supabase db push      # apply new migrations
 ```
 
-### 5. Deployment
+## Deployment (as originally configured)
 
-The project is set up to deploy automatically to Railway through GitHub Actions.
-Each push to the main branch triggers a deployment.
-
-## Project Structure
-
-```
-cf0/
-  ├── apps/
-  │   ├── frontend/      # Next.js application
-  │   ├── api-gateway/   # FastAPI service
-  │   └── workers/       # Python workers
-  ├── libs/
-  │   └── common/        # Shared types and utilities
-  ├── .github/
-  │   └── workflows/     # GitHub Actions CI/CD
-  ├── docker-compose.yml # Local development
-  └── nx.json            # Nx configuration
-```
-
-## Additional Resources
-
-- [Nx Documentation](https://nx.dev)
-- [Railway Documentation](https://docs.railway.app)
-- [Supabase Documentation](https://supabase.io/docs)
-
-## Deployment Architecture
-
-This monorepo is deployed across three platforms:
-
-### Frontend - Vercel
-- Located in `apps/frontend`
-- Next.js application with React 
-- Deployed automatically via Vercel integration
-
-### API Gateway - Railway
-- Located in `apps/api-gateway`
-- FastAPI service handling spreadsheet operations and AI integration
-- Deployed via GitHub Actions to Railway
-
-### Workers - Railway
-- Located in `apps/workers`
-- Background processing service for asynchronous tasks
-- Deployed via GitHub Actions to Railway
-
-## Environment Variables
-
-### Frontend (Vercel)
-- `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Supabase anonymous key
-- `SENTRY_DSN`: Sentry error monitoring DSN
-- `SENTRY_AUTH_TOKEN`: Sentry authentication token (for source maps)
-
-### API Gateway (Railway)
-- `DATABASE_URL`: Supabase connection string
-- `SUPABASE_URL`: Supabase project URL
-- `SUPABASE_KEY`: Supabase service key
-- `OPENAI_API_KEY`: OpenAI API key
-- `SENTRY_DSN`: Sentry error monitoring DSN
-
-### Workers (Railway)
-- `DATABASE_URL`: Supabase connection string
-- `SENTRY_DSN`: Sentry error monitoring DSN
-
-## Development Setup
-
-```bash
-# Start Docker services (API + Workers)
-docker compose up --build
-
-# In another terminal, start frontend
-nx serve frontend
-```
-
-## Cursor Setup
-
-For optimal development experience with Cursor:
-- Use File → Open → apps/frontend (or api-gateway, or workers) to open just one app at a time
-- Run ⌘⇧P → Re-index project to ensure fast indexing
-
-## Deployment Process
-
-- Frontend: Auto-deploys via Vercel on push to main branch
-- Backend services: Deploy via GitHub Actions on push to main branch
-  - Matrix build ensures each service is built independently
-  - Railway settings use root directory and watch paths to optimize builds
-
-## Database Migrations
-
-Supabase migrations are stored in `supabase/migrations/` and should be committed to Git.
-
-## CI/CD Status
-
-Deployment status: Ready for production
-Last updated: 2025-05-03 
+Frontend deployed to Vercel on push to `main`. API gateway and workers deployed to Railway via
+GitHub Actions, using a matrix build so each service built independently, with watch paths to
+skip unaffected services. These pipelines are inactive now that the backing services are gone.

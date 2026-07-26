@@ -70,3 +70,16 @@ docs/
 /scripts/compile_templates.py apps/frontend-old/
 cookies.txt
 .vercel
+
+# Env files — catch-all (the original rules missed .env.vercel)
+.env*
+**/.env*
+!.env.example
+!**/.env.example
+
+# Local dumps and scratch output
+*cookies*.txt
+*_test*.txt
+test_*.txt
+supabase/.temp/
+**/.temp/
